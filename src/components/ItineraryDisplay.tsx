@@ -4,6 +4,7 @@ import { DayCard } from "./DayCard";
 import { InteractiveMap } from "./InteractiveMap";
 import { EditActivityModal } from "./EditActivityModal";
 import { AddActivityModal } from "./AddActivityModal";
+import { ActivityDetailModal } from "./ActivityDetailModal";
 import {
   Bookmark,
   BookmarkCheck,
@@ -44,6 +45,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   // Modals state
   const [editingActivity, setEditingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
   const [addingDayNumber, setAddingDayNumber] = useState<number | null>(null);
+  const [detailActivity, setDetailActivity] = useState<ActivitySpot | null>(null);
 
   const handleSaveClick = () => {
     onSaveTrip();
@@ -457,6 +459,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               onDeleteDay={plan.days.length > 1 ? handleDeleteDay : undefined}
               onUpdateDayHeader={handleUpdateDayHeader}
               onSkipPermanently={onSkipPermanently}
+              onViewDetails={(act) => setDetailActivity(act)}
               destinationOrTown={plan.destinationOrTown}
             />
           ))}
@@ -493,6 +496,16 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
           onClose={() => setAddingDayNumber(null)}
           onAdd={handleAddCustomActivity}
           baseCoordinates={plan.mapCenter}
+        />
+      )}
+
+      {/* Activity Detail Pop-up Modal */}
+      {detailActivity && (
+        <ActivityDetailModal
+          activity={detailActivity}
+          destination={plan.destinationOrTown}
+          isOpen={true}
+          onClose={() => setDetailActivity(null)}
         />
       )}
     </div>

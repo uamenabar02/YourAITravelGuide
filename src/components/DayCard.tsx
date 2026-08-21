@@ -19,6 +19,8 @@ interface DayCardProps {
   onUpdateDayHeader?: (dayNumber: number, patch: { dayTitle?: string; theme?: string }) => void;
   /** Permanently exclude a spot from all future suggestions. */
   onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
+  /** Open the activity detail pop-up with full info, anecdotes, and chatbot. */
+  onViewDetails?: (activity: ActivitySpot) => void;
   destinationOrTown: string;
 }
 
@@ -36,6 +38,7 @@ export const DayCard: React.FC<DayCardProps> = ({
   onDeleteDay,
   onUpdateDayHeader,
   onSkipPermanently,
+  onViewDetails,
   destinationOrTown,
 }) => {
   const [isExpanded, setIsExpanded] = useState(isExpandedDefault);
@@ -189,6 +192,7 @@ export const DayCard: React.FC<DayCardProps> = ({
                   onMoveActivity={onMoveActivity}
                   onSelectAlternativeOption={onSelectAlternativeOption}
                   onSkipPermanently={onSkipPermanently}
+                  onViewDetails={onViewDetails}
                   destinationOrTown={destinationOrTown}
                 />
 

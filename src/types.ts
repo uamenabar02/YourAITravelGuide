@@ -217,6 +217,29 @@ export interface WeatherData {
   isAutoDetected?: boolean;
 }
 
+export interface ActivitySubLocation {
+  name: string;
+  description: string;
+  coordinates: Coordinates;
+  address?: string;
+  highlight?: string; // e.g. "Must-see", "Hidden gem", "Photo spot"
+}
+
+export interface ActivityDetailData {
+  detailedDescription: string;
+  anecdotes: string[];
+  subLocations: ActivitySubLocation[];
+  suggestedQuestions: string[];
+  historicalContext?: string;
+  practicalTips?: string[];
+}
+
+export interface ActivityChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp?: number;
+}
+
 export interface SwapActivityRequest {
   destinationOrTown: string;
   mode: AppMode;
