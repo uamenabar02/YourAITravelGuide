@@ -130,6 +130,7 @@ export interface VacationPreferences {
   exactBudgetPerDay?: number;
   currency?: string;
   groupSize: number; // e.g. 1, 2, 4
+  permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   customNotes?: string;
   isMultiDestination?: boolean;
   destinations?: DestinationStop[];
@@ -148,6 +149,7 @@ export interface HometownPreferences {
   weatherCondition: string;
   currentTemp?: number;
   excludedPlaces?: string[]; // IDs or names of places visited in past 30 days
+  permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   customNotes?: string;
   enableSwiper?: boolean;
   likedSpots?: ActivitySpot[];
@@ -161,6 +163,13 @@ export interface ActivityHistoryItem {
   category: ActivityCategory;
   timestamp: number; // Date.now()
   approxCost?: string;
+}
+
+/** A place the resident has permanently excluded from all future suggestions. */
+export interface PermanentSkip {
+  id: string;
+  name: string;
+  addedAt: number; // Date.now()
 }
 
 export interface WeatherData {

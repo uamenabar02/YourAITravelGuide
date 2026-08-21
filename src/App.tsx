@@ -10,7 +10,17 @@ import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
-import { getSavedTrips, saveTrip, deleteSavedTrip, isTripSaved, recordPlanActivities, getActivityHistory } from "./utils/storage";
+import {
+  getSavedTrips,
+  saveTrip,
+  deleteSavedTrip,
+  isTripSaved,
+  recordPlanActivities,
+  getActivityHistory,
+  getRecentExcludedPlaces,
+  getPermanentSkipNames,
+  addPermanentSkip,
+} from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
 import { Compass } from "lucide-react";
@@ -150,6 +160,7 @@ export default function App() {
       ...prefs,
       likedSpots: finalLikedSpots,
       skippedSpots: finalSkippedSpots,
+      permanentSkips: getPermanentSkipNames(),
     };
 
     try {
@@ -231,6 +242,20 @@ export default function App() {
     }
   };
 
+  // Permanently exclude a spot: never suggest it again in any future plan
+  const handleSkipPermanently = (activity: ActivitySpot, dayNumber: number) => {
+    addPermanentSkip(activity.name);
+    handleUpdatePlan({
+      ...currentPlan,
+      days: currentPlan.days.map((day) =>
+        day.dayNumber === dayNumber
+          ? { ...day, activities: day.activities.filter((a) => a.id !== activity.id) }
+          : day
+      ),
+    });
+    addToast("info", `"${activity.name}" will never be suggested again. Manage it in History → Permanent Skips.`);
+  };
+
   // Swap Single Activity Spot Handler
   const handleSwapActivity = async (activity: ActivitySpot, dayNumber: number) => {
     try {
@@ -246,6 +271,10 @@ export default function App() {
           category: activity.category,
           vibes: currentPlan.tags || [],
           budgetTier: currentPlan.budgetTier,
+          excludedPlaces: [
+            ...getRecentExcludedPlaces(currentPlan.destinationOrTown),
+            ...getPermanentSkipNames(),
+          ],
         }),
       });
 
@@ -351,6 +380,7 @@ export default function App() {
             onOpenExport={() => setIsExportModalOpen(true)}
             onSwapActivity={handleSwapActivity}
             onUpdatePlan={handleUpdatePlan}
+            onSkipPermanently={handleSkipPermanently}
           />
         </section>
       </main>

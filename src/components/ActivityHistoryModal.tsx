@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { getActivityHistory, removeHistoryItem, clearActivityHistory } from "../utils/storage";
-import { ActivityHistoryItem } from "../types";
-import { X, History, Trash2, ShieldCheck, MapPin, Clock } from "lucide-react";
+import {
+  getActivityHistory,
+  removeHistoryItem,
+  clearActivityHistory,
+  getPermanentSkips,
+  removePermanentSkip,
+} from "../utils/storage";
+import { ActivityHistoryItem, PermanentSkip } from "../types";
+import { X, History, Trash2, ShieldCheck, MapPin, Clock, Ban } from "lucide-react";
 
 interface ActivityHistoryModalProps {
   isOpen: boolean;
@@ -15,10 +21,13 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
   onHistoryUpdated,
 }) => {
   const [items, setItems] = useState<ActivityHistoryItem[]>([]);
+  const [skips, setSkips] = useState<PermanentSkip[]>([]);
+  const [activeTab, setActiveTab] = useState<"recent" | "permanent">("recent");
 
   useEffect(() => {
     if (isOpen) {
       setItems(getActivityHistory());
+      setSkips(getPermanentSkips());
     }
   }, [isOpen]);
 
@@ -28,6 +37,11 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
     removeHistoryItem(id);
     setItems(getActivityHistory());
     onHistoryUpdated();
+  };
+
+  const handleRemoveSkip = (id: string) => {
+    removePermanentSkip(id);
+    setSkips(getPermanentSkips());
   };
 
   const handleClearAll = () => {
@@ -49,10 +63,10 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             </div>
             <div>
               <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">
-                30-Day Anti-Repeat Memory ({items.length})
+                Memory & Exclusions
               </h3>
               <p className="text-xs text-[#8a8a7e] font-sans">
-                Visited & recommended spots excluded from Hometown Guide
+                What LocalExplorer AI remembers — and what it must never suggest again
               </p>
             </div>
           </div>
@@ -64,75 +78,175 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
           </button>
         </div>
 
-        {/* Informational Banner */}
-        <div className="bg-[#ecece4] p-4 border-b border-[#d1d1ca] flex items-start space-x-2.5 text-xs text-[#2c2c24]">
-          <ShieldCheck className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
-          <div className="leading-relaxed">
-            To keep your hometown adventures fresh, LocalExplorer AI remembers suggested spots and hides them for 30 days. You can remove individual spots below if you'd like them re-suggested sooner.
-          </div>
-        </div>
-
-        {/* History List */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-2.5 bg-[#f5f5f0]/40">
-          {items.length === 0 ? (
-            <div className="text-center py-12">
-              <History className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
-              <p className="font-serif text-base italic text-[#2c2c24]">No activity history yet</p>
-              <p className="text-xs text-[#8a8a7e] mt-0.5">
-                As you explore local itineraries, suggested spots are logged here.
-              </p>
-            </div>
-          ) : (
-            items.map((item) => {
-              const daysAgo = Math.floor((Date.now() - item.timestamp) / (24 * 60 * 60 * 1000));
-              return (
-                <div
-                  key={item.id}
-                  className="bg-white p-3.5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-serif italic font-medium text-sm text-[#2c2c24] truncate">{item.name}</div>
-                    <div className="flex items-center space-x-2 text-[11px] text-[#8a8a7e] mt-0.5">
-                      <span className="capitalize font-medium text-[#5A5A40] bg-[#ecece4] px-2 py-0.5 rounded-full border border-[#d1d1ca]">
-                        {item.category}
-                      </span>
-                      <span>•</span>
-                      <span className="flex items-center gap-0.5">
-                        <MapPin className="w-3 h-3 text-[#5A5A40]" />
-                        {item.location}
-                      </span>
-                      <span>•</span>
-                      <span className="flex items-center gap-0.5">
-                        <Clock className="w-3 h-3 text-[#8a8a7e]" />
-                        {daysAgo === 0 ? "Today" : `${daysAgo}d ago`}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleRemove(item.id)}
-                    title="Allow this spot to be recommended again"
-                    className="p-1.5 text-[#8a8a7e] hover:text-rose-600 hover:bg-[#ecece4] rounded-lg transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Footer */}
-        {items.length > 0 && (
-          <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
-            <span className="text-[#8a8a7e] font-serif italic">{items.length} spots tracked</span>
+        {/* Tab Switcher */}
+        <div className="px-5 sm:px-6 pt-4">
+          <div className="flex rounded-xl bg-[#ecece4] p-1 text-xs">
             <button
-              onClick={handleClearAll}
-              className="text-rose-700 hover:text-rose-900 font-medium px-3 py-1 rounded-full hover:bg-rose-50 transition-colors"
+              type="button"
+              onClick={() => setActiveTab("recent")}
+              className={`flex-1 py-2 rounded-lg font-medium transition-all flex items-center justify-center space-x-1.5 ${
+                activeTab === "recent"
+                  ? "bg-white text-[#2c2c24] shadow-xs font-semibold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24]"
+              }`}
             >
-              Reset Memory (Clear All)
+              <Clock className="w-3.5 h-3.5" />
+              <span>30-Day Memory ({items.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("permanent")}
+              className={`flex-1 py-2 rounded-lg font-medium transition-all flex items-center justify-center space-x-1.5 ${
+                activeTab === "permanent"
+                  ? "bg-white text-[#2c2c24] shadow-xs font-semibold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24]"
+              }`}
+            >
+              <Ban className="w-3.5 h-3.5" />
+              <span>Permanent Skips ({skips.length})</span>
             </button>
           </div>
+        </div>
+
+        {/* TAB 1: 30-Day Memory */}
+        {activeTab === "recent" && (
+          <>
+            {/* Informational Banner */}
+            <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-4 border border-[#d1d1ca] rounded-2xl flex items-start space-x-2.5 text-xs text-[#2c2c24]">
+              <ShieldCheck className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                To keep your adventures fresh, LocalExplorer AI remembers suggested spots and hides them for 30 days. Remove individual spots below if you'd like them re-suggested sooner.
+              </div>
+            </div>
+
+            {/* History List */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2.5 bg-[#f5f5f0]/40">
+              {items.length === 0 ? (
+                <div className="text-center py-12">
+                  <History className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
+                  <p className="font-serif text-base italic text-[#2c2c24]">No activity history yet</p>
+                  <p className="text-xs text-[#8a8a7e] mt-0.5">
+                    As you explore local itineraries, suggested spots are logged here.
+                  </p>
+                </div>
+              ) : (
+                items.map((item) => {
+                  const daysAgo = Math.floor((Date.now() - item.timestamp) / (24 * 60 * 60 * 1000));
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-white p-3.5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="font-serif italic font-medium text-sm text-[#2c2c24] truncate">{item.name}</div>
+                        <div className="flex items-center space-x-2 text-[11px] text-[#8a8a7e] mt-0.5">
+                          <span className="capitalize font-medium text-[#5A5A40] bg-[#ecece4] px-2 py-0.5 rounded-full border border-[#d1d1ca]">
+                            {item.category}
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-0.5">
+                            <MapPin className="w-3 h-3 text-[#5A5A40]" />
+                            {item.location}
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-0.5">
+                            <Clock className="w-3 h-3 text-[#8a8a7e]" />
+                            {daysAgo === 0 ? "Today" : `${daysAgo}d ago`}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleRemove(item.id)}
+                        title="Allow this spot to be recommended again"
+                        className="p-1.5 text-[#8a8a7e] hover:text-rose-600 hover:bg-[#ecece4] rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            {items.length > 0 && (
+              <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
+                <span className="text-[#8a8a7e] font-serif italic">{items.length} spots tracked</span>
+                <button
+                  onClick={handleClearAll}
+                  className="text-rose-700 hover:text-rose-900 font-medium px-3 py-1 rounded-full hover:bg-rose-50 transition-colors"
+                >
+                  Reset Memory (Clear All)
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* TAB 2: Permanent Skips */}
+        {activeTab === "permanent" && (
+          <>
+            {/* Informational Banner */}
+            <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-4 border border-[#d1d1ca] rounded-2xl flex items-start space-x-2.5 text-xs text-[#2c2c24]">
+              <Ban className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                Places you never want suggested again — anywhere, ever. Add to this list with the <Ban className="w-3 h-3 inline text-[#5A5A40]" /> button on any activity, or remove entries below to allow them back.
+              </div>
+            </div>
+
+            {/* Permanent Skips List */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-2.5 bg-[#f5f5f0]/40">
+              {skips.length === 0 ? (
+                <div className="text-center py-12">
+                  <Ban className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
+                  <p className="font-serif text-base italic text-[#2c2c24]">No permanent exclusions</p>
+                  <p className="text-xs text-[#8a8a7e] mt-0.5 max-w-xs mx-auto">
+                    Use the Ban button on any activity card ("never suggest again") and it will be excluded from every future plan.
+                  </p>
+                </div>
+              ) : (
+                skips.map((skip) => (
+                  <div
+                    key={skip.id}
+                    className="bg-white p-3.5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-serif italic font-medium text-sm text-[#2c2c24] truncate">{skip.name}</div>
+                      <div className="flex items-center space-x-2 text-[11px] text-[#8a8a7e] mt-0.5">
+                        <span className="flex items-center gap-0.5">
+                          <Ban className="w-3 h-3 text-rose-400" />
+                          <span>Excluded forever</span>
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-0.5">
+                          <Clock className="w-3 h-3 text-[#8a8a7e]" />
+                          added {new Date(skip.addedAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleRemoveSkip(skip.id)}
+                      title="Allow this place to be suggested again"
+                      className="p-1.5 text-[#8a8a7e] hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            {skips.length > 0 && (
+              <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
+                <span className="text-[#8a8a7e] font-serif italic">
+                  {skips.length} places permanently excluded
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

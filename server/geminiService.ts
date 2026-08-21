@@ -561,7 +561,10 @@ export function enforceVacationConstraintsAndPhotos(
   // 1. Process Liked & Skipped Spots from Discovery Swiper
   const likedSpots = prefs.likedSpots || [];
   const skippedSpots = prefs.skippedSpots || [];
-  const skippedNames = skippedSpots.map((s) => s.name.toLowerCase());
+  const skippedNames = [
+    ...skippedSpots.map((s) => s.name.toLowerCase()),
+    ...(prefs.permanentSkips || []).map((s) => s.trim().toLowerCase()).filter(Boolean),
+  ];
 
   // Clone plan days and attach curated photos & booking links
   let updatedDays: DailyPlan[] = plan.days.map((day) => {
@@ -1145,6 +1148,17 @@ function enforceHometownRadiusAndCoordinates(
   const maxRadius = prefs.radiusKm;
   const locName = verified?.name || prefs.location;
 
+  // Replacement candidates must respect the resident's exclusions
+  const excludedLower = [
+    ...(prefs.excludedPlaces || []),
+    ...(prefs.permanentSkips || []),
+  ].map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const isExcludedName = (name: string) => {
+    const n = name.toLowerCase();
+    return excludedLower.some((ex) => n.includes(ex) || ex.includes(n));
+  };
+  const safeLocalSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedName(sp));
+
   if (plan.days) {
     plan.days.forEach((day) => {
       if (day.activities) {
@@ -1180,8 +1194,8 @@ function enforceHometownRadiusAndCoordinates(
 
             // If the spot name mentioned a distant city, replace it with a genuine local spot from verified popular spots or town-anchored name
             if (isDistantCity || dist > maxRadius * 2) {
-              if (verified && verified.popularSpots && verified.popularSpots[idx % verified.popularSpots.length]) {
-                const spotName = verified.popularSpots[idx % verified.popularSpots.length];
+              if (safeLocalSpots.length > 0) {
+                const spotName = safeLocalSpots[idx % safeLocalSpots.length];
                 act.name = spotName;
                 act.description = `Authentic local highlight in ${locName} within your ${maxRadius}km radius.`;
                 act.insiderTip = `A favorite local spot right here in ${locName}.`;
@@ -1212,9 +1226,23 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
       ? "Half-Day plan of 3 to 5 hours (3-4 complementary spots)"
       : "Full Day / Weekend exploration (4-5 spots with lunch & dinner)";
 
-  const exclusions = prefs.excludedPlaces && prefs.excludedPlaces.length > 0
-    ? `CRITICAL DEDUPLICATION RULE: The user has visited or received these places in the past 30 days. You MUST STRICTLY AVOID suggesting any of these exact places: [${prefs.excludedPlaces.join(", ")}]. Find fresh, authentic local alternatives!`
-    : "";
+  // --- Resident exclusion & "already known sights" intelligence ---
+  const permanentSkips = prefs.permanentSkips || [];
+  const excludedRecent = prefs.excludedPlaces || [];
+  const verifiedTown = findVerifiedDestination(prefs.location);
+  const knownTouristSights = verifiedTown?.popularSpots || [];
+
+  const exclusionBlocks: string[] = [];
+  if (excludedRecent.length > 0) {
+    exclusionBlocks.push(`30-DAY MEMORY RULE: The resident has visited or been suggested these places in the past 30 days. STRICTLY AVOID them and their equivalents: [${excludedRecent.join(", ")}].`);
+  }
+  if (permanentSkips.length > 0) {
+    exclusionBlocks.push(`PERMANENT EXCLUSION RULE (absolute, highest priority): The resident has PERMANENTLY banned these places. NEVER suggest them or their direct equivalents under any circumstances: [${permanentSkips.join(", ")}].`);
+  }
+  if (knownTouristSights.length > 0) {
+    exclusionBlocks.push(`ALREADY-KNOWN SIGHTS RULE: This resident has already seen ALL classic sights of ${verifiedTown?.name || prefs.location}. Do NOT propose ordinary tourist visits to: [${knownTouristSights.join(", ")}]. The only exception is ONE item that re-experiences such a place in a genuinely unusual micro-way (empty opening hour, night illumination, low tide, seasonal/temporary event).`);
+  }
+  const exclusions = exclusionBlocks.join("\n");
 
   let likedSpotsInstruction = "";
   if (prefs.likedSpots && prefs.likedSpots.length > 0) {
@@ -1222,26 +1250,25 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
   }
 
   const systemInstruction = `You are LocalExplorer AI in Hometown Local Guide Mode, empowered with Google Search to discover real-time live events, concerts, street food markets, sports races, food truck rallies, pop-up artisan markets, temporary art exhibits, and local festivals.
-Your mission is to act as the ultimate native insider for residents exploring their local area strictly within ${prefs.radiusKm} km of ${prefs.location} (Center Coordinates: lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
+THE USER IS A LONG-TIME RESIDENT OF ${prefs.location.toUpperCase()} — NOT A TOURIST. They already know every famous sight, landmark and "top 10" recommendation. Your value is revealing their own town through angles they have not lived yet.
 
-STRICT GEOGRAPHIC RADIUS ENFORCEMENT RULES:
-1. CENTER LOCATION: ${prefs.location} (Exact Lat: ${baseCoords.lat.toFixed(4)}, Lng: ${baseCoords.lng.toFixed(4)}).
-2. MAXIMUM ALLOWED DISTANCE: ${prefs.radiusKm} km from ${prefs.location}.
-3. ABSOLUTE BOUNDARY RULE: Every single activity, restaurant, coffee shop, and event MUST be physically located within ${prefs.radiusKm} km of ${prefs.location} (${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
-4. ABSOLUTE BAN ON DISTANT CITIES: Do NOT propose any places outside this ${prefs.radiusKm} km radius! For example, if the location is Azpeitia and radius is 10 km, places in Donostia / San Sebastián or Bilbao are STRICTLY FORBIDDEN because they are >35 km away! Only recommend spots in ${prefs.location} or adjacent villages within ${prefs.radiusKm} km (such as Azkoitia, Loyola Sanctuary, or Mount Izarraitz for Azpeitia).
-5. USE GOOGLE SEARCH to search for active, real-time events, live concerts, sports races, street food markets, and cultural pop-ups happening right now or this week within ${prefs.radiusKm} km of ${prefs.location}.
-6. If you find live active events matching the occasion ("${prefs.occasion}"), include them prominently in the plan!
-7. For any spot that is an active live event, set "isLiveEvent": true and populate "eventDetails": { "eventType": "Concert" | "Market" | "Race" | "Festival" | "Exhibition", "dates": "e.g. Aug 21-23 or Tonight 8 PM", "venue": "Venue Name" }.
-8. STRICTLY AVOID generic tourist traps or commercial chains.
-9. Focus on authentic neighborhood gems, scenic secret spots, indie coffee roasters, local tapas/pintxo bars, nature trails, artisan bakeries, and distinct local character.
-10. Adapt specifically to current weather: "${prefs.weatherCondition}" (${prefs.currentTemp ? prefs.currentTemp + "°C" : ""}).
-11. Fit into the timeframe: ${timeDescription}.
-12. Coordinates must be accurate real-world lat/lng near ${prefs.location} (within ${prefs.radiusKm} km of ${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
-13. Provide alternative choices for each activity spot.
-14. ${exclusions}
-15. ${likedSpotsInstruction}`;
+RESIDENT-FIRST CURATION RULES:
+1. REAL & VERIFIED PLACES ONLY: Every recommendation MUST be a real, named, currently-existing place or event within ${prefs.radiusKm} km of ${prefs.location}. USE GOOGLE SEARCH to discover real local businesses, trails, viewpoints and happenings (the actual independent bakery, the actual trailhead, the actual market happening this week). Invented or placeholder places ("Artisan Coffee Roastery", "Cozy Local Cafe") are STRICTLY FORBIDDEN.
+2. HYPER-LOCAL & EPHEMERAL OVER FAMOUS: Prioritize what only residents can enjoy — quiet-hour revisits, tide- or sunset-dependent spots, today's market lineup, this week's concerts/races/pop-ups, seasonal produce, the bench locals actually use, the counter with the daily special.
+3. NO TOURIST AGENDA: Never frame anything as a sightseeing visit to a famous landmark${knownTouristSights.length > 0 ? ` — the resident has already seen: [${knownTouristSights.join(", ")}]` : ""}.
+4. CENTER LOCATION: ${prefs.location} (Exact Lat: ${baseCoords.lat.toFixed(4)}, Lng: ${baseCoords.lng.toFixed(4)}).
+5. MAXIMUM ALLOWED DISTANCE: ${prefs.radiusKm} km from ${prefs.location}. Every single activity, restaurant, coffee shop, and event MUST be physically located within this radius (adjacent villages are fine only if inside the radius).
+6. For any spot that is an active live event, set "isLiveEvent": true and populate "eventDetails": { "eventType": "Concert" | "Market" | "Race" | "Festival" | "Exhibition", "dates": "e.g. Aug 21-23 or Tonight 8 PM", "venue": "Venue Name" }.
+7. STRICTLY AVOID generic tourist traps, commercial chains, and anything a travel blog would list as a "must-see".
+8. Adapt specifically to current weather: "${prefs.weatherCondition}" (${prefs.currentTemp ? prefs.currentTemp + "°C" : ""}) — if wet or cold, favor indoor, covered, or cozy experiences.
+9. Fit into the timeframe: ${timeDescription}.
+10. Coordinates must be accurate real-world lat/lng within ${prefs.radiusKm} km of (${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
+11. Provide alternative choices for each activity spot.
+12. ${exclusions}
+13. ${likedSpotsInstruction}`;
 
-  const prompt = `Perform a live web search for active events, live concerts, street food markets, sports races, and cultural pop-ups happening right now or this week near ${prefs.location} (within a ${prefs.radiusKm}km radius of lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
+  const prompt = `The requester is a LONG-TIME RESIDENT of ${prefs.location}, not a visitor: they have already seen every tourist sight and standard recommendation. Surprise them with real places and happenings they plausibly have not experienced yet.
+Perform a live web search for active events, live concerts, street food markets, sports races, and cultural pop-ups happening right now or this week near ${prefs.location} (within a ${prefs.radiusKm}km radius of lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
 Build a custom local plan incorporating live events discovered during search alongside top neighborhood hidden gems strictly within ${prefs.radiusKm} km of ${prefs.location}.
 
 Location: ${prefs.location}
@@ -1349,6 +1376,28 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
       mapCenter,
       mapZoom: parsed.mapZoom || (prefs.radiusKm <= 10 ? 14 : prefs.radiusKm <= 25 ? 12 : 11),
     };
+
+    // Resident exclusion filter: strip permanently-banned / recently-seen spots from the model output
+    const allExclusionsLower = [...permanentSkips, ...excludedRecent]
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+    if (allExclusionsLower.length > 0 && Array.isArray(planResult.days)) {
+      planResult.days.forEach((day) => {
+        if (!Array.isArray(day.activities)) return;
+        day.activities = day.activities.filter((act) => {
+          const n = (act.name || "").toLowerCase();
+          return !allExclusionsLower.some((ex) => n.includes(ex) || ex.includes(n));
+        });
+        day.activities.forEach((act) => {
+          if (act.alternativeOptions) {
+            act.alternativeOptions = act.alternativeOptions.filter((alt) => {
+              const n = (alt.name || "").toLowerCase();
+              return !allExclusionsLower.some((ex) => n.includes(ex) || ex.includes(n));
+            });
+          }
+        });
+      });
+    }
 
     return enforceHometownRadiusAndCoordinates(planResult, prefs, baseCoords);
   } catch (error) {
@@ -1907,17 +1956,174 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
 function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
   const loc = prefs.location.trim() || "Local Neighborhood";
   const baseCoords = lookupKnownCoordinates(loc);
+  const verified = findVerifiedDestination(prefs.location);
+  const townName = verified?.name || loc.split(",")[0].trim();
+
+  // Honor the resident's exclusion lists even in offline mode
+  const excludedLower = [...(prefs.excludedPlaces || []), ...(prefs.permanentSkips || [])]
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+  const isExcludedSpot = (name: string) => {
+    const n = name.toLowerCase();
+    return excludedLower.some((ex) => n.includes(ex) || ex.includes(n));
+  };
+
+  const spotCount = prefs.timeAvailable === "quick" ? 2 : prefs.timeAvailable === "full-day" ? 4 : 3;
+  const wetWeather = /rain|storm|drizzle|wet|cold|chilly|wind|overcast/i.test(prefs.weatherCondition || "");
+
+  // How a resident re-lives a familiar place, per occasion
+  const occasionAngles: Record<string, { suffix: string; tip: string }> = {
+    "Solo Chill & Read": {
+      suffix: "Quiet-Hour Revisit",
+      tip: "Go at the calm hour when it belongs to locals, not visitors — bring something to read and stay twice as long as you normally would.",
+    },
+    "Date Night & Ambiance": {
+      suffix: "Evening-Ambiance Revisit",
+      tip: "Same place, different town: after dark the crowds thin, the light changes, and it feels like somewhere new.",
+    },
+    "Outdoor Adventure": {
+      suffix: "Active Local Loop",
+      tip: "Do it at local pace and take the branch residents use to skip the busy stretch.",
+    },
+    "Rainy Day Indoor": {
+      suffix: "Sheltered-Corner Revisit",
+      tip: "Head straight for the covered corner — wet days give it a completely different atmosphere.",
+    },
+    "Local Tapas & Eateries": {
+      suffix: "Counter & Daily Special",
+      tip: "Ignore the card menu: stand at the bar and ask for today's local special.",
+    },
+    "Nature & River Spots": {
+      suffix: "Slow Nature Loop",
+      tip: "Take the longer resident loop instead of the signposted short route.",
+    },
+    "Hidden Gems & Vintage": {
+      suffix: "Back-Side Exploration",
+      tip: "Explore the side entrances and back streets around it that most people walk straight past.",
+    },
+    "Family Fun Outing": {
+      suffix: "Family-Hour Revisit",
+      tip: "Go at family hour when it's relaxed, and the staff have time for the kids.",
+    },
+  };
+  const angle = occasionAngles[prefs.occasion] || occasionAngles["Solo Chill & Read"];
+
+  // Occasion-matched archetypes used when no verified local knowledge exists
+  const archetypesByOccasion: Record<string, { name: string; category: ActivityCategory; description: string; tip: string; cost: string }[]> = {
+    "Solo Chill & Read": [
+      { name: "Independent Café with a Reading Corner", category: "cafe", description: "A quiet independent café where regulars read and nobody rushes you.", tip: "Ask which corner gets the afternoon light — that's the locals' seat.", cost: "€4 - €8" },
+      { name: "Quiet Green Loop & Locals' Bench", category: "nature", description: "The calmest walking loop nearby, ending at the bench residents actually use.", tip: "The bench facing west gets the last sun of the day.", cost: "Free" },
+      { name: "Bookshop or Kiosk Browsing Stroll", category: "hidden-gem", description: "Slow browsing through local shelves and magazines, no agenda.", tip: "Check the small local-press section for town history zines.", cost: "Free to browse" },
+      { name: "Empty-Hour Square Terrace", category: "cafe", description: "The main square's terrace at its quietest, coffee in hand.", tip: "Locals go between lunch and the evening rush — that's the calm window.", cost: "€3 - €6" },
+    ],
+    "Date Night & Ambiance": [
+      { name: "Sunset Viewpoint the Locals Actually Use", category: "nature", description: "The lookout where residents take visitors — and each other.", tip: "Arrive 20 minutes before sunset for the best light and a free bench.", cost: "Free" },
+      { name: "Intimate Neighborhood Bistro", category: "food", description: "Small room, short menu, candlelight — the kind of place you book for a reason.", tip: "Ask for the corner table; it's the quietest in the house.", cost: "€25 - €45" },
+      { name: "Evening Terrace & Slow Drinks", category: "nightlife", description: "String lights and slow conversation — the resident's default end to a date.", tip: "Order the house vermouth or local pour rather than the cocktail list.", cost: "€10 - €18" },
+      { name: "Night-Illuminated Old-Quarter Walk", category: "sightseeing", description: "Familiar streets read completely differently after dark.", tip: "Walk the lit route counter-clockwise — the best facades face you.", cost: "Free" },
+    ],
+    "Outdoor Adventure": [
+      { name: "Ridge or Trailhead Active Loop", category: "nature", description: "The proper local loop with real elevation, not the signposted stroll.", tip: "Take the residents' shortcut on the way back — it saves 15 minutes.", cost: "Free" },
+      { name: "Riverbank or Estuary Path Run/Walk", category: "nature", description: "Flat-out-and-back along the water where locals train.", tip: "The far bridge has the best mid-route view.", cost: "Free" },
+      { name: "Panoramic Picnic Ledge", category: "nature", description: "A sheltered spot with the view residents keep to themselves.", tip: "Bring water — there's no kiosk up there, which is exactly why it's quiet.", cost: "Free" },
+      { name: "Coastal or Countryside Lookout Detour", category: "sightseeing", description: "A short detour to the lookout locals mention but guidebooks miss.", tip: "Best in the hour before sunset when the haze drops.", cost: "Free" },
+    ],
+    "Rainy Day Indoor": [
+      { name: "Small Museum or Gallery Corner", category: "culture", description: "The town's indoor refuge — one good room beats five rushed ones.", tip: "Rainy days are when the curator actually has time to talk.", cost: "€3 - €8" },
+      { name: "Covered Market Counter Lunch", category: "food", description: "Dry, warm, and full of stall-side snacks.", tip: "The counters at the back serve the best portions once the rush ends.", cost: "€8 - €15" },
+      { name: "Café with Window Seats", category: "cafe", description: "Rain on the glass, coffee in hand — the classic local hideout.", tip: "Window seats go first; the side table by the radiator is the backup.", cost: "€4 - €8" },
+      { name: "Bookshop, Workshop or Artisan Visit", category: "hidden-gem", description: "Indoor wandering through shelves or a maker's bench.", tip: "Ask about repairs or custom orders — rainy days are when makers work.", cost: "Free to browse" },
+    ],
+    "Local Tapas & Eateries": [
+      { name: "Market Counter Tastings", category: "food", description: "Graze across the market stalls like the regulars do.", tip: "Go before 1 PM while the best counters still have everything.", cost: "€10 - €18" },
+      { name: "The Bar with the Daily Special", category: "food", description: "One bar, one blackboard, the dish locals actually queue for.", tip: "Ask what came in today — the blackboard special beats the menu.", cost: "€12 - €22" },
+      { name: "Dessert & Vermouth Stop", category: "cafe", description: "The sweet finish residents tack onto any outing.", tip: "The house vermouth with a citrus twist is the local order.", cost: "€5 - €10" },
+      { name: "Neighborhood Counter of the Month", category: "food", description: "Rotate through the small counters — this month, try one you walk past daily.", tip: "Stand at the bar, not the tables: better portions, better chat.", cost: "€8 - €16" },
+    ],
+    "Nature & River Spots": [
+      { name: "Riverside Greenway Slow Loop", category: "nature", description: "The flat green path along the water, done at resident pace.", tip: "Cross at the second bridge for the quieter return bank.", cost: "Free" },
+      { name: "Wetland or Park Sanctuary Bench", category: "nature", description: "The green pocket where locals go to hear birds instead of traffic.", tip: "The far bench is the one with morning sun and no dog traffic.", cost: "Free" },
+      { name: "Tree-Shaded Reading Clearing", category: "relaxation", description: "A clearing residents claim for slow afternoons.", tip: "Bring a blanket — the grass dries fastest on the south edge.", cost: "Free" },
+      { name: "Waterline Lookout at Golden Hour", category: "sightseeing", description: "Where the river meets the light — the resident's free spectacle.", tip: "Low water exposes the stepping stones; check before crossing.", cost: "Free" },
+    ],
+    "Hidden Gems & Vintage": [
+      { name: "Vintage & Thrift Back Rooms", category: "shopping", description: "The racks behind the racks, where the good stuff hides.", tip: "New stock goes out midweek mornings — not weekends.", cost: "€5 - €20" },
+      { name: "Murals, Courtyards & Hidden Corners", category: "hidden-gem", description: "A self-guided loop of the details residents stop noticing.", tip: "Look up — half the best pieces are above street level.", cost: "Free" },
+      { name: "Independent Workshop Visit", category: "culture", description: "A maker's bench you can actually stand and watch.", tip: "Weekday afternoons are when makers work; weekends they sell.", cost: "Free to browse" },
+      { name: "The Alley Café Nobody Finds First", category: "cafe", description: "Tucked one street off the obvious route.", tip: "It's the one with no sign — look for the regulars outside.", cost: "€4 - €8" },
+    ],
+    "Family Fun Outing": [
+      { name: "Playground & Shaded Picnic Park", category: "relaxation", description: "The park local families actually default to.", tip: "The shaded benches near the small slide fill first on warm days.", cost: "Free" },
+      { name: "Family Treat Stop", category: "food", description: "The ice-cream or pastry counter kids ask for by name.", tip: "The small size is generous here — upgrade only if sharing.", cost: "€4 - €9" },
+      { name: "Easy Nature Stroll with a Destination", category: "nature", description: "Short legs, big payoff: a walk that ends somewhere worth it.", tip: "Promise the destination first — it halves the whining.", cost: "Free" },
+      { name: "Animal or Water-Watching Corner", category: "nature", description: "Ducks, herons or boats — the spot kids can watch for an hour.", tip: "Bring bread only if locals do; some ponds ban feeding.", cost: "Free" },
+    ],
+  };
+
+  let archetypePool = archetypesByOccasion[prefs.occasion] || archetypesByOccasion["Solo Chill & Read"];
+  // Wet weather: outdoor-heavy occasions fall back to indoor ideas
+  if (wetWeather && (prefs.occasion === "Outdoor Adventure" || prefs.occasion === "Nature & River Spots")) {
+    archetypePool = archetypesByOccasion["Rainy Day Indoor"];
+  }
+
+  const timeSlots =
+    spotCount === 2
+      ? ["10:30 AM - 12:00 PM", "12:30 PM - 02:00 PM"]
+      : spotCount === 3
+      ? ["10:30 AM - 12:00 PM", "12:30 PM - 02:30 PM", "03:00 PM - 04:30 PM"]
+      : ["10:00 AM - 11:30 AM", "12:00 PM - 02:00 PM", "02:30 PM - 04:00 PM", "04:30 PM - 06:00 PM"];
+
+  // Real local places (verified knowledge base) re-experienced at a resident angle,
+  // minus anything the resident has excluded.
+  const realSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedSpot(sp));
+  const rotate = realSpots.length > 0 ? new Date().getDate() % realSpots.length : 0;
+
+  const activities: ActivitySpot[] = [];
+  for (let i = 0; i < spotCount; i++) {
+    const jitterLat = baseCoords.lat + Math.sin(i * 2.1 + 0.7) * 0.004;
+    const jitterLng = baseCoords.lng + Math.cos(i * 2.1 + 0.7) * 0.004;
+
+    const realSpot = realSpots.length > 0 ? realSpots[(rotate + i) % realSpots.length] : null;
+    if (realSpot && i < realSpots.length) {
+      activities.push({
+        id: `ht-local-${i}-${Date.now()}`,
+        time: timeSlots[i],
+        name: `${realSpot} — ${angle.suffix}`,
+        category: wetWeather ? (i % 2 === 0 ? "culture" : "cafe") : (["nature", "cafe", "hidden-gem", "sightseeing"] as ActivityCategory[])[i % 4],
+        description: `You already know ${realSpot} — this is the resident's way of re-living it: at an unusual hour and a slower pace, when the place belongs to locals rather than visitors.`,
+        insiderTip: angle.tip,
+        approxCost: "Free",
+        rating: 4.8,
+        coordinates: { lat: jitterLat, lng: jitterLng },
+        durationMinutes: 75,
+      });
+    } else {
+      const arch = archetypePool[i % archetypePool.length];
+      activities.push({
+        id: `ht-arch-${i}-${Date.now()}`,
+        time: timeSlots[i],
+        name: `${townName}: ${arch.name}`,
+        category: arch.category,
+        description: `${arch.description} (Offline curated sample — configure GEMINI_API_KEY for real, live-searched local places.)`,
+        insiderTip: arch.tip,
+        approxCost: arch.cost,
+        rating: 4.7,
+        coordinates: { lat: jitterLat, lng: jitterLng },
+        durationMinutes: 75,
+      });
+    }
+  }
 
   return {
     id: "hometown-" + Date.now(),
     mode: "hometown",
-    title: `Local Explorer: ${prefs.occasion} in ${loc}`,
+    title: `Local Explorer: ${prefs.occasion} in ${townName}`,
     destinationOrTown: loc,
-    summary: `Tailored native resident excursion within a ${prefs.radiusKm}km radius of ${loc}. Tuned for ${prefs.weatherCondition} conditions with zero tourist traps.`,
+    summary: `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`,
     highlights: [
-      `Uncrowded scenic sanctuary within ${prefs.radiusKm}km of home`,
-      `Artisanal neighborhood specialty roastery & bakery`,
-      `Authentic local culinary and cultural gem`,
+      `Familiar ${townName} places re-experienced at quiet, resident-only hours`,
+      `Tuned to "${prefs.occasion}" and today's ${prefs.weatherCondition.toLowerCase()} conditions`,
+      `Your permanent exclusions and 30-day memory are respected`,
     ],
     totalDays: 1,
     createdAt: new Date().toISOString(),
@@ -1928,48 +2134,11 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     days: [
       {
         dayNumber: 1,
-        dayTitle: `Local ${prefs.occasion} Experience`,
+        dayTitle: `${townName}: ${prefs.occasion} — Resident Angle`,
         theme: prefs.occasion,
-        summary: `Crafted for a ${prefs.timeAvailable} outing with authentic neighborhood character.`,
-        estimatedTotalBudget: "$20 - $45",
-        activities: [
-          {
-            id: "hometown-1",
-            time: "10:30 AM - 12:00 PM",
-            name: "Artisan Coffee Roastery & Micro-Bakery",
-            category: "cafe",
-            description: "Independent neighborhood specialty roaster serving single-origin pour-overs and cardamom morning buns.",
-            insiderTip: "Grab a seat by the courtyard window for quiet reading.",
-            approxCost: "$6 - $12",
-            rating: 4.9,
-            coordinates: { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.002 },
-            durationMinutes: 60,
-          },
-          {
-            id: "hometown-2",
-            time: "12:30 PM - 02:30 PM",
-            name: "Secluded Green Trail & Botanical Pergola",
-            category: "nature",
-            description: "Tranquil walking path tucked behind the residential quarter leading to a hidden wooden observation deck.",
-            insiderTip: "Take the western fork toward the stone bridge for the quietest bench.",
-            approxCost: "Free",
-            rating: 4.8,
-            coordinates: { lat: baseCoords.lat + 0.006, lng: baseCoords.lng + 0.003 },
-            durationMinutes: 90,
-          },
-          {
-            id: "hometown-3",
-            time: "03:00 PM - 04:30 PM",
-            name: "Neighborhood Vinyl & Artisan Loft",
-            category: "hidden-gem",
-            description: "Cozy upstairs sanctuary featuring curated vintage vinyl, books, and handmade ceramics.",
-            insiderTip: "Check the staff recommendation shelf for annotated gems.",
-            approxCost: "Free to browse",
-            rating: 4.8,
-            coordinates: { lat: baseCoords.lat - 0.003, lng: baseCoords.lng + 0.001 },
-            durationMinutes: 60,
-          },
-        ],
+        summary: `Crafted for a ${prefs.timeAvailable} outing that skips everything you have already done.`,
+        estimatedTotalBudget: "$10 - $35",
+        activities,
       },
     ],
   };

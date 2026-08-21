@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { HometownPreferences, TimeAvailability, WeatherData } from "../types";
 import { fetchLiveWeather, reverseGeocode } from "../utils/weather";
-import { getRecentExcludedPlaces } from "../utils/storage";
+import { getRecentExcludedPlaces, getPermanentSkips, getPermanentSkipNames } from "../utils/storage";
 import { DestinationAdvisor } from "./DestinationAdvisor";
 import { findVerifiedDestination } from "../utils/destinations";
 
@@ -45,6 +45,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
 
   const verifiedTown = findVerifiedDestination(location);
   const excludedCount = getRecentExcludedPlaces(location).length;
+  const permanentSkipCount = getPermanentSkips().length;
 
   // Auto-detect GPS location on click
   const handleDetectGPS = () => {
@@ -98,6 +99,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
       weatherCondition,
       currentTemp: liveWeatherData?.temperature,
       excludedPlaces,
+      permanentSkips: getPermanentSkipNames(),
       customNotes: customNotes.trim() || undefined,
     });
   };
@@ -375,8 +377,8 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
                 30-Day Anti-Repeat Memory Active
               </div>
               <div className="text-[11px] text-[#6b6b5e]">
-                {excludedCount > 0
-                  ? `Filtering out ${excludedCount} recently suggested spots in ${location}`
+                {excludedCount > 0 || permanentSkipCount > 0
+                  ? `Filtering out ${excludedCount} recent + ${permanentSkipCount} permanently excluded spots for ${location.split(",")[0]}`
                   : "Automatically tracks history to prevent suggesting recently visited places"}
               </div>
             </div>
@@ -386,7 +388,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
             onClick={onOpenHistory}
             className="text-xs font-serif italic text-[#5A5A40] hover:text-[#2c2c24] underline shrink-0 ml-2"
           >
-            View History
+            Manage
           </button>
         </div>
 

@@ -24,6 +24,7 @@ interface ItineraryDisplayProps {
   onOpenExport: () => void;
   onSwapActivity: (activity: ActivitySpot, dayNumber: number) => Promise<void>;
   onUpdatePlan: (updatedPlan: ItineraryPlan) => void;
+  onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   onRegenerateAll?: () => void;
 }
 
@@ -34,6 +35,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   onOpenExport,
   onSwapActivity,
   onUpdatePlan,
+  onSkipPermanently,
   onRegenerateAll,
 }) => {
   const [activeDayNumber, setActiveDayNumber] = useState<number | "all">("all");
@@ -454,6 +456,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               onOpenAddActivity={(dNum) => setAddingDayNumber(dNum)}
               onDeleteDay={plan.days.length > 1 ? handleDeleteDay : undefined}
               onUpdateDayHeader={handleUpdateDayHeader}
+              onSkipPermanently={onSkipPermanently}
               destinationOrTown={plan.destinationOrTown}
             />
           ))}

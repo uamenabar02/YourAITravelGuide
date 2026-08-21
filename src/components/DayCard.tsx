@@ -17,6 +17,8 @@ interface DayCardProps {
   onDeleteDay?: (dayNumber: number) => void;
   /** Persist a day title/theme edit immutably through the parent plan state. */
   onUpdateDayHeader?: (dayNumber: number, patch: { dayTitle?: string; theme?: string }) => void;
+  /** Permanently exclude a spot from all future suggestions. */
+  onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   destinationOrTown: string;
 }
 
@@ -33,6 +35,7 @@ export const DayCard: React.FC<DayCardProps> = ({
   onOpenAddActivity,
   onDeleteDay,
   onUpdateDayHeader,
+  onSkipPermanently,
   destinationOrTown,
 }) => {
   const [isExpanded, setIsExpanded] = useState(isExpandedDefault);
@@ -185,6 +188,7 @@ export const DayCard: React.FC<DayCardProps> = ({
                   onDeleteActivity={onDeleteActivity}
                   onMoveActivity={onMoveActivity}
                   onSelectAlternativeOption={onSelectAlternativeOption}
+                  onSkipPermanently={onSkipPermanently}
                   destinationOrTown={destinationOrTown}
                 />
 

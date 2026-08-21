@@ -1,6 +1,6 @@
 # LocalExplorer AI — Full Application Audit
 
-**Date:** 2026-08-21 · **Scope:** Web app (React 19 + Vite 6 + Express 4 + Gemini API) · **Commit:** `214ff23`
+**Date:** 2026-08-21 · **Scope:** Web app (React 19 + Vite 6 + Express 4 + Gemini API) · **Commits:** `214ff23` → resident-first Hometown upgrade (see §6)
 
 This audit covers every source file (~9,200 lines): `server.ts`, `server/geminiService.ts` (2,200 lines),
 all 17 components, utilities, types, config, and build pipeline. Issues were found via static analysis
@@ -112,3 +112,23 @@ npm run lint         # tsc --noEmit
 ```
 
 Without a key, every endpoint still returns curated offline content (now deduplicated and correctly formatted).
+
+---
+
+## 6. Hometown Mode v2 — resident-first suggestions + permanent skips
+
+Following user feedback that hometown suggestions felt too generic for **long-time residents**, the mode was rebuilt around two pillars:
+
+### 6.1 Resident-first curation
+- **The prompt now declares the user a long-time resident, not a tourist.** Classic sightseeing is banned; the model must deliver hyper-local, ephemeral experiences (quiet-hour revisits, tide/sunset-dependent spots, this week's markets/concerts/races, the counter with the daily special).
+- **Known tourist sights are auto-excluded per town.** When the town exists in the verified knowledge base, its `popularSpots` are injected into the Gemini instruction as "already seen by the resident — do not propose ordinary visits".
+- **Real places only.** The instruction forbids invented placeholders ("Artisan Coffee Roastery") and mandates Google-Search-grounded, named, currently-existing places within the radius.
+- **Offline fallback rebuilt (no API key):** occasion-aware and weather-aware. Verified towns get their *real* places re-framed the way residents re-live them (`"Quiet-Hour Revisit"`, `"Evening-Ambiance Revisit"`, `"Counter & Daily Special"`… per occasion). Unknown towns get honest occasion-matched archetypes (indoor ideas when it rains, 2/3/4 spots for quick/half-day/full-day). Permanent skips and 30-day memory are respected even offline.
+
+### 6.2 Permanent skip list ("never suggest again")
+- **New localStorage store** (`getPermanentSkips` / `addPermanentSkip` / `removePermanentSkip` in `src/utils/storage.ts`).
+- **Per-activity Ban button** on every activity card: one tap permanently excludes that place and removes it from the current plan.
+- **Management UI**: the History modal now has two tabs — *30-Day Memory* and *Permanent Skips* (list + restore entries). The Hometown form's anti-repeat banner shows both counts with a "Manage" link.
+- **Enforced everywhere server-side**: hometown generation (prompt + post-parse filter of activities *and* alternatives), vacation generation (filtered like swiper-skips), single-spot swaps (`excludedPlaces` now carries permanent skips), and radius-enforcement replacements never reintroduce a banned place.
+
+**Verified:** banned spots leak 0/3 into regenerated plans; occasion/weather/time-of-day adapt correctly; lint + build + all endpoints green.

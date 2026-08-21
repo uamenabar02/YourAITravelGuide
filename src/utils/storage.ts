@@ -1,7 +1,8 @@
-import { ItineraryPlan, ActivityHistoryItem, ActivitySpot } from "../types";
+import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip } from "../types";
 
 const SAVED_TRIPS_KEY = "localexplorer_saved_trips_v1";
 const ACTIVITY_HISTORY_KEY = "localexplorer_activity_history_v1";
+const PERMANENT_SKIPS_KEY = "localexplorer_permanent_skips_v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 // --- Saved Trips ---
@@ -123,4 +124,63 @@ export function removeHistoryItem(id: string): void {
 
 export function clearActivityHistory(): void {
   localStorage.removeItem(ACTIVITY_HISTORY_KEY);
+}
+
+// --- Permanent Skips ("never suggest this again") ---
+
+export function getPermanentSkips(): PermanentSkip[] {
+  try {
+    const raw = localStorage.getItem(PERMANENT_SKIPS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Failed to read permanent skips:", err);
+    return [];
+  }
+}
+
+export function getPermanentSkipNames(): string[] {
+  return getPermanentSkips().map((s) => s.name);
+}
+
+export function addPermanentSkip(name: string): void {
+  const clean = name.trim();
+  if (!clean) return;
+  try {
+    const current = getPermanentSkips();
+    const exists = current.some((s) => s.name.toLowerCase() === clean.toLowerCase());
+    if (exists) return;
+    const updated = [
+      {
+        id: "skip-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        name: clean,
+        addedAt: Date.now(),
+      },
+      ...current,
+    ];
+    localStorage.setItem(PERMANENT_SKIPS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.error("Failed to add permanent skip:", err);
+  }
+}
+
+export function removePermanentSkip(id: string): void {
+  try {
+    const current = getPermanentSkips();
+    const updated = current.filter((s) => s.id !== id);
+    localStorage.setItem(PERMANENT_SKIPS_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.error("Failed to remove permanent skip:", err);
+  }
+}
+
+/** Fuzzy match: is this spot name covered by any exclusion list? */
+export function isExcludedName(name: string, exclusions: string[]): boolean {
+  const clean = name.trim().toLowerCase();
+  if (!clean) return false;
+  return exclusions.some((ex) => {
+    const e = ex.trim().toLowerCase();
+    if (!e) return false;
+    return clean.includes(e) || e.includes(clean);
+  });
 }
