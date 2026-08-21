@@ -10,6 +10,7 @@ import {
   CandidateSpot,
   DestinationStop,
   UserSpot,
+  TasteProfile,
 } from "../src/types.js";
 import { geocodeSpot } from "./geocoder.js";
 import {
@@ -62,6 +63,34 @@ function isDiningName(name: string): boolean {
   const n = (name || "").toLowerCase();
   return DINING_NAME_HINTS.some((h) => n.includes(h));
 }
+
+/**
+ * Serialize the user's Taste Profile into prompt language.
+ * Returns "" when there is nothing meaningful to tell the model.
+ */
+function buildTasteInstruction(tp?: TasteProfile | null): string {
+  if (!tp) return "";
+  const parts: string[] = [];
+  if (tp.diningStyles && tp.diningStyles.length > 0) parts.push(`preferred dining styles: ${tp.diningStyles.join(", ")}`);
+  if (tp.drinkPreferences && tp.drinkPreferences.length > 0) parts.push(`preferred drinks: ${tp.drinkPreferences.join(", ")}`);
+  if (tp.atmospheres && tp.atmospheres.length > 0) parts.push(`preferred atmospheres: ${tp.atmospheres.join(", ")}`);
+  if (tp.budgetComfort) parts.push(`usual budget comfort: ${tp.budgetComfort}`);
+  if (tp.dietaryNotes) parts.push(`dietary notes: ${tp.dietaryNotes}`);
+  if (tp.dislikes && tp.dislikes.length > 0) parts.push(`MUST AVOID: ${tp.dislikes.join(", ")}`);
+  return parts.join("; ");
+}
+
+/**
+ * Context-aware dining pairing rules: every food/drink suggestion must fit
+ * both the user's taste profile AND the flow of surrounding activities.
+ */
+const CONTEXT_AWARE_DINING_RULES = `CONTEXT-AWARE DINING PAIRING: Every bar/café/restaurant you suggest MUST match the user's taste profile above AND the activities around its time slot:
+- After outdoor/hiking/active plans → casual, restorative, no-fuss spots (counter lunch, hearty local dish).
+- Before a sunset, viewpoint or evening stroll → a terrace or aperitif-style stop close to the route.
+- On rainy or indoor-culture days → cozy, quiet, indoor atmospheres.
+- Morning slots → coffee/bakery-style stops aligned with their drink preferences.
+- Evening slots → aligned with their preferred drinks (wine bar vs cocktails vs craft beer vs cider).
+Never suggest a dining venue in isolation from the day's flow.`;
 
 // Coordinate & Destination Knowledge Base
 const DESTINATION_COORDINATES: Record<string, { lat: number; lng: number; country: string }> = {
@@ -943,6 +972,10 @@ CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
 11. ${vibesInstruction}
 12. ${skippedSpotsInstruction}
 13. ${likedSpotsInstruction}
+${(() => {
+  const tasteLine = buildTasteInstruction(prefs.tasteProfile);
+  return tasteLine ? `15. TRAVELER TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
+})()}
 14. DINING FROM THE TRAVELER'S OWN PLACES: ${(prefs.userSpots && prefs.userSpots.length > 0)
     ? `the traveler provided their own favorite places: [${prefs.userSpots.map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`).join("; ")}]. For any bar/café/restaurant slot in the destination matching their towns, prefer THESE places. `
     : ""}Bars, cafés and restaurants must be real, named, currently-operating venues (from your knowledge or search) — never generic placeholders.`;
@@ -1303,7 +1336,11 @@ RESIDENT-FIRST CURATION RULES:
 11. Provide alternative choices for each activity spot.
 12. ${exclusions}
 13. ${likedSpotsInstruction}
-14. ${userSpotsInstruction}`;
+14. ${userSpotsInstruction}
+${(() => {
+  const tasteLine = buildTasteInstruction(prefs.tasteProfile);
+  return tasteLine ? `15. RESIDENT TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
+})()}`;
 
   const prompt = `The requester is a LONG-TIME RESIDENT of ${prefs.location}, not a visitor: they have already seen every tourist sight and standard recommendation. Surprise them with real places and happenings they plausibly have not experienced yet.
 Perform a live web search for active events, live concerts, street food markets, sports races, and cultural pop-ups happening right now or this week near ${prefs.location} (within a ${prefs.radiusKm}km radius of lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
@@ -1471,7 +1508,8 @@ export async function generateCandidateSpots(
   exactBudgetPerDay?: number,
   currency: string = "€",
   pace?: string,
-  userSpots: UserSpot[] = []
+  userSpots: UserSpot[] = [],
+  tasteProfile?: TasteProfile | null
 ): Promise<CandidateSpot[]> {
   const ai = getAiClient();
   const baseCoords = lookupKnownCoordinates(destination);
@@ -1522,7 +1560,13 @@ For each place:
 - Approximate cost per person in ${currency} (e.g. "Free", "€10 - €20", "€80 - €120").
 - Exact real-world lat/lng coordinates in ${destination}.
 - Approximate address.
-- 2-3 realistic Google Maps visitor reviews with author names, star rating, and authentic feedback quotes.`;
+- 2-3 realistic Google Maps visitor reviews with author names, star rating, and authentic feedback quotes.
+${(() => {
+  const tasteLine = buildTasteInstruction(tasteProfile);
+  return tasteLine
+    ? `\nUSER TASTE PROFILE (bias candidate selection accordingly, especially dining/leisure spots): ${tasteLine}.`
+    : "";
+})()}`;
 
   const prompt = `Generate ${count} candidate activities for a traveler visiting ${destination}.
 Travel Vibes: ${vibes.join(", ") || "General exploration"}.
@@ -1531,7 +1575,7 @@ Pace: ${pace || "balanced"}.
 Output strictly valid JSON array of candidate spots.`;
 
   if (!ai) {
-    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots);
+    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots, tasteProfile);
   }
 
   try {
@@ -1596,7 +1640,7 @@ Output strictly valid JSON array of candidate spots.`;
     }));
   } catch (error) {
     console.error("Error generating candidate spots:", error);
-    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots);
+    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots, tasteProfile);
   }
 }
 
@@ -1615,6 +1659,9 @@ ${["food", "cafe", "nightlife"].includes(req.category) && req.userSpots && req.u
       .filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category))
       .map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`)
       .join("; ")}].`
+  : ""}
+${["food", "cafe", "nightlife"].includes(req.category) && buildTasteInstruction(req.tasteProfile)
+  ? `- TASTE PROFILE for this dining swap: ${buildTasteInstruction(req.tasteProfile)}. The replacement must match this profile and the ${req.timeSlot} time slot.`
   : ""}`;
 
   const prompt = `Give me 1 alternative activity spot to replace "${req.currentActivityName}" in ${req.destinationOrTown}.
@@ -2061,7 +2108,7 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
   diningSlots = Math.min(diningSlots, spotCount);
 
   // Dynamically geocode the user's places if their coordinates are pending
-  for (const sp of diningPool.slice(0, diningSlots)) {
+  for (const sp of diningPool) {
     if (!sp.coordinates) {
       const geo = await geocodeSpot(sp.name, sp.town || townName);
       if (geo) sp.coordinates = { lat: geo.lat, lng: geo.lng };
@@ -2199,14 +2246,58 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
   let diningUsed = 0;
   let realUsed = 0;
   let archUsed = 0;
+  const usedDiningIds = new Set<string>();
+
+  // Pick the user's place that best fits this slot + their taste profile
+  const pickDiningSpot = (slotIdx: number): UserSpot | null => {
+    if (diningPool.length === 0) return null;
+    const isMorning = slotIdx === 0;
+    const isEvening = slotIdx === spotCount - 1;
+    const tp = prefs.tasteProfile;
+    let best: UserSpot | null = null;
+    let bestScore = -Infinity;
+    for (const sp of diningPool) {
+      if (usedDiningIds.has(sp.id)) continue;
+      let score = 0;
+      if (tp) {
+        const coffeeOrTea = (tp.drinkPreferences || []).some((d) => /coffee|tea|infusion/i.test(d));
+        const alcoholic = (tp.drinkPreferences || []).some((d) => /wine|txakoli|beer|cocktail|cider|mixed/i.test(d));
+        if (isMorning) {
+          if (sp.category === "cafe") score += coffeeOrTea ? 4 : 2;
+        } else if (isEvening) {
+          if (sp.category === "bar") score += alcoholic ? 4 : 2;
+          if (sp.category === "restaurant") score += 1;
+          if (sp.category === "cafe" && coffeeOrTea) score += 1; // quiet evening café for coffee lovers
+        } else {
+          if (sp.category === "restaurant") score += 3;
+          if (sp.category === "cafe") score += coffeeOrTea ? 3 : 1; // reading-break café for coffee lovers
+        }
+        // Budget nudge: 'luxury' profiles lean restaurant, 'budget' leans casual
+        if (tp.budgetComfort === "luxury" && sp.category === "restaurant") score += 1;
+      } else {
+        if (isMorning && sp.category === "cafe") score += 1;
+        if (isEvening && sp.category === "bar") score += 1;
+        if (!isMorning && !isEvening && sp.category === "restaurant") score += 1;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = sp;
+      }
+    }
+    return best;
+  };
 
   for (let i = 0; i < spotCount; i++) {
     const jitterLat = baseCoords.lat + Math.sin(i * 2.1 + 0.7) * 0.004;
     const jitterLng = baseCoords.lng + Math.cos(i * 2.1 + 0.7) * 0.004;
 
-    // 1) Dining slots → the user's OWN places (dynamic, user-provided data)
-    if (diningSlotIdx.has(i) && diningUsed < diningPool.length) {
-      const sp = diningPool[diningUsed++];
+    // 1) Dining slots → the user's OWN places (dynamic, user-provided data),
+    //    ranked for the time slot and their taste profile
+    const pickedDining = diningSlotIdx.has(i) ? pickDiningSpot(i) : null;
+    if (pickedDining) {
+      const sp = pickedDining;
+      usedDiningIds.add(sp.id);
+      diningUsed++;
       activities.push({
         id: `ht-user-${sp.id || diningUsed}-${Date.now()}`,
         time: timeSlots[i],
@@ -2309,7 +2400,8 @@ async function generateFallbackCandidates(
   count: number,
   vibes: string[] = [],
   budgetTier?: string,
-  userSpots: UserSpot[] = []
+  userSpots: UserSpot[] = [],
+  tasteProfile?: TasteProfile | null
 ): Promise<CandidateSpot[]> {
   const isDonostia = destination.toLowerCase().includes("donosti") || destination.toLowerCase().includes("san sebastian") || destination.toLowerCase().includes("san sebastián");
   const baseCoords = lookupKnownCoordinates(destination);
@@ -2533,6 +2625,16 @@ async function generateFallbackCandidates(
   // Score candidates based on user's selected vibes and budget tier
   const scored = pool.map((item) => {
     let score = 0;
+
+    // Taste-profile bonus for the user's own spots
+    if (tasteProfile && item.id.startsWith("cand-user-")) {
+      const drinks = tasteProfile.drinkPreferences || [];
+      const coffeeOrTea = drinks.some((d) => /coffee|tea|infusion/i.test(d));
+      const alcoholic = drinks.some((d) => /wine|txakoli|beer|cocktail|cider|mixed/i.test(d));
+      if (item.category === "cafe" && coffeeOrTea) score += 4;
+      if ((item.category === "nightlife" || item.category === "food") && alcoholic) score += 3;
+      if (tasteProfile.budgetComfort === "luxury") score += 1;
+    }
     if (vibes && vibes.length > 0) {
       for (const v of vibes) {
         if (item.vibeTags && item.vibeTags.includes(v)) {

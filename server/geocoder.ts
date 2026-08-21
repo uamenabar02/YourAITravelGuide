@@ -21,6 +21,12 @@ const cache = new Map<string, GeocodeResult | null>();
 let lastRequestAt = 0;
 const MIN_INTERVAL_MS = 1100;
 
+// Circuit breaker: if Nominatim is unreachable (e.g. offline environments),
+// stop hammering it — skip geocoding for a while instead of paying repeated
+// multi-second timeouts. Successful requests reset the breaker.
+let circuitOpenUntil = 0;
+const CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000;
+
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
 function sleep(ms: number): Promise<void> {
@@ -38,6 +44,7 @@ export async function geocodePlace(query: string): Promise<GeocodeResult | null>
   const key = query.trim().toLowerCase();
   if (!key) return null;
   if (cache.has(key)) return cache.get(key) ?? null;
+  if (Date.now() < circuitOpenUntil) return null; // breaker open: Nominatim was unreachable
 
   try {
     await throttle();
@@ -61,15 +68,19 @@ export async function geocodePlace(query: string): Promise<GeocodeResult | null>
       };
       if (!isNaN(result.lat) && !isNaN(result.lng)) {
         cache.set(key, result);
+        circuitOpenUntil = 0; // healthy again
         return result;
       }
     }
     // Successful request with zero results → negative-cache
     cache.set(key, null);
+    circuitOpenUntil = 0;
     return null;
   } catch (err) {
-    console.warn("Nominatim geocode failed for", query, err);
-    return null; // network error: no negative cache
+    console.warn("Nominatim geocode failed for", query, (err as Error)?.message || err);
+    // Network-level failure: open the breaker so we fail fast for a while
+    circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+    return null; // no negative cache for the query itself
   }
 }
 

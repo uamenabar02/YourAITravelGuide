@@ -1,9 +1,10 @@
-import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip, UserSpot } from "../types";
+import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip, UserSpot, TasteProfile } from "../types";
 
 const SAVED_TRIPS_KEY = "localexplorer_saved_trips_v1";
 const ACTIVITY_HISTORY_KEY = "localexplorer_activity_history_v1";
 const PERMANENT_SKIPS_KEY = "localexplorer_permanent_skips_v1";
 const MY_SPOTS_KEY = "localexplorer_my_spots_v1";
+const TASTE_PROFILE_KEY = "localexplorer_taste_profile_v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 // --- Saved Trips ---
@@ -210,6 +211,41 @@ export function removeMySpot(id: string): void {
   } catch (err) {
     console.error("Failed to remove My Spot:", err);
   }
+}
+
+// --- Taste Profile (how the user likes to eat & drink) ---
+
+export function getTasteProfile(): TasteProfile | null {
+  try {
+    const raw = localStorage.getItem(TASTE_PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      diningStyles: Array.isArray(parsed.diningStyles) ? parsed.diningStyles : [],
+      drinkPreferences: Array.isArray(parsed.drinkPreferences) ? parsed.drinkPreferences : [],
+      atmospheres: Array.isArray(parsed.atmospheres) ? parsed.atmospheres : [],
+      budgetComfort: parsed.budgetComfort,
+      dietaryNotes: typeof parsed.dietaryNotes === "string" ? parsed.dietaryNotes : undefined,
+      dislikes: Array.isArray(parsed.dislikes) ? parsed.dislikes : [],
+      updatedAt: parsed.updatedAt || Date.now(),
+    };
+  } catch (err) {
+    console.error("Failed to read taste profile:", err);
+    return null;
+  }
+}
+
+export function saveTasteProfile(profile: Omit<TasteProfile, "updatedAt">): void {
+  try {
+    localStorage.setItem(TASTE_PROFILE_KEY, JSON.stringify({ ...profile, updatedAt: Date.now() }));
+  } catch (err) {
+    console.error("Failed to save taste profile:", err);
+  }
+}
+
+export function clearTasteProfile(): void {
+  localStorage.removeItem(TASTE_PROFILE_KEY);
 }
 
 /** Fuzzy match: is this spot name covered by any exclusion list? */

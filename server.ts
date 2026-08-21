@@ -31,7 +31,8 @@ async function startServer() {
   // Generate Candidates for Activity Swiper
   app.post("/api/generate-candidates", async (req, res) => {
     try {
-      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace, userSpots } = req.body;
+      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace, userSpots, tasteProfile } =
+        req.body;
       if (!destination) {
         return res.status(400).json({ error: "Destination is required." });
       }
@@ -43,7 +44,8 @@ async function startServer() {
         exactBudgetPerDay,
         currency || "€",
         pace,
-        Array.isArray(userSpots) ? userSpots : []
+        Array.isArray(userSpots) ? userSpots : [],
+        tasteProfile || null
       );
       res.json(candidates);
     } catch (err: any) {
