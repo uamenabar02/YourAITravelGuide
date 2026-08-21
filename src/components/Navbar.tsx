@@ -1,5 +1,5 @@
 import React from "react";
-import { Bookmark, History, MapPin, Plane, Share2, Utensils } from "lucide-react";
+import { Bookmark, History, MapPin, Plane, Share2, Utensils, ChefHat } from "lucide-react";
 import { AppMode } from "../types";
 
 interface NavbarProps {
@@ -11,6 +11,8 @@ interface NavbarProps {
   onOpenHistory: () => void;
   onOpenMySpots?: () => void;
   mySpotsCount?: number;
+  onOpenTasteProfile?: () => void;
+  hasTasteProfile?: boolean;
   onOpenExport?: () => void;
   hasActiveTrip: boolean;
 }
@@ -24,6 +26,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenHistory,
   onOpenMySpots,
   mySpotsCount = 0,
+  onOpenTasteProfile,
+  hasTasteProfile = false,
   onOpenExport,
   hasActiveTrip,
 }) => {
@@ -78,6 +82,21 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Icons */}
           <div className="flex items-center space-x-2">
+            {/* Taste Profile: how the user likes to eat & drink */}
+            {onOpenTasteProfile && (
+              <button
+                id="btn-taste-profile"
+                onClick={onOpenTasteProfile}
+                title="Taste Profile — how you like to eat & drink"
+                className="relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors"
+              >
+                <ChefHat className="w-4 h-4" />
+                {hasTasteProfile && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 border border-white" />
+                )}
+              </button>
+            )}
+
             {/* My Places: user-provided bars, cafés & restaurants */}
             {onOpenMySpots && (
               <button

@@ -8,6 +8,7 @@ import { ActivityHistoryModal } from "./components/ActivityHistoryModal";
 import { ExportModal } from "./components/ExportModal";
 import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
 import { MySpotsModal } from "./components/MySpotsModal";
+import { TasteProfileModal } from "./components/TasteProfileModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
@@ -22,6 +23,7 @@ import {
   getPermanentSkipNames,
   addPermanentSkip,
   getMySpots,
+  getTasteProfile,
 } from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
@@ -38,6 +40,8 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isMySpotsOpen, setIsMySpotsOpen] = useState(false);
   const [mySpotsCount, setMySpotsCount] = useState(0);
+  const [isTasteProfileOpen, setIsTasteProfileOpen] = useState(false);
+  const [hasTasteProfile, setHasTasteProfile] = useState(false);
 
   // Swiper Modal State
   const [isSwiperOpen, setIsSwiperOpen] = useState(false);
@@ -55,6 +59,7 @@ export default function App() {
     setSavedTrips(loadedSaved);
     setHistoryCount(getActivityHistory().length);
     setMySpotsCount(getMySpots().length);
+    setHasTasteProfile(getTasteProfile() !== null);
 
     const shared = parseShareableUrl();
     if (shared) {
@@ -103,6 +108,7 @@ export default function App() {
             currency: prefs.currency,
             pace: prefs.pace,
             userSpots: getMySpots(),
+            tasteProfile: getTasteProfile() || undefined,
           }),
         });
 
@@ -168,6 +174,7 @@ export default function App() {
       skippedSpots: finalSkippedSpots,
       permanentSkips: getPermanentSkipNames(),
       userSpots: getMySpots(),
+      tasteProfile: getTasteProfile() || undefined,
     };
 
     try {
@@ -218,7 +225,11 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "hometown",
-          hometownPrefs: { ...prefs, userSpots: getMySpots() },
+          hometownPrefs: {
+            ...prefs,
+            userSpots: getMySpots(),
+            tasteProfile: getTasteProfile() || undefined,
+          },
         }),
       });
 
@@ -283,6 +294,7 @@ export default function App() {
             ...getPermanentSkipNames(),
           ],
           userSpots: getMySpots(),
+          tasteProfile: getTasteProfile() || undefined,
         }),
       });
 
@@ -362,6 +374,8 @@ export default function App() {
         onOpenHistory={() => setIsHistoryModalOpen(true)}
         onOpenMySpots={() => setIsMySpotsOpen(true)}
         mySpotsCount={mySpotsCount}
+        onOpenTasteProfile={() => setIsTasteProfileOpen(true)}
+        hasTasteProfile={hasTasteProfile}
         onOpenExport={() => setIsExportModalOpen(true)}
         hasActiveTrip={!!currentPlan}
       />
@@ -446,6 +460,13 @@ export default function App() {
           setMySpotsCount(getMySpots().length);
         }}
         defaultTown={currentPlan?.destinationOrTown?.split(",")[0] || ""}
+      />
+
+      {/* Taste Profile: how the user likes to eat & drink */}
+      <TasteProfileModal
+        isOpen={isTasteProfileOpen}
+        onClose={() => setIsTasteProfileOpen(false)}
+        onSaved={() => setHasTasteProfile(getTasteProfile() !== null)}
       />
 
       {/* Activity Discovery Swiper Modal */}

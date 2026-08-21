@@ -132,6 +132,7 @@ export interface VacationPreferences {
   groupSize: number; // e.g. 1, 2, 4
   permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   userSpots?: UserSpot[]; // The traveler's own favorite places (dining is sourced from here, never static lists)
+  tasteProfile?: TasteProfile; // How the user likes to eat & drink (personalizes dining suggestions)
   customNotes?: string;
   isMultiDestination?: boolean;
   destinations?: DestinationStop[];
@@ -152,6 +153,7 @@ export interface HometownPreferences {
   excludedPlaces?: string[]; // IDs or names of places visited in past 30 days
   permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   userSpots?: UserSpot[]; // The resident's own places — primary source for dining suggestions
+  tasteProfile?: TasteProfile; // How the user likes to eat & drink (personalizes dining suggestions)
   customNotes?: string;
   enableSwiper?: boolean;
   likedSpots?: ActivitySpot[];
@@ -189,6 +191,21 @@ export interface UserSpot {
   addedAt: number;
 }
 
+/**
+ * The user's TASTE PROFILE: how they like to eat & drink.
+ * Captured via a questionnaire and used by the AI to recommend dining that
+ * fits both the profile and the flow of each day's activities.
+ */
+export interface TasteProfile {
+  diningStyles: string[]; // e.g. "Pintxo / tapas hopping", "Sit-down local restaurant"
+  drinkPreferences: string[]; // e.g. "Specialty coffee", "Local wine / txakoli"
+  atmospheres: string[]; // e.g. "Quiet & cozy", "Terrace / outdoor seating"
+  budgetComfort?: BudgetTier; // € / €€ / €€€
+  dietaryNotes?: string; // free text: vegetarian, allergies…
+  dislikes: string[]; // things to avoid: "Tourist traps", "Chains"…
+  updatedAt: number;
+}
+
 export interface WeatherData {
   city: string;
   temperature: number;
@@ -211,5 +228,6 @@ export interface SwapActivityRequest {
   budgetTier?: BudgetTier;
   excludedPlaces?: string[];
   userSpots?: UserSpot[]; // So dining swaps can be sourced from the user's own places
+  tasteProfile?: TasteProfile; // So dining swaps match how the user likes to eat & drink
 }
 

@@ -172,3 +172,18 @@ Two product upgrades requested by the user: stop depending on static databases, 
 - AI prompts (hometown, vacation, swap) instruct the model to weave the user's own places in and to never exclude them.
 
 **Verified:** no static dining leaks in generated plans; user spots appear in hometown plans (2/2) and dining swaps resolve to the user's own venue.
+
+---
+
+## 9. Taste Profile — personalized, context-aware dining
+
+Clarified product direction: "recommend through user data" means the app should **learn how the user likes to eat & drink**, and the AI should use that — together with the flow of each day — to choose dining stops. ("My Places" remains as the personal notebook of favorite spots.)
+
+- **New `TasteProfile` model + questionnaire modal** (navbar 👨‍🍳 button): dining styles (pintxo hopping, sit-down, market counter…), drink preferences (specialty coffee, txakoli, craft beer, cocktails, cider…), atmospheres (quiet & cozy, terrace, historic…), things to avoid (tourist traps, chains, queues…), budget comfort (€/€€/€€€) and dietary notes. Persisted in localStorage.
+- **Injected into every generation path** (hometown, vacation, swaps, swiper candidates).
+- **Prompt design — two coupled rules:**
+  1. *Taste match:* every dining suggestion must respect the profile (and the MUST-AVOID list).
+  2. *Context-aware pairing:* dining is chosen relative to the surrounding activities — casual/restorative after hikes, terrace/aperitif before sunset strolls, cozy indoor spots on rainy museum days, coffee-style mornings per drink preferences, drink-aligned evenings.
+- **Offline fallback personalization:** the user's own places are now *ranked per time slot* with the profile (coffee lover → their café lands in the morning slot; evening slot prefers their bar if they drink wine/beer/cider; midday prefers restaurants), instead of first-come-first-served. User spots also get a taste-bonus in swiper candidate scoring.
+
+**Verified:** lint/build green; fallback slot-ranking selects café-morning/bar-evening per profile; prompt rules present in all four generation paths.
