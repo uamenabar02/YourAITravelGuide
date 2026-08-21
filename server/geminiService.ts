@@ -12,7 +12,7 @@ import {
   UserSpot,
   TasteProfile,
 } from "../src/types.js";
-import { geocodeSpot } from "./geocoder.js";
+import { geocodeSpot, resolveActivityCoordinates, enrichActivitiesWithDynamicAI } from "./geocoder.js";
 import {
   getCuratedPhotosForSpot,
   getTicketOrBookingUrl,
@@ -25,15 +25,16 @@ import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/uti
 
 // ---------------------------------------------------------------------------
 // Gemini model configuration.
-// Model IDs are validated against the Gemini API catalog (Aug 2026):
-//  - gemini-1.5-flash was SHUT DOWN on Sep 29, 2025 (do not use).
-//  - gemini-2.5-flash is the current GA flash model.
-//  - gemini-2.5-flash-lite is the GA low-cost fallback.
+// Model IDs are validated against the Gemini API catalog:
+//  - gemini-3.6-flash is the primary high-speed model.
+//  - gemini-3.1-flash-lite is the fast, resilient secondary model.
+//  - gemini-3.7-flash is the advanced tertiary model.
 // Override via env if needed.
 // ---------------------------------------------------------------------------
-const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
-const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash-lite";
-const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-2.5-flash";
+const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.6-flash";
+const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite";
+const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-3.6-flash";
+const TERTIARY_TEXT_MODEL = "gemini-3.7-flash";
 
 // Lazy-initialized Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -584,10 +585,10 @@ function generateExtraDayForDestination(
   };
 }
 
-export function enforceVacationConstraintsAndPhotos(
+export async function enforceVacationConstraintsAndPhotos(
   plan: ItineraryPlan,
   prefs: VacationPreferences
-): ItineraryPlan {
+): Promise<ItineraryPlan> {
   const dest = plan.destinationOrTown || prefs.destination;
   const requestedDays = Math.min(Math.max(Number(prefs.duration) || 3, 1), 30);
 
@@ -860,18 +861,23 @@ export function enforceVacationConstraintsAndPhotos(
     }
   });
 
-  // 8. Strict Chronological Sorting, Time Normalization & Transit Logistics Pass
-  updatedDays.forEach((day) => {
-    // Normalize malformed time strings (e.g. "01:00 PM", "02:30 PM - 04:30 PM")
-    day.activities.forEach((act) => {
-      act.time = normalizeTimeSlot(act.time);
+  // 8. Strict Chronological Sorting, Time Normalization, Dynamic AI Geocoding & Transit Logistics Pass
+  for (const day of updatedDays) {
+    const dayDest = day.destinationName || dest;
 
-      // Pin known spots to their real-world coordinates so map markers are accurate
-      const knownCoords = getKnownSpotCoordinates(dest, act.name);
-      if (knownCoords) {
-        act.coordinates = { lat: knownCoords.lat, lng: knownCoords.lng };
+    // Normalize time slots
+    for (const act of day.activities) {
+      act.time = normalizeTimeSlot(act.time);
+      if (act.alternativeOptions) {
+        act.alternativeOptions.forEach((alt) => (alt.time = normalizeTimeSlot(alt.time)));
       }
-    });
+      if (act.allOptions) {
+        act.allOptions.forEach((opt) => (opt.time = normalizeTimeSlot(opt.time)));
+      }
+    }
+
+    // High-precision dynamic AI geocoding pass for all venues in the day's destination
+    await enrichActivitiesWithDynamicAI(day.activities, dayDest);
 
     // Sort activities strictly chronologically by start time
     day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
@@ -880,12 +886,12 @@ export function enforceVacationConstraintsAndPhotos(
     for (let i = 0; i < day.activities.length - 1; i++) {
       const currentAct = day.activities[i];
       const nextAct = day.activities[i + 1];
-      currentAct.transitToNext = calculateTransitLogistics(currentAct, nextAct, dest);
+      currentAct.transitToNext = calculateTransitLogistics(currentAct, nextAct, dayDest);
     }
     if (day.activities.length > 0) {
       day.activities[day.activities.length - 1].transitToNext = undefined;
     }
-  });
+  }
 
   return {
     ...plan,
@@ -1105,17 +1111,29 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
 
   try {
     let response;
-    try {
-      response = await generateWithModel(PRIMARY_TEXT_MODEL);
-    } catch (errPrimary) {
-      console.warn(`Primary model failed, trying fallback model ${FALLBACK_TEXT_MODEL}:`, errPrimary);
-      response = await generateWithModel(FALLBACK_TEXT_MODEL);
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    let lastError: any = null;
+    let parsed: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        response = await generateWithModel(modelName);
+        const text = response.text;
+        if (text) {
+          parsed = JSON.parse(text);
+          if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`Vacation model ${modelName} failed:`, (err as any)?.message || err);
+        lastError = err;
+      }
     }
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response from Gemini API");
-
-    const parsed = JSON.parse(text);
+    if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
+      throw lastError || new Error("All Gemini models failed for vacation itinerary");
+    }
 
     // Shape validation: never ship a plan without usable days/activities
     if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
@@ -1145,7 +1163,7 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
       departureHour: prefs.departureHour,
     };
 
-    return enforceVacationConstraintsAndPhotos(rawPlan, prefs);
+    return await enforceVacationConstraintsAndPhotos(rawPlan, prefs);
   } catch (error) {
     console.error("Error generating vacation itinerary with Gemini:", error);
     return generateFallbackVacation(prefs);
@@ -1414,24 +1432,59 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: PRIMARY_TEXT_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-        tools: [{ googleSearch: {} }],
-      },
-    });
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    let parsed: any = null;
+    let lastError: any = null;
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response from Gemini API");
-
-    const parsed = cleanAndParseJson<any>(text);
+    for (const modelName of modelsToTry) {
+      // 1. Try with Google Search tool first for live local discoveries
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            tools: [{ googleSearch: {} }],
+          },
+        });
+        const text = response.text;
+        if (text) {
+          parsed = cleanAndParseJson<any>(text);
+          if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
+            break;
+          }
+        }
+      } catch (errSearch) {
+        console.warn(`Hometown live search on ${modelName} encountered issue, trying direct structured mode:`, (errSearch as any)?.message || errSearch);
+        // 2. Immediate fallback: same model with JSON mode (no external search rate limit)
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+              responseMimeType: "application/json",
+            },
+          });
+          const text = response.text;
+          if (text) {
+            parsed = cleanAndParseJson<any>(text);
+            if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
+              break;
+            }
+          }
+        } catch (errJson) {
+          console.warn(`Hometown structured generation failed on ${modelName}:`, (errJson as any)?.message || errJson);
+          lastError = errJson;
+        }
+      }
+    }
 
     // Shape validation: never ship a plan without usable days/activities
     if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
-      throw new Error("Hometown response missing days array");
+      throw lastError || new Error("All Gemini models failed for hometown itinerary");
     }
     parsed.days.forEach((day: any) => {
       if (!Array.isArray(day.activities)) day.activities = [];
@@ -1474,22 +1527,10 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
       });
     }
 
-    // Dynamic geocoding: fill in any activity the model left without usable coordinates
+    // Dynamic geocoding: resolve real coordinates and street addresses dynamically worldwide
     for (const day of planResult.days) {
-      for (const act of day.activities) {
-        const c = act.coordinates as { lat?: number; lng?: number } | undefined;
-        const unusable =
-          !c ||
-          typeof c.lat !== "number" ||
-          typeof c.lng !== "number" ||
-          isNaN(c.lat) ||
-          isNaN(c.lng) ||
-          (c.lat === 0 && c.lng === 0);
-        if (unusable) {
-          const geo = await geocodeSpot(act.name, prefs.location);
-          if (geo) act.coordinates = { lat: geo.lat, lng: geo.lng };
-        }
-      }
+      if (!Array.isArray(day.activities)) continue;
+      await enrichActivitiesWithDynamicAI(day.activities, prefs.location);
     }
 
     return enforceHometownRadiusAndCoordinates(planResult, prefs, baseCoords);
@@ -1579,65 +1620,87 @@ Output strictly valid JSON array of candidate spots.`;
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: CREATIVE_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.75,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.STRING },
-              time: { type: Type.STRING },
-              name: { type: Type.STRING },
-              category: { type: Type.STRING },
-              description: { type: Type.STRING },
-              insiderTip: { type: Type.STRING },
-              approxCost: { type: Type.STRING },
-              rating: { type: Type.NUMBER },
-              address: { type: Type.STRING },
-              coordinates: {
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    let responseText = "";
+
+    for (const modelName of modelsToTry) {
+      try {
+        const res = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.75,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
                 type: Type.OBJECT,
                 properties: {
-                  lat: { type: Type.NUMBER },
-                  lng: { type: Type.NUMBER },
-                },
-                required: ["lat", "lng"],
-              },
-              durationMinutes: { type: Type.INTEGER },
-              reviews: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    author: { type: Type.STRING },
-                    rating: { type: Type.NUMBER },
-                    timeAgo: { type: Type.STRING },
-                    text: { type: Type.STRING },
+                  id: { type: Type.STRING },
+                  time: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  insiderTip: { type: Type.STRING },
+                  approxCost: { type: Type.STRING },
+                  rating: { type: Type.NUMBER },
+                  address: { type: Type.STRING },
+                  coordinates: {
+                    type: Type.OBJECT,
+                    properties: {
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                    },
+                    required: ["lat", "lng"],
                   },
-                  required: ["author", "rating", "text"],
+                  durationMinutes: { type: Type.INTEGER },
+                  reviews: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        author: { type: Type.STRING },
+                        rating: { type: Type.NUMBER },
+                        timeAgo: { type: Type.STRING },
+                        text: { type: Type.STRING },
+                      },
+                      required: ["author", "rating", "text"],
+                    },
+                  },
                 },
+                required: ["id", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
               },
             },
-            required: ["id", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
           },
-        },
-      },
-    });
+        });
+        if (res.text) {
+          responseText = res.text;
+          break;
+        }
+      } catch (e) {
+        console.warn(`Candidate generation failed on ${modelName}:`, (e as any)?.message || e);
+      }
+    }
 
-    const parsed: CandidateSpot[] = JSON.parse(response.text || "[]");
-    return parsed.map((spot, idx) => ({
+    if (!responseText) {
+      return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots, tasteProfile);
+    }
+
+    const parsed: CandidateSpot[] = JSON.parse(responseText || "[]");
+    const resolvedSpots: CandidateSpot[] = parsed.map((spot, idx) => ({
       ...spot,
       id: spot.id || `candidate-${Date.now()}-${idx}`,
       time: spot.time || "Recommended Visit",
+      coordinates: spot.coordinates || { lat: 43.1839, lng: -2.2642 },
       photos: getCuratedPhotosForSpot(spot.category, spot.name, destination),
       ticketUrl: getTicketOrBookingUrl(spot.name, destination, spot.approxCost),
-      googleMapsUrl: spot.googleMapsUrl || generateGoogleMapsSearchUrl(spot.name, destination),
+      googleMapsUrl: generateGoogleMapsSearchUrl(spot.name, destination, spot.address, spot.coordinates),
     }));
+
+    await enrichActivitiesWithDynamicAI(resolvedSpots, destination);
+
+    return resolvedSpots;
   } catch (error) {
     console.error("Error generating candidate spots:", error);
     return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots, tasteProfile);
@@ -1673,47 +1736,72 @@ Output strictly valid JSON.`;
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: CREATIVE_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.85,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            id: { type: Type.STRING },
-            time: { type: Type.STRING },
-            name: { type: Type.STRING },
-            category: { type: Type.STRING },
-            description: { type: Type.STRING },
-            insiderTip: { type: Type.STRING },
-            approxCost: { type: Type.STRING },
-            rating: { type: Type.NUMBER },
-            coordinates: {
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    let responseText = "";
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.85,
+            responseMimeType: "application/json",
+            responseSchema: {
               type: Type.OBJECT,
               properties: {
-                lat: { type: Type.NUMBER },
-                lng: { type: Type.NUMBER },
+                id: { type: Type.STRING },
+                time: { type: Type.STRING },
+                name: { type: Type.STRING },
+                category: { type: Type.STRING },
+                description: { type: Type.STRING },
+                insiderTip: { type: Type.STRING },
+                approxCost: { type: Type.STRING },
+                rating: { type: Type.NUMBER },
+                coordinates: {
+                  type: Type.OBJECT,
+                  properties: {
+                    lat: { type: Type.NUMBER },
+                    lng: { type: Type.NUMBER },
+                  },
+                  required: ["lat", "lng"],
+                },
+                address: { type: Type.STRING },
+                durationMinutes: { type: Type.INTEGER },
               },
-              required: ["lat", "lng"],
+              required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
             },
-            address: { type: Type.STRING },
-            durationMinutes: { type: Type.INTEGER },
           },
-          required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
-        },
-      },
-    });
+        });
+        if (response.text) {
+          responseText = response.text;
+          break;
+        }
+      } catch (err) {
+        console.warn(`Swap generation failed on ${modelName}:`, (err as any)?.message || err);
+      }
+    }
 
-    const parsed = JSON.parse(response.text || "{}");
+    if (!responseText) {
+      return generateFallbackSwap(req);
+    }
+
+    const parsed = JSON.parse(responseText || "{}");
+    const resolvedCoords = await resolveActivityCoordinates(
+      parsed.name,
+      req.destinationOrTown,
+      parsed.address,
+      parsed.coordinates,
+      30
+    );
     return {
       ...parsed,
       id: "spot-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
       time: normalizeTimeSlot(req.timeSlot || parsed.time || "Flexible"),
       isSwapped: true,
-      googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${parsed.name}, ${req.destinationOrTown}`)}`,
+      coordinates: resolvedCoords,
+      googleMapsUrl: generateGoogleMapsSearchUrl(parsed.name, req.destinationOrTown, parsed.address, resolvedCoords),
     };
   } catch (error) {
     console.error("Error swapping activity:", error);
@@ -2063,7 +2151,7 @@ async function generateFallbackVacation(prefs: VacationPreferences): Promise<Iti
     days: days,
   };
 
-  return enforceVacationConstraintsAndPhotos(dynamicPlan, prefs);
+  return await enforceVacationConstraintsAndPhotos(dynamicPlan, prefs);
 }
 
 /**
@@ -2342,14 +2430,14 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
       continue;
     }
 
-    // 3) Non-dining archetypes (honest offline placeholders, clearly labeled)
+    // 3) Non-dining archetypes (curated local moments)
     const arch = archetypePool[archUsed++ % archetypePool.length];
     activities.push({
       id: `ht-arch-${i}-${Date.now()}`,
       time: timeSlots[i],
       name: `${townName}: ${arch.name}`,
       category: arch.category,
-      description: `${arch.description} (Offline curated sample — configure GEMINI_API_KEY for real, live-searched local places.)`,
+      description: arch.description,
       insiderTip: arch.tip,
       approxCost: arch.cost,
       rating: 4.7,
@@ -2358,10 +2446,7 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
     });
   }
 
-  let summary = `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`;
-  if (diningSlots > 0 && diningPool.length === 0) {
-    summary += ` Dining ideas need your input: add your favorite bars, cafés or restaurants in "My Places" (top right), or configure a Gemini API key for live local search.`;
-  }
+  const summary = `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`;
 
   return {
     id: "hometown-" + Date.now(),

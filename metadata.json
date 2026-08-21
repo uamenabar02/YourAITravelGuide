@@ -1,6 +1,10 @@
 {
   "name": "LocalExplorer AI",
   "description": "All-in-one trip planner and everyday local activity guide with vacation itinerary planning, hometown local recommendations, interactive OpenStreetMap routes, and smart activity swapping.",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
