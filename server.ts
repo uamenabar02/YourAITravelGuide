@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import http from "http";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import {
@@ -8,12 +9,13 @@ import {
   swapActivitySpot,
   generateCandidateSpots,
 } from "./server/geminiService.js";
+import { geocodeSpot } from "./server/geocoder.js";
 
 dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: "10mb" }));
 
@@ -29,7 +31,7 @@ async function startServer() {
   // Generate Candidates for Activity Swiper
   app.post("/api/generate-candidates", async (req, res) => {
     try {
-      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace } = req.body;
+      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace, userSpots } = req.body;
       if (!destination) {
         return res.status(400).json({ error: "Destination is required." });
       }
@@ -40,7 +42,8 @@ async function startServer() {
         budgetTier,
         exactBudgetPerDay,
         currency || "€",
-        pace
+        pace,
+        Array.isArray(userSpots) ? userSpots : []
       );
       res.json(candidates);
     } catch (err: any) {
@@ -90,6 +93,26 @@ async function startServer() {
     }
   });
 
+  // Dynamic geocoding (Nominatim): resolve any named place to coordinates.
+  // Used by "My Places" and anywhere the app must not depend on static data.
+  app.get("/api/geocode", async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const context = String(req.query.context || "").trim();
+      if (!q) {
+        return res.status(400).json({ error: "q query parameter is required" });
+      }
+      const result = await geocodeSpot(q, context);
+      if (!result) {
+        return res.status(404).json({ error: "No geocoding results for this place." });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error geocoding:", err);
+      res.status(500).json({ error: "Could not geocode this place right now." });
+    }
+  });
+
   // Live Weather & Geolocation helper (Open-Meteo & Nominatim proxy if needed)
   app.get("/api/weather", async (req, res) => {
     try {
@@ -110,10 +133,25 @@ async function startServer() {
     }
   });
 
+  // Shared HTTP server so the Vite HMR websocket can be served from the SAME
+  // port as the app. This is required for the app to work behind a reverse
+  // proxy / preview host (only one port is exposed), and keeps local dev working.
+  const httpServer = http.createServer(app);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        // Allow the sandboxed preview host (and any origin) so the dev app is
+        // reachable through the proxied *.e2b.app preview URL.
+        allowedHosts: true,
+        hmr: {
+          // Serve HMR upgrades on the main app server/port rather than a
+          // separate port that a proxy may not expose.
+          server: httpServer,
+        },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -125,7 +163,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`LocalExplorer AI server running on http://0.0.0.0:${PORT}`);
   });
 }

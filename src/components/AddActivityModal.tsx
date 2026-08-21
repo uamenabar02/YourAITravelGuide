@@ -18,7 +18,7 @@ export const AddActivityModal: React.FC<AddActivityModalProps> = ({
   baseCoordinates,
 }) => {
   const [name, setName] = useState("");
-  const [time, setTime] = useState("14:00 PM - 16:00 PM");
+  const [time, setTime] = useState("02:00 PM - 04:00 PM");
   const [category, setCategory] = useState<ActivityCategory>("sightseeing");
   const [description, setDescription] = useState("");
   const [insiderTip, setInsiderTip] = useState("");

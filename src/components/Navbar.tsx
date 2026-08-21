@@ -1,5 +1,5 @@
 import React from "react";
-import { Compass, Sparkles, Bookmark, History, MapPin, Plane, Share2, Sun } from "lucide-react";
+import { Bookmark, History, MapPin, Plane, Share2, Utensils } from "lucide-react";
 import { AppMode } from "../types";
 
 interface NavbarProps {
@@ -9,6 +9,8 @@ interface NavbarProps {
   onOpenSavedTrips: () => void;
   historyCount: number;
   onOpenHistory: () => void;
+  onOpenMySpots?: () => void;
+  mySpotsCount?: number;
   onOpenExport?: () => void;
   hasActiveTrip: boolean;
 }
@@ -20,6 +22,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSavedTrips,
   historyCount,
   onOpenHistory,
+  onOpenMySpots,
+  mySpotsCount = 0,
   onOpenExport,
   hasActiveTrip,
 }) => {
@@ -74,6 +78,23 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Right Action Icons */}
           <div className="flex items-center space-x-2">
+            {/* My Places: user-provided bars, cafés & restaurants */}
+            {onOpenMySpots && (
+              <button
+                id="btn-my-spots"
+                onClick={onOpenMySpots}
+                title="My Places — your own bars, cafés & restaurants"
+                className="relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors"
+              >
+                <Utensils className="w-4 h-4" />
+                {mySpotsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#5A5A40] text-[10px] font-bold text-white">
+                    {mySpotsCount > 9 ? "9+" : mySpotsCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* 30-Day History / Deduplication Button */}
             <button
               id="btn-history-modal"

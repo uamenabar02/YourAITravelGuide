@@ -25,7 +25,7 @@ export const VERIFIED_DESTINATIONS: VerifiedDestination[] = [
       "Basque Railway Museum (Burnibidearen Euskal Museoa)",
       "Izarraitz Mountain Ridge & Erlo Summit",
       "Urola River Greenway & Historic Plaza Nagusia",
-      "Ekoetxea Urdaibai Environmental Center",
+      "Soreasu Parish Church & Historic Tower Houses",
     ],
     bannerImage: "https://images.unsplash.com/photo-1582555172866-f73bb12a2ab3?auto=format&fit=crop&w=1200&q=80",
     description: "Historic Urola valley town at the foot of Mount Izarraitz, world-famous for Saint Ignatius' Baroque Sanctuary of Loyola.",
@@ -460,6 +460,238 @@ export function searchDestinationSuggestions(query: string): VerifiedDestination
   });
 }
 
+// ---------------------------------------------------------------------------
+// Spot-level coordinate knowledge base.
+// Real-world coordinates for the well-known spots of each verified destination,
+// keyed by destination id. Includes alias entries (Basque/Spanish spellings,
+// short names) so fuzzy activity names still resolve to the right pin.
+// ---------------------------------------------------------------------------
+export const SPOT_COORDINATES_DB: Record<string, Record<string, Coordinates>> = {
+  azpeitia: {
+    "Santuario de Loyola & Baroque Basilica": { lat: 43.1800, lng: -2.2810 },
+    "Santuario de Loyola": { lat: 43.1800, lng: -2.2810 },
+    "Loiola Sanctuary": { lat: 43.1800, lng: -2.2810 },
+    "Loiola": { lat: 43.1800, lng: -2.2810 },
+    "Loyola": { lat: 43.1800, lng: -2.2810 },
+    "Basque Railway Museum (Burnibidearen Euskal Museoa)": { lat: 43.1786, lng: -2.2665 },
+    "Basque Railway Museum": { lat: 43.1786, lng: -2.2665 },
+    "Izarraitz Mountain Ridge & Erlo Summit": { lat: 43.2042, lng: -2.2717 },
+    "Erlo Summit": { lat: 43.2042, lng: -2.2717 },
+    "Erlo": { lat: 43.2042, lng: -2.2717 },
+    "Izarraitz": { lat: 43.2010, lng: -2.2650 },
+    "Urola River Greenway & Historic Plaza Nagusia": { lat: 43.1813, lng: -2.2646 },
+    "Plaza Nagusia": { lat: 43.1813, lng: -2.2646 },
+    "Soreasu Parish Church & Historic Tower Houses": { lat: 43.1810, lng: -2.2660 },
+    "Soreasu": { lat: 43.1810, lng: -2.2660 },
+  },
+  azkoitia: {
+    "Intsausti Palace & Noble Quarter": { lat: 43.1790, lng: -2.3120 },
+    "Jorge Oteiza Pelota Courts": { lat: 43.1775, lng: -2.3105 },
+    "Casco Histórico & Plaza de la Verdura": { lat: 43.1782, lng: -2.3117 },
+    "Balda Tower & Historic Alleyways": { lat: 43.1788, lng: -2.3130 },
+  },
+  zarautz: {
+    "Zarautz Long Beach & Surf Promenade": { lat: 43.2865, lng: -2.1720 },
+    "Santa Bárbara Viewpoint & Txakoli Vineyards": { lat: 43.2870, lng: -2.1600 },
+    "Luzea Tower & Gothic Historic Quarter": { lat: 43.2850, lng: -2.1700 },
+    "Iñurritza Dune Nature Reserve": { lat: 43.2855, lng: -2.1790 },
+  },
+  tolosa: {
+    "El Tinglado Saturday Farmers' Market": { lat: 43.1375, lng: -2.0740 },
+    "TOPIC International Puppet Art Center": { lat: 43.1368, lng: -2.0715 },
+    "Traditional Asador Steakhouses (Casa Julián)": { lat: 43.1362, lng: -2.0728 },
+    "Oria River Promenade & Zerkausia Market": { lat: 43.1355, lng: -2.0735 },
+  },
+  zumaia: {
+    "Itzurun Beach Flysch Cliffs (UNESCO Geopark)": { lat: 43.3010, lng: -2.2620 },
+    "Hermitage of San Telmo & Cliff Overlook": { lat: 43.3015, lng: -2.2670 },
+    "Zumaia Marina & Urola Estuary Promenade": { lat: 43.2980, lng: -2.2560 },
+    "Algorri Interpretive Center": { lat: 43.2995, lng: -2.2600 },
+  },
+  getaria: {
+    "Cristóbal Balenciaga Haute Couture Museum": { lat: 43.3030, lng: -2.2040 },
+    "Balenciaga Museum": { lat: 43.3030, lng: -2.2040 },
+    "El Ratón de Getaria (Mount San Anton)": { lat: 43.2990, lng: -2.2030 },
+    "Fishing Harbor Charcoal-Grilled Turbot Restaurants": { lat: 43.3025, lng: -2.2035 },
+    "Hillside Txakoli Vineyards": { lat: 43.3055, lng: -2.2090 },
+  },
+  hondarribia: {
+    "La Marina Neighborhood (Colorful Fishermen's Balconies)": { lat: 43.3625, lng: -1.7920 },
+    "La Marina": { lat: 43.3625, lng: -1.7920 },
+    "Parador de Carlos V Castle": { lat: 43.3660, lng: -1.7920 },
+    "Kale Nagusia Historic Stone Ramparts": { lat: 43.3655, lng: -1.7910 },
+    "Bidasoa Estuary Promenade & Pintxo Bars": { lat: 43.3640, lng: -1.7940 },
+  },
+  pasaisia: {
+    "Albaola Sea Factory of the Basques": { lat: 43.3265, lng: -1.9280 },
+    "Victor Hugo Historic House Museum": { lat: 43.3267, lng: -1.9195 },
+    "Pasai Donibane Waterfront Cobblestone Street": { lat: 43.3267, lng: -1.9195 },
+    "Green Fjord Channel & Boat Shuttle": { lat: 43.3255, lng: -1.9240 },
+  },
+  ordizia: {
+    "Wednesday Agricultural & Idiazabal Cheese Market (Since 1268)": { lat: 43.0540, lng: -2.1790 },
+    "D'Elikatuz Food & Gastronomy Center": { lat: 43.0535, lng: -2.1780 },
+    "Goierri Valley Highland Trailhead": { lat: 43.0580, lng: -2.1830 },
+  },
+  "donostia-san-sebastian": {
+    "Playa de La Concha & Promenade": { lat: 43.3160, lng: -1.9850 },
+    "La Concha": { lat: 43.3160, lng: -1.9850 },
+    "Peine del Viento (Eduardo Chillida)": { lat: 43.3175, lng: -2.0062 },
+    "Peine del Viento": { lat: 43.3175, lng: -2.0062 },
+    "Monte Igueldo & 1912 Funicular": { lat: 43.3195, lng: -2.0090 },
+    "Monte Igueldo": { lat: 43.3195, lng: -2.0090 },
+    "Parte Vieja Pintxo Crawl (Bar Nestor, La Cuchara de San Telmo, Ganbara)": { lat: 43.3238, lng: -1.9845 },
+    "Parte Vieja": { lat: 43.3238, lng: -1.9845 },
+    "Zurriola Beach & Kursaal Auditorium in Gros": { lat: 43.3243, lng: -1.9787 },
+    "Zurriola": { lat: 43.3243, lng: -1.9787 },
+    "San Telmo Museum of Basque Society": { lat: 43.3242, lng: -1.9818 },
+    "San Telmo Museum": { lat: 43.3242, lng: -1.9818 },
+    "Monte Urgull & Castillo de la Mota": { lat: 43.3250, lng: -1.9880 },
+    "Monte Urgull": { lat: 43.3250, lng: -1.9880 },
+    "Mercado de la Bretxa": { lat: 43.3235, lng: -1.9830 },
+    "Miramar Palace & Gardens": { lat: 43.3130, lng: -1.9930 },
+    "Miramar": { lat: 43.3130, lng: -1.9930 },
+    "Basque Culinary Center & Michelin gastronomy": { lat: 43.2995, lng: -1.9765 },
+  },
+  bilbao: {
+    "Guggenheim Museum Bilbao (Frank Gehry)": { lat: 43.2687, lng: -2.9340 },
+    "Guggenheim": { lat: 43.2687, lng: -2.9340 },
+    "Casco Viejo & Las Siete Calles": { lat: 43.2575, lng: -2.9245 },
+    "Mercado de la Ribera": { lat: 43.2556, lng: -2.9266 },
+    "Funicular de Artxanda Viewpoint": { lat: 43.2645, lng: -2.9215 },
+    "Artxanda": { lat: 43.2737, lng: -2.9165 },
+    "Zubizuri Bridge by Calatrava": { lat: 43.2667, lng: -2.9303 },
+    "Plaza Nueva Pintxo Taverns": { lat: 43.2585, lng: -2.9240 },
+    "Museum of Fine Arts Bilbao": { lat: 43.2655, lng: -2.9380 },
+    "Azkuna Zentroa (Alhóndiga)": { lat: 43.2610, lng: -2.9370 },
+  },
+  biarritz: {
+    "Rocher de la Vierge & Footbridge": { lat: 43.4825, lng: -1.5655 },
+    "Plage de la Côte des Basques (Surfing birthplace)": { lat: 43.4780, lng: -1.5650 },
+    "Marché Les Halles de Biarritz": { lat: 43.4835, lng: -1.5580 },
+    "Port des Pêcheurs (Fishermen's cottages)": { lat: 43.4800, lng: -1.5630 },
+    "Hôtel du Palais & Grande Plage": { lat: 43.4870, lng: -1.5560 },
+    "Phare de Biarritz (Lighthouse views)": { lat: 43.4925, lng: -1.5600 },
+  },
+  kyoto: {
+    "Arashiyama Bamboo Grove & Tenryu-ji": { lat: 35.0169, lng: 135.6713 },
+    "Arashiyama": { lat: 35.0169, lng: 135.6713 },
+    "Fushimi Inari Shrine & 10,000 Torii gates": { lat: 34.9671, lng: 135.7727 },
+    "Fushimi Inari": { lat: 34.9671, lng: 135.7727 },
+    "Ginkaku-ji (Silver Pavilion) & Philosopher's Path": { lat: 35.0272, lng: 135.7982 },
+    "Pontocho Alley & Gion Teahouses": { lat: 35.0062, lng: 135.7712 },
+    "Kiyomizu-dera Wooden Terrace": { lat: 34.9949, lng: 135.7850 },
+    "Nishiki Food Market": { lat: 35.0050, lng: 135.7649 },
+  },
+  barcelona: {
+    "Basílica de la Sagrada Família (Gaudí)": { lat: 41.4036, lng: 2.1744 },
+    "Sagrada Familia": { lat: 41.4036, lng: 2.1744 },
+    "Park Güell & Mosaic Terraces": { lat: 41.4145, lng: 2.1527 },
+    "Gothic Quarter (Barri Gòtic)": { lat: 41.3833, lng: 2.1777 },
+    "Mercat de la Boqueria on La Rambla": { lat: 41.3817, lng: 2.1716 },
+    "Casa Batlló & Casa Milà": { lat: 41.3917, lng: 2.1649 },
+    "Bunkers del Carmel Panoramic Sunset": { lat: 41.4150, lng: 2.1630 },
+  },
+  rome: {
+    "Colosseum & Roman Forum": { lat: 41.8902, lng: 12.4922 },
+    "Pantheon & Piazza Navona": { lat: 41.8986, lng: 12.4769 },
+    "Trevi Fountain & Spanish Steps": { lat: 41.9009, lng: 12.4833 },
+    "Trastevere Cobblestone Trattorias": { lat: 41.8880, lng: 12.4690 },
+    "Vatican Museums & St. Peter's Basilica": { lat: 41.9029, lng: 12.4534 },
+    "Villa Borghese Gardens": { lat: 41.9142, lng: 12.4850 },
+  },
+  paris: {
+    "Musée du Louvre & Tuileries Garden": { lat: 48.8606, lng: 2.3376 },
+    "Eiffel Tower & Champ de Mars": { lat: 48.8584, lng: 2.2945 },
+    "Montmartre & Sacré-Cœur Basilica": { lat: 48.8867, lng: 2.3431 },
+    "Le Marais Boutiques & Bistros": { lat: 48.8570, lng: 2.3620 },
+    "Musée d'Orsay & Seine Riverbank Promenade": { lat: 48.8600, lng: 2.3266 },
+    "Sainte-Chapelle Stained Glass": { lat: 48.8554, lng: 2.3450 },
+  },
+  tokyo: {
+    "Senso-ji Temple & Asakusa Traditional Quarter": { lat: 35.7148, lng: 139.7967 },
+    "Shinjuku Gyoen National Garden": { lat: 35.6852, lng: 139.7100 },
+    "Shibuya Crossing & Nonbei Yokocho": { lat: 35.6595, lng: 139.7005 },
+    "Tsukiji Outer Seafood Market": { lat: 35.6654, lng: 139.7707 },
+    "Meiji Jingu Shrine & Harajuku": { lat: 35.6764, lng: 139.6993 },
+    "Ginza Artisan Roasteries & Izakayas": { lat: 35.6717, lng: 139.7650 },
+  },
+  lisbon: {
+    "Alfama Historic Quarter & Fado Taverns": { lat: 38.7131, lng: -9.1290 },
+    "Belém Tower & Pastéis de Belém": { lat: 38.6916, lng: -9.2160 },
+    "Miradouro de Santa Luzia & Portas do Sol": { lat: 38.7117, lng: -9.1300 },
+    "Jerónimos Monastery": { lat: 38.6979, lng: -9.2067 },
+    "Tram 28 & Bairro Alto Wine Bars": { lat: 38.7120, lng: -9.1440 },
+    "Time Out Market Lisboa": { lat: 38.7070, lng: -9.1455 },
+  },
+  porto: {
+    "Ribeira Riverfront & Dom Luís I Bridge": { lat: 41.1405, lng: -8.6110 },
+    "Livraria Lello Historic Neo-Gothic Bookstore": { lat: 41.1460, lng: -8.6150 },
+    "Vila Nova de Gaia Port Wine Lodges": { lat: 41.1390, lng: -8.6170 },
+    "Clérigos Tower & Miradouro": { lat: 41.1455, lng: -8.6145 },
+    "Bolhão Traditional Market": { lat: 41.1475, lng: -8.6075 },
+    "São Bento Tile Station": { lat: 41.1458, lng: -8.6110 },
+  },
+  oaxaca: {
+    "Mercado 20 de Noviembre (Pasillo de Humo)": { lat: 17.0600, lng: -96.7250 },
+    "Templo de Santo Domingo de Guzmán": { lat: 17.0650, lng: -96.7240 },
+    "Monte Albán Zapotec Pyramids": { lat: 17.0430, lng: -96.7670 },
+    "Ethnobotanical Garden Oaxaca": { lat: 17.0640, lng: -96.7220 },
+    "Ancestral Mezcal Tastings in Jalatlaco": { lat: 17.0620, lng: -96.7170 },
+    "Teotitlán del Valle Artisan Weaving": { lat: 17.0310, lng: -96.5210 },
+  },
+  "cape-town": {
+    "Table Mountain Cableway & Plateau Walk": { lat: -33.9405, lng: 18.4005 },
+    "Kirstenbosch National Botanical Garden": { lat: -33.9880, lng: 18.4320 },
+    "Bo-Kaap Colorful Heritage Quarter": { lat: -33.9210, lng: 18.4130 },
+    "V&A Waterfront & Zeitz MOCAA": { lat: -33.9020, lng: 18.4180 },
+    "Cape Point & Boulders Beach Penguins": { lat: -34.1975, lng: 18.4505 },
+    "Camps Bay Sunset Tidal Pool": { lat: -33.9500, lng: 18.3830 },
+  },
+  vancouver: {
+    "Stanley Park Seawall & Totem Poles": { lat: 49.3000, lng: -123.1380 },
+    "Granville Island Public Market": { lat: 49.2710, lng: -123.1360 },
+    "Gastown Historic Cobblestones & Steam Clock": { lat: 49.2830, lng: -123.1090 },
+    "Capilano Suspension Bridge & Rainforest": { lat: 49.3430, lng: -123.1380 },
+    "Kitsilano Beach & Mountain Backdrop": { lat: 49.2730, lng: -123.1570 },
+    "Richmond Night Market Asian Street Food": { lat: 49.1700, lng: -123.1340 },
+  },
+  pamplona: {
+    "Plaza del Castillo & Café Iruña": { lat: 42.8170, lng: -1.6430 },
+    "Pamplona Star Citadel & Green Parkways": { lat: 42.8110, lng: -1.6510 },
+    "Calle Estafeta Pintxo Taverns": { lat: 42.8160, lng: -1.6420 },
+    "Navarre Museum & Gothic Cathedral": { lat: 42.8200, lng: -1.6430 },
+  },
+  "vitoria-gasteiz": {
+    "Santa María Gothic Cathedral (Open for Restoration)": { lat: 42.8500, lng: -2.6720 },
+    "Casco Viejo Almond Historic Quarter": { lat: 42.8490, lng: -2.6710 },
+    "Salburua Wetlands & Green Belt Parks": { lat: 42.8630, lng: -2.6580 },
+    "Artium Basque Museum of Contemporary Art": { lat: 42.8430, lng: -2.6690 },
+  },
+};
+
+/**
+ * Resolve real-world coordinates for a known spot of a verified destination.
+ * Tolerates decorated names (e.g. "Erlo Summit — Quiet-Hour Revisit") via
+ * substring matching against both full names and short aliases.
+ */
+export function getKnownSpotCoordinates(destinationQuery: string, spotName: string): Coordinates | null {
+  if (!spotName) return null;
+  const dest = findVerifiedDestination(destinationQuery);
+  if (!dest) return null;
+  const db = SPOT_COORDINATES_DB[dest.id];
+  if (!db) return null;
+
+  const clean = spotName.trim().toLowerCase();
+  for (const [name, coords] of Object.entries(db)) {
+    const key = name.toLowerCase();
+    if (clean === key || clean.includes(key) || key.includes(clean)) {
+      return coords;
+    }
+  }
+  return null;
+}
+
 // Live geocoder fallback using OpenStreetMap Nominatim
 const geocodeCache = new Map<string, Coordinates>();
 
@@ -880,8 +1112,12 @@ export function getKnownSpotsForDestination(
   const baseCoords = verified?.coordinates || { lat: 43.3183, lng: -1.9812 };
   const destName = verified?.name || destinationQuery;
 
+  // Dining venues are never recommended from static data (user data / live search only)
+  const DINING_HINTS = ["pintxo", "tapas", "tavern", "bar ", "café", "cafe", "restaurant", "gastronomy", "michelin", "ciderhouse", "tasting"];
+  const isDiningName = (n: string) => DINING_HINTS.some((h) => n.toLowerCase().includes(h));
+
   const spotNames = verified?.popularSpots && verified.popularSpots.length > 0
-    ? verified.popularSpots
+    ? verified.popularSpots.filter((sp) => !isDiningName(sp))
     : [
         `Historic Old Quarter & Local Food Trail`,
         `Panoramic Scenic Viewpoint & Promenade`,

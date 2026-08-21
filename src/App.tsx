@@ -7,13 +7,25 @@ import { SavedTripsDrawer } from "./components/SavedTripsDrawer";
 import { ActivityHistoryModal } from "./components/ActivityHistoryModal";
 import { ExportModal } from "./components/ExportModal";
 import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
+import { MySpotsModal } from "./components/MySpotsModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
-import { getSavedTrips, saveTrip, deleteSavedTrip, isTripSaved, recordPlanActivities, getActivityHistory } from "./utils/storage";
+import {
+  getSavedTrips,
+  saveTrip,
+  deleteSavedTrip,
+  isTripSaved,
+  recordPlanActivities,
+  getActivityHistory,
+  getRecentExcludedPlaces,
+  getPermanentSkipNames,
+  addPermanentSkip,
+  getMySpots,
+} from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
-import { Sparkles, MapPin, Plane, ArrowDown, RefreshCw, Compass } from "lucide-react";
+import { Compass } from "lucide-react";
 
 export default function App() {
   const [activeMode, setActiveMode] = useState<AppMode>("vacation");
@@ -24,6 +36,8 @@ export default function App() {
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isMySpotsOpen, setIsMySpotsOpen] = useState(false);
+  const [mySpotsCount, setMySpotsCount] = useState(0);
 
   // Swiper Modal State
   const [isSwiperOpen, setIsSwiperOpen] = useState(false);
@@ -40,9 +54,7 @@ export default function App() {
     const loadedSaved = getSavedTrips();
     setSavedTrips(loadedSaved);
     setHistoryCount(getActivityHistory().length);
-
-    // Record sample plan in history on first load
-    recordPlanActivities(SAMPLE_VACATION_PLAN);
+    setMySpotsCount(getMySpots().length);
 
     const shared = parseShareableUrl();
     if (shared) {
@@ -50,6 +62,9 @@ export default function App() {
       setActiveMode(shared.mode);
       addToast("success", `Loaded shared itinerary for ${shared.destinationOrTown}!`);
     }
+    // NOTE: The bundled SAMPLE plans are intentionally NOT recorded into the
+    // 30-day activity history. Doing so polluted the anti-repeat dedup memory
+    // with demo data before the user had generated anything.
   }, []);
 
   const addToast = (type: "success" | "error" | "info", message: string) => {
@@ -87,6 +102,7 @@ export default function App() {
             exactBudgetPerDay: prefs.exactBudgetPerDay,
             currency: prefs.currency,
             pace: prefs.pace,
+            userSpots: getMySpots(),
           }),
         });
 
@@ -150,6 +166,8 @@ export default function App() {
       ...prefs,
       likedSpots: finalLikedSpots,
       skippedSpots: finalSkippedSpots,
+      permanentSkips: getPermanentSkipNames(),
+      userSpots: getMySpots(),
     };
 
     try {
@@ -200,7 +218,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "hometown",
-          hometownPrefs: prefs,
+          hometownPrefs: { ...prefs, userSpots: getMySpots() },
         }),
       });
 
@@ -231,6 +249,20 @@ export default function App() {
     }
   };
 
+  // Permanently exclude a spot: never suggest it again in any future plan
+  const handleSkipPermanently = (activity: ActivitySpot, dayNumber: number) => {
+    addPermanentSkip(activity.name);
+    handleUpdatePlan({
+      ...currentPlan,
+      days: currentPlan.days.map((day) =>
+        day.dayNumber === dayNumber
+          ? { ...day, activities: day.activities.filter((a) => a.id !== activity.id) }
+          : day
+      ),
+    });
+    addToast("info", `"${activity.name}" will never be suggested again. Manage it in History → Permanent Skips.`);
+  };
+
   // Swap Single Activity Spot Handler
   const handleSwapActivity = async (activity: ActivitySpot, dayNumber: number) => {
     try {
@@ -246,6 +278,11 @@ export default function App() {
           category: activity.category,
           vibes: currentPlan.tags || [],
           budgetTier: currentPlan.budgetTier,
+          excludedPlaces: [
+            ...getRecentExcludedPlaces(currentPlan.destinationOrTown),
+            ...getPermanentSkipNames(),
+          ],
+          userSpots: getMySpots(),
         }),
       });
 
@@ -323,6 +360,8 @@ export default function App() {
         onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
         historyCount={historyCount}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onOpenMySpots={() => setIsMySpotsOpen(true)}
+        mySpotsCount={mySpotsCount}
         onOpenExport={() => setIsExportModalOpen(true)}
         hasActiveTrip={!!currentPlan}
       />
@@ -351,6 +390,7 @@ export default function App() {
             onOpenExport={() => setIsExportModalOpen(true)}
             onSwapActivity={handleSwapActivity}
             onUpdatePlan={handleUpdatePlan}
+            onSkipPermanently={handleSkipPermanently}
           />
         </section>
       </main>
@@ -396,6 +436,16 @@ export default function App() {
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         plan={currentPlan}
+      />
+
+      {/* My Places: user-provided bars, cafés & restaurants */}
+      <MySpotsModal
+        isOpen={isMySpotsOpen}
+        onClose={() => {
+          setIsMySpotsOpen(false);
+          setMySpotsCount(getMySpots().length);
+        }}
+        defaultTown={currentPlan?.destinationOrTown?.split(",")[0] || ""}
       />
 
       {/* Activity Discovery Swiper Modal */}

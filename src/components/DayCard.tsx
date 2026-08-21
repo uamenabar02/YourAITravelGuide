@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { DailyPlan, ActivitySpot } from "../types";
 import { ActivityCard } from "./ActivityCard";
-import { Calendar, ChevronDown, ChevronUp, DollarSign, Plus, Edit3, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, DollarSign, Plus, Edit3, Trash2 } from "lucide-react";
 
 interface DayCardProps {
   day: DailyPlan;
@@ -15,6 +15,10 @@ interface DayCardProps {
   onSelectAlternativeOption: (dayNumber: number, activityIndex: number, optionIndex: number) => void;
   onOpenAddActivity: (dayNumber: number) => void;
   onDeleteDay?: (dayNumber: number) => void;
+  /** Persist a day title/theme edit immutably through the parent plan state. */
+  onUpdateDayHeader?: (dayNumber: number, patch: { dayTitle?: string; theme?: string }) => void;
+  /** Permanently exclude a spot from all future suggestions. */
+  onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   destinationOrTown: string;
 }
 
@@ -30,6 +34,8 @@ export const DayCard: React.FC<DayCardProps> = ({
   onSelectAlternativeOption,
   onOpenAddActivity,
   onDeleteDay,
+  onUpdateDayHeader,
+  onSkipPermanently,
   destinationOrTown,
 }) => {
   const [isExpanded, setIsExpanded] = useState(isExpandedDefault);
@@ -37,10 +43,25 @@ export const DayCard: React.FC<DayCardProps> = ({
   const [dayTitle, setDayTitle] = useState(day.dayTitle);
   const [theme, setTheme] = useState(day.theme);
 
+  // Keep the edit fields in sync if the underlying day object changes
+  // (e.g. reorder, renumber, or a reload of a saved trip).
+  useEffect(() => {
+    setDayTitle(day.dayTitle);
+  }, [day.dayTitle]);
+  useEffect(() => {
+    setTheme(day.theme);
+  }, [day.theme]);
+
   const handleSaveHeader = (e: React.FormEvent) => {
     e.preventDefault();
-    day.dayTitle = dayTitle;
-    day.theme = theme;
+    // Persist immutably through the parent instead of mutating props, so the
+    // change propagates to React state, saved-trip storage, and exports.
+    if (onUpdateDayHeader) {
+      onUpdateDayHeader(day.dayNumber, {
+        dayTitle: dayTitle.trim() || day.dayTitle,
+        theme: theme.trim() || day.theme,
+      });
+    }
     setIsEditingHeader(false);
   };
 
@@ -167,6 +188,7 @@ export const DayCard: React.FC<DayCardProps> = ({
                   onDeleteActivity={onDeleteActivity}
                   onMoveActivity={onMoveActivity}
                   onSelectAlternativeOption={onSelectAlternativeOption}
+                  onSkipPermanently={onSkipPermanently}
                   destinationOrTown={destinationOrTown}
                 />
 

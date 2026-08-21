@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, CloudRain, ShieldCheck, History, Sliders, ChevronDown, ChevronUp } from "lucide-react";
+import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 import { HometownPreferences, TimeAvailability, WeatherData } from "../types";
 import { fetchLiveWeather, reverseGeocode } from "../utils/weather";
-import { getRecentExcludedPlaces } from "../utils/storage";
+import { getRecentExcludedPlaces, getPermanentSkips, getPermanentSkipNames } from "../utils/storage";
 import { DestinationAdvisor } from "./DestinationAdvisor";
 import { findVerifiedDestination } from "../utils/destinations";
 
@@ -38,17 +38,20 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
   const [occasion, setOccasion] = useState("Solo Chill & Read");
   const [weatherCondition, setWeatherCondition] = useState("Sunny & Mild (22°C)");
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
   const [liveWeatherData, setLiveWeatherData] = useState<WeatherData | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customNotes, setCustomNotes] = useState("");
 
   const verifiedTown = findVerifiedDestination(location);
   const excludedCount = getRecentExcludedPlaces(location).length;
+  const permanentSkipCount = getPermanentSkips().length;
 
   // Auto-detect GPS location on click
   const handleDetectGPS = () => {
+    setGpsError(null);
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by your browser.");
+      setGpsError("Geolocation is not supported by this browser. Please type your town instead.");
       return;
     }
     setIsDetectingLocation(true);
@@ -64,6 +67,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
           setWeatherCondition(`${weather.condition} (${weather.temperature}°C)`);
         } catch (err) {
           console.error("GPS detection error:", err);
+          setGpsError("Could not resolve your location. Please type your town instead.");
         } finally {
           setIsDetectingLocation(false);
         }
@@ -71,7 +75,11 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
       (err) => {
         console.warn("Geolocation permission denied or timed out:", err);
         setIsDetectingLocation(false);
-        setLocation("Azpeitia, Spain");
+        setGpsError(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission was denied. Enable it or type your town instead."
+            : "Could not detect your location in time. Please type your town instead."
+        );
       },
       { timeout: 8000 }
     );
@@ -91,6 +99,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
       weatherCondition,
       currentTemp: liveWeatherData?.temperature,
       excludedPlaces,
+      permanentSkips: getPermanentSkipNames(),
       customNotes: customNotes.trim() || undefined,
     });
   };
@@ -161,6 +170,14 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
               <span className="hidden sm:inline">Use GPS</span>
             </button>
           </div>
+
+          {/* GPS / Geolocation Error Feedback */}
+          {gpsError && (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{gpsError}</span>
+            </div>
+          )}
 
           {/* Verified Destination Advisor Confirmation Banner */}
           {verifiedTown ? (
@@ -360,8 +377,8 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
                 30-Day Anti-Repeat Memory Active
               </div>
               <div className="text-[11px] text-[#6b6b5e]">
-                {excludedCount > 0
-                  ? `Filtering out ${excludedCount} recently suggested spots in ${location}`
+                {excludedCount > 0 || permanentSkipCount > 0
+                  ? `Filtering out ${excludedCount} recent + ${permanentSkipCount} permanently excluded spots for ${location.split(",")[0]}`
                   : "Automatically tracks history to prevent suggesting recently visited places"}
               </div>
             </div>
@@ -371,7 +388,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
             onClick={onOpenHistory}
             className="text-xs font-serif italic text-[#5A5A40] hover:text-[#2c2c24] underline shrink-0 ml-2"
           >
-            View History
+            Manage
           </button>
         </div>
 

@@ -71,6 +71,7 @@ export interface ActivitySpot {
 export interface CandidateSpot extends ActivitySpot {
   vibeCategories?: string[];
   matchScore?: number;
+  isLiked?: boolean;
 }
 
 export interface DailyPlan {
@@ -129,6 +130,8 @@ export interface VacationPreferences {
   exactBudgetPerDay?: number;
   currency?: string;
   groupSize: number; // e.g. 1, 2, 4
+  permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
+  userSpots?: UserSpot[]; // The traveler's own favorite places (dining is sourced from here, never static lists)
   customNotes?: string;
   isMultiDestination?: boolean;
   destinations?: DestinationStop[];
@@ -147,6 +150,8 @@ export interface HometownPreferences {
   weatherCondition: string;
   currentTemp?: number;
   excludedPlaces?: string[]; // IDs or names of places visited in past 30 days
+  permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
+  userSpots?: UserSpot[]; // The resident's own places — primary source for dining suggestions
   customNotes?: string;
   enableSwiper?: boolean;
   likedSpots?: ActivitySpot[];
@@ -160,6 +165,28 @@ export interface ActivityHistoryItem {
   category: ActivityCategory;
   timestamp: number; // Date.now()
   approxCost?: string;
+}
+
+/** A place the resident has permanently excluded from all future suggestions. */
+export interface PermanentSkip {
+  id: string;
+  name: string;
+  addedAt: number; // Date.now()
+}
+
+/**
+ * A place provided BY THE USER ("My Places"): their own bars, cafés,
+ * restaurants and other favorites. Dining recommendations are sourced from
+ * these (or live AI search) — never from a static built-in list.
+ */
+export interface UserSpot {
+  id: string;
+  name: string;
+  category: "bar" | "cafe" | "restaurant" | "other";
+  town?: string;
+  notes?: string;
+  coordinates?: Coordinates; // resolved via geocoding when added
+  addedAt: number;
 }
 
 export interface WeatherData {
@@ -183,9 +210,6 @@ export interface SwapActivityRequest {
   vibes: string[];
   budgetTier?: BudgetTier;
   excludedPlaces?: string[];
-}
-
-export interface CandidateSpot extends ActivitySpot {
-  isLiked?: boolean;
+  userSpots?: UserSpot[]; // So dining swaps can be sourced from the user's own places
 }
 

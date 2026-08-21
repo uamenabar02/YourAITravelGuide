@@ -17,8 +17,10 @@ import {
   Layers,
   MessageSquare,
   Ticket,
+  Ban,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
+import { normalizeTimeSlot } from "../utils/time";
 
 interface ActivityCardProps {
   activity: ActivitySpot;
@@ -32,6 +34,7 @@ interface ActivityCardProps {
   onDeleteActivity: (activityId: string, dayNumber: number) => void;
   onMoveActivity: (dayNumber: number, fromIndex: number, toIndex: number) => void;
   onSelectAlternativeOption: (dayNumber: number, activityIndex: number, optionIndex: number) => void;
+  onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   destinationOrTown: string;
 }
 
@@ -60,6 +63,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   onDeleteActivity,
   onMoveActivity,
   onSelectAlternativeOption,
+  onSkipPermanently,
   destinationOrTown,
 }) => {
   const [isSwapping, setIsSwapping] = useState(false);
@@ -133,7 +137,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 
           <div className="flex items-center space-x-1.5 text-xs font-serif italic text-[#2c2c24]">
             <Clock className="w-3.5 h-3.5 text-[#8a8a7e]" />
-            <span>{activity.time}</span>
+            <span>{normalizeTimeSlot(activity.time)}</span>
           </div>
 
           <span
@@ -387,6 +391,27 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
+
+          {/* Permanent Skip: never suggest this place again */}
+          {onSkipPermanently && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (
+                  confirm(
+                    `Never suggest "${activity.name}" again?\n\nIt will be permanently excluded from all future plans. You can undo this anytime in History → Permanent Skips.`
+                  )
+                ) {
+                  onSkipPermanently(activity, dayNumber);
+                }
+              }}
+              title="Never suggest this place again"
+              className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors"
+            >
+              <Ban className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Regenerate / Swap Single Activity Button */}
           <button
