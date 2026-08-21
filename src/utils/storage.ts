@@ -1,8 +1,9 @@
-import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip } from "../types";
+import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip, UserSpot } from "../types";
 
 const SAVED_TRIPS_KEY = "localexplorer_saved_trips_v1";
 const ACTIVITY_HISTORY_KEY = "localexplorer_activity_history_v1";
 const PERMANENT_SKIPS_KEY = "localexplorer_permanent_skips_v1";
+const MY_SPOTS_KEY = "localexplorer_my_spots_v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 // --- Saved Trips ---
@@ -171,6 +172,43 @@ export function removePermanentSkip(id: string): void {
     localStorage.setItem(PERMANENT_SKIPS_KEY, JSON.stringify(updated));
   } catch (err) {
     console.error("Failed to remove permanent skip:", err);
+  }
+}
+
+// --- My Places (user-provided spots: bars, cafés, restaurants, favorites) ---
+
+export function getMySpots(): UserSpot[] {
+  try {
+    const raw = localStorage.getItem(MY_SPOTS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Failed to read My Spots:", err);
+    return [];
+  }
+}
+
+export function addMySpot(spot: Omit<UserSpot, "id" | "addedAt">): UserSpot {
+  const newSpot: UserSpot = {
+    ...spot,
+    id: "myspot-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+    addedAt: Date.now(),
+  };
+  try {
+    const current = getMySpots();
+    localStorage.setItem(MY_SPOTS_KEY, JSON.stringify([newSpot, ...current]));
+  } catch (err) {
+    console.error("Failed to save My Spot:", err);
+  }
+  return newSpot;
+}
+
+export function removeMySpot(id: string): void {
+  try {
+    const current = getMySpots();
+    localStorage.setItem(MY_SPOTS_KEY, JSON.stringify(current.filter((s) => s.id !== id)));
+  } catch (err) {
+    console.error("Failed to remove My Spot:", err);
   }
 }
 

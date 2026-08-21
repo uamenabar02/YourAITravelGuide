@@ -9,7 +9,9 @@ import {
   SwapActivityRequest,
   CandidateSpot,
   DestinationStop,
+  UserSpot,
 } from "../src/types.js";
+import { geocodeSpot } from "./geocoder.js";
 import {
   getCuratedPhotosForSpot,
   getTicketOrBookingUrl,
@@ -47,6 +49,18 @@ function getAiClient(): GoogleGenAI | null {
     });
   }
   return aiClient;
+}
+
+// Names that indicate a dining/drinking venue. Dining recommendations must
+// come from user-provided data or live AI search — never from static lists.
+const DINING_NAME_HINTS = [
+  "pintxo", "tapas", "tavern", "bar ", " bar", "bistro", "café", "cafe", "coffee",
+  "restaurant", "eatery", "gastronomy", "michelin", "ciderhouse", "sagardotegi",
+  "tasting", "izakaya", "roastery", "bakery", "asador", "trattoria", "brew",
+];
+function isDiningName(name: string): boolean {
+  const n = (name || "").toLowerCase();
+  return DINING_NAME_HINTS.some((h) => n.includes(h));
 }
 
 // Coordinate & Destination Knowledge Base
@@ -236,15 +250,15 @@ function getUnusedBackupSpot(
       {
         id: `bk-ss-4`,
         time: timeSlot,
-        name: "Egia Quarter Craft Beer Lounge & Live Music Hub",
-        category: "nightlife",
-        description: "Independent bohemian neighborhood taproom serving small-batch Basque craft IPAs and organic natural cider.",
-        insiderTip: "Ask for the local Mala Gissona or Gross craft brew on draft.",
-        approxCost: "€10 - €20",
+        name: "Alderdi Eder Gardens & Belle Époque Bandstand",
+        category: "relaxation",
+        description: "Romantic riverside gardens with a fairytale bandstand, tamarind trees, and open views toward the bay.",
+        insiderTip: "The benches facing the bandstand catch the last evening sun.",
+        approxCost: "Free",
         rating: 4.8,
-        coordinates: { lat: 43.3170, lng: -1.9720 },
-        address: "Egia Kalea, Donostia",
-        durationMinutes: 90,
+        coordinates: { lat: 43.3210, lng: -1.9815 },
+        address: "Alderdi Eder, Donostia",
+        durationMinutes: 60,
       },
       {
         id: `bk-ss-5`,
@@ -275,6 +289,9 @@ function getUnusedBackupSpot(
   // IMPORTANT: rotate through a varied template pool so consecutive fallback
   // spots are always distinct (previously the same spot was returned for every
   // call, producing itineraries full of duplicates for non-curated cities).
+  // NOTE: dining venues (bars/cafés/restaurants) are intentionally ABSENT here.
+  // Food & drink recommendations come from the user's own places (My Places)
+  // or from live AI search — never from a static built-in list.
   const GENERIC_TEMPLATES: {
     name: string;
     category: ActivityCategory;
@@ -297,11 +314,11 @@ function getUnusedBackupSpot(
       approxCost: "Free",
     },
     {
-      name: "Central Market Hall & Regional Food Counters",
-      category: "food",
-      description: "The city's main food market with regional produce, cheese and charcuterie stalls, and casual lunch counters.",
-      insiderTip: "Go mid-morning when stalls are fullest and grab a seat at the standing counters.",
-      approxCost: "€10 - €20",
+      name: "Historic Market Hall & Craft Stalls",
+      category: "shopping",
+      description: "The town's main market hall, full of regional produce, artisan goods, and everyday local life.",
+      insiderTip: "Go mid-morning when the stalls are fullest and the aisles are calm.",
+      approxCost: "Free to browse",
     },
     {
       name: "Local History Museum & Craft Exhibition",
@@ -313,16 +330,9 @@ function getUnusedBackupSpot(
     {
       name: "Riverside or Waterfront Promenade Stroll",
       category: "nature",
-      description: "A flat, shaded walking path along the water connecting bridges, benches, and small cafés.",
+      description: "A flat, shaded walking path along the water connecting bridges, benches, and small squares.",
       insiderTip: "Cross to the opposite bank for the classic postcard view back toward the center.",
       approxCost: "Free",
-    },
-    {
-      name: "Specialty Coffee Roastery & Pastry House",
-      category: "cafe",
-      description: "An independent café known for single-origin coffee, fresh pastries, and a relaxed local crowd.",
-      insiderTip: "Order the signature pastry with a flat white mid-morning.",
-      approxCost: "€6 - €12",
     },
     {
       name: "Botanical Garden & Quiet Park Loop",
@@ -339,13 +349,6 @@ function getUnusedBackupSpot(
       approxCost: "Free to browse",
     },
     {
-      name: "Traditional Tavern & Regional Dinner",
-      category: "food",
-      description: "A long-standing local tavern serving the region's signature dishes and wines in a convivial setting.",
-      insiderTip: "Order the house specialty and a local wine; arrive before peak dinner hours for a table.",
-      approxCost: "€25 - €45",
-    },
-    {
       name: "Historic Church or Monument Interior Visit",
       category: "culture",
       description: "Step inside the most significant historic monument to admire its architecture, art, and quiet atmosphere.",
@@ -360,11 +363,11 @@ function getUnusedBackupSpot(
       approxCost: "Free",
     },
     {
-      name: "Evening Terrace & Local Drinks",
+      name: "Old-Town Evening Photo Walk",
       category: "nightlife",
-      description: "A favorite local terrace or bar to end the day with regional drinks and easy conversation.",
-      insiderTip: "Ask the bartender for the local specialty rather than the standard list.",
-      approxCost: "€10 - €20",
+      description: "Familiar streets read completely differently after dark: lit facades, empty squares, and the town at its quietest.",
+      insiderTip: "Walk the lit route counter-clockwise — the best details face you on the way.",
+      approxCost: "Free",
     },
   ];
 
@@ -476,24 +479,24 @@ function generateExtraDayForDestination(
           {
             id: `ss-${dayNum}-2`,
             time: "01:00 PM - 04:00 PM",
-            name: "Elkano or Kaia-Kaipe Wood-Grilled Turbot Feast",
-            category: "food",
-            description: "Dine at the birthplace of outdoor charcoal-grilled whole fish, savoring pristine turbot grilled over open hearth coals.",
-            insiderTip: "Request a table near the outdoor hearth to watch the grillmaster at work.",
-            approxCost: "€50 - €90",
-            rating: 5.0,
-            coordinates: { lat: 43.3035, lng: -2.2030 },
-            address: "Herrerieta Kalea 2, Getaria",
+            name: "Getaria Medieval Streets & San Antón Hill Views",
+            category: "sightseeing",
+            description: "Wander the walled lanes up toward Mount San Anton for sweeping views over the fishing port and the Basque coast.",
+            insiderTip: "Take the harbourside path back down for the classic postcard angle.",
+            approxCost: "Free",
+            rating: 4.9,
+            coordinates: { lat: 43.3010, lng: -2.2025 },
+            address: "Getaria Old Town",
             durationMinutes: 180,
-            photos: getCuratedPhotosForSpot("food", "Elkano Getaria charcoal grilled fish", destination),
+            photos: getCuratedPhotosForSpot("sightseeing", "Getaria medieval old town harbor", destination),
           },
         ],
       },
       {
         dayNumber: dayNum,
-        dayTitle: `Day ${dayNum}: Medieval Hondarribia Fishing Port & Coastal Txakoli Vineyard Tasting`,
-        theme: "Walled Medieval Heritage & Vineyard Terroir",
-        summary: "Take a scenic coastal drive to the border walled town of Hondarribia, admiring colorful fishermen's houses on San Pedro street and visiting a coastal Txakoli vineyard.",
+        dayTitle: `Day ${dayNum}: Medieval Hondarribia Fishing Port & Coastal Cliff Views`,
+        theme: "Walled Medieval Heritage & Coastal Views",
+        summary: "Take a scenic coastal drive to the border walled town of Hondarribia, admiring colorful fishermen's houses on San Pedro street and walking the ramparts above the Bidasoa estuary.",
         estimatedTotalBudget: "€40 - €75",
         activities: [
           {
@@ -513,16 +516,16 @@ function generateExtraDayForDestination(
           {
             id: `ss-${dayNum}-2`,
             time: "01:30 PM - 04:00 PM",
-            name: "Hiruzta Txakoli Vineyard Tour & Basque Countryside Lunch",
-            category: "food",
-            description: "Tour steep coastal grape arbors producing crisp, slightly effervescent Getariako Txakolina wine at the foot of Mount Jaizkibel, paired with local cheeses and fresh anchovies.",
-            insiderTip: "Book a terrace table overlooking the vine-covered valley for lunch.",
-            approxCost: "€25 - €40",
+            name: "Hondarribia Ramparts Circuit & Bidasoa Estuary Views",
+            category: "nature",
+            description: "A gentle loop along the medieval walls ending with wide views over the Bidasoa estuary toward the French coast.",
+            insiderTip: "The eastern rampart stretch is the quietest and has the best afternoon light.",
+            approxCost: "Free",
             rating: 4.9,
-            coordinates: { lat: 43.3550, lng: -1.8120 },
-            address: "Barrio Jaizubia 2, Hondarribia",
+            coordinates: { lat: 43.3650, lng: -1.7935 },
+            address: "Murallas de Hondarribia",
             durationMinutes: 150,
-            photos: getCuratedPhotosForSpot("food", "Txakoli vineyard winery", destination),
+            photos: getCuratedPhotosForSpot("nature", "Hondarribia ramparts estuary views", destination),
           },
         ],
       },
@@ -939,7 +942,10 @@ CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
 10. ${paceInstruction}
 11. ${vibesInstruction}
 12. ${skippedSpotsInstruction}
-13. ${likedSpotsInstruction}`;
+13. ${likedSpotsInstruction}
+14. DINING FROM THE TRAVELER'S OWN PLACES: ${(prefs.userSpots && prefs.userSpots.length > 0)
+    ? `the traveler provided their own favorite places: [${prefs.userSpots.map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`).join("; ")}]. For any bar/café/restaurant slot in the destination matching their towns, prefer THESE places. `
+    : ""}Bars, cafés and restaurants must be real, named, currently-operating venues (from your knowledge or search) — never generic placeholders.`;
 
   const prompt = `Plan an in-depth, geographically clustered, non-repeating EXACTLY ${daysCount}-day itinerary for ${prefs.destination}.
 Number of Days: STRICTLY ${daysCount} Days (Day 1 through Day ${daysCount}).
@@ -1164,7 +1170,7 @@ function enforceHometownRadiusAndCoordinates(
     const n = name.toLowerCase();
     return excludedLower.some((ex) => n.includes(ex) || ex.includes(n));
   };
-  const safeLocalSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedName(sp));
+  const safeLocalSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedName(sp) && !isDiningName(sp));
 
   if (plan.days) {
     plan.days.forEach((day) => {
@@ -1272,6 +1278,14 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
     likedSpotsInstruction = `\n- USER SWIPED LIKED SPOTS: Include and prioritize these spots: [${prefs.likedSpots.map(s => s.name).join(", ")}].`;
   }
 
+  // The resident's own places — dining must come from here or from live search, never static data
+  const userSpotsList = prefs.userSpots || [];
+  const userSpotsInstruction = userSpotsList.length > 0
+    ? `RESIDENT'S OWN PLACES (user-provided data): [${userSpotsList
+        .map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""}${sp.notes ? ", note: " + sp.notes : ""})`)
+        .join("; ")}]. Whenever the occasion fits (especially for bars/cafés/restaurants), weave these into the plan and/or alternatives. They must NEVER be excluded or filtered out.`
+    : `The resident has NOT provided their own places. Bars, cafés and restaurants MUST come from your live Google Search results ONLY — never invent or reuse dining venues from memory.`;
+
   const systemInstruction = `You are LocalExplorer AI in Hometown Local Guide Mode, empowered with Google Search to discover real-time live events, concerts, street food markets, sports races, food truck rallies, pop-up artisan markets, temporary art exhibits, and local festivals.
 THE USER IS A LONG-TIME RESIDENT OF ${prefs.location.toUpperCase()} — NOT A TOURIST. They already know every famous sight, landmark and "top 10" recommendation. Your value is revealing their own town through angles they have not lived yet.
 
@@ -1288,7 +1302,8 @@ RESIDENT-FIRST CURATION RULES:
 10. Coordinates must be accurate real-world lat/lng within ${prefs.radiusKm} km of (${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
 11. Provide alternative choices for each activity spot.
 12. ${exclusions}
-13. ${likedSpotsInstruction}`;
+13. ${likedSpotsInstruction}
+14. ${userSpotsInstruction}`;
 
   const prompt = `The requester is a LONG-TIME RESIDENT of ${prefs.location}, not a visitor: they have already seen every tourist sight and standard recommendation. Surprise them with real places and happenings they plausibly have not experienced yet.
 Perform a live web search for active events, live concerts, street food markets, sports races, and cultural pop-ups happening right now or this week near ${prefs.location} (within a ${prefs.radiusKm}km radius of lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
@@ -1422,6 +1437,24 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
       });
     }
 
+    // Dynamic geocoding: fill in any activity the model left without usable coordinates
+    for (const day of planResult.days) {
+      for (const act of day.activities) {
+        const c = act.coordinates as { lat?: number; lng?: number } | undefined;
+        const unusable =
+          !c ||
+          typeof c.lat !== "number" ||
+          typeof c.lng !== "number" ||
+          isNaN(c.lat) ||
+          isNaN(c.lng) ||
+          (c.lat === 0 && c.lng === 0);
+        if (unusable) {
+          const geo = await geocodeSpot(act.name, prefs.location);
+          if (geo) act.coordinates = { lat: geo.lat, lng: geo.lng };
+        }
+      }
+    }
+
     return enforceHometownRadiusAndCoordinates(planResult, prefs, baseCoords);
   } catch (error) {
     console.error("Error generating hometown itinerary with search grounding:", error);
@@ -1437,7 +1470,8 @@ export async function generateCandidateSpots(
   budgetTier?: string,
   exactBudgetPerDay?: number,
   currency: string = "€",
-  pace?: string
+  pace?: string,
+  userSpots: UserSpot[] = []
 ): Promise<CandidateSpot[]> {
   const ai = getAiClient();
   const baseCoords = lookupKnownCoordinates(destination);
@@ -1497,7 +1531,7 @@ Pace: ${pace || "balanced"}.
 Output strictly valid JSON array of candidate spots.`;
 
   if (!ai) {
-    return generateFallbackCandidates(destination, count, vibes, budgetTier);
+    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots);
   }
 
   try {
@@ -1562,7 +1596,7 @@ Output strictly valid JSON array of candidate spots.`;
     }));
   } catch (error) {
     console.error("Error generating candidate spots:", error);
-    return generateFallbackCandidates(destination, count, vibes, budgetTier);
+    return generateFallbackCandidates(destination, count, vibes, budgetTier, userSpots);
   }
 }
 
@@ -1575,7 +1609,13 @@ Rules:
 - The new spot must fit the time slot (${req.timeSlot}) and category or complementary vibe.
 - Do NOT repeat the previous spot: "${req.currentActivityName}".
 ${req.excludedPlaces && req.excludedPlaces.length > 0 ? `- Avoid these recent spots: [${req.excludedPlaces.join(", ")}]` : ""}
-- Ensure realistic coordinates near ${baseCoords.lat}, ${baseCoords.lng}.`;
+- Ensure realistic coordinates near ${baseCoords.lat}, ${baseCoords.lng}.
+${["food", "cafe", "nightlife"].includes(req.category) && req.userSpots && req.userSpots.length > 0
+  ? `- For this dining-type swap, PREFER one of the resident's own places: [${req.userSpots
+      .filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category))
+      .map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`)
+      .join("; ")}].`
+  : ""}`;
 
   const prompt = `Give me 1 alternative activity spot to replace "${req.currentActivityName}" in ${req.destinationOrTown}.
 Time Slot: ${req.timeSlot}. Category: ${req.category}. Vibes: ${req.vibes.join(", ")}. Budget Tier: ${req.budgetTier || "mid-range"}.
@@ -1635,7 +1675,7 @@ Output strictly valid JSON.`;
 }
 
 // Curated Dynamic Fallback Generator for Donostia / San Sebastián and Global Destinations
-function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
+async function generateFallbackVacation(prefs: VacationPreferences): Promise<ItineraryPlan> {
   const dest = prefs.destination.trim() || "Donostia / San Sebastián, Spain";
   const daysCount = Math.min(Math.max(Number(prefs.duration) || 3, 1), 14);
   const baseCoords = lookupKnownCoordinates(dest);
@@ -1645,24 +1685,10 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
   // Activity pool for San Sebastián categorized by vibe
   const donostiaSpotPool: (ActivitySpot & { vibeCategories: string[] })[] = [
     // Gastronomy
-    {
-      id: "fb-1",
-      time: "07:30 PM - 10:30 PM",
-      name: "Parte Vieja Pintxo Crawl: Bar Nestor, Ganbara & La Cuchara",
-      category: "food",
-      description: "Experience world-famous Basque gastronomy: txuleta ribeye at Nestor, wild mushrooms at Ganbara, and braised beef cheek at La Cuchara.",
-      insiderTip: "Order burnt Basque cheesecake at La Viña on Calle 31 de Agosto to finish.",
-      approxCost: "€35 - €55",
-      rating: 5.0,
-      coordinates: { lat: 43.3238, lng: -1.9845 },
-      address: "Parte Vieja, Donostia",
-      durationMinutes: 150,
-      vibeCategories: ["Gastronomy & Local Food", "Nightlife & Bars", "Culture"],
-    },
-    {
+        {
       id: "fb-2",
       time: "12:30 PM - 02:30 PM",
-      name: "Mercado de la Bretxa & Local Artisanal Cheese Tasting",
+      name: "Mercado de la Bretxa & Old Town Produce Stalls",
       category: "food",
       description: "Historic covered market square where Michelin chefs shop for daily seafood, Idiazabal cheeses, and Guernica peppers.",
       insiderTip: "Explore the subterranean fishmonger stalls for fresh Cantabrian spider crab.",
@@ -1673,35 +1699,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
       durationMinutes: 90,
       vibeCategories: ["Gastronomy & Local Food", "Budget Friendly", "Family Friendly"],
     },
-    {
-      id: "fb-3",
-      time: "01:30 PM - 04:30 PM",
-      name: "Traditional Basque Ciderhouse (Sagardotegi) Txotx! Experience",
-      category: "food",
-      description: "Centuries-old cider barrel cellar ritual with charcoal-grilled steak, cod omelet, and unlimited fresh cider straight from colossal casks.",
-      insiderTip: "Shout 'Txotx!' with the cellar master to catch streaming golden cider.",
-      approxCost: "€38 - €45",
-      rating: 5.0,
-      coordinates: { lat: 43.2950, lng: -1.9680 },
-      address: "Astigarraga Cider Valley",
-      durationMinutes: 180,
-      vibeCategories: ["Gastronomy & Local Food", "History & Architecture", "Hidden Gems / Non-Touristy"],
-    },
-    {
-      id: "fb-4",
-      time: "07:45 PM - 10:30 PM",
-      name: "Gros District Pintxo Crawl: Bodega Donostiarra & Bar Bergara",
-      category: "food",
-      description: "Trendy surf quarter pintxo tour featuring the 'Completo' tuna sandwich at Bodega Donostiarra and award-winning hot tapas at Bergara.",
-      insiderTip: "Try the 'Txalupa' boat of gratin mushrooms and prawns at Bergara.",
-      approxCost: "€25 - €40",
-      rating: 4.9,
-      coordinates: { lat: 43.3228, lng: -1.9745 },
-      address: "Gros District, Donostia",
-      durationMinutes: 150,
-      vibeCategories: ["Gastronomy & Local Food", "Nightlife & Bars"],
-    },
-    // Scenic & Outdoors / Nature
+            // Scenic & Outdoors / Nature
     {
       id: "fb-5",
       time: "09:30 AM - 11:30 AM",
@@ -1837,7 +1835,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
       name: "Hondarribia Medieval Walled Town & Calle San Pedro Fishermen Houses",
       category: "culture",
       description: "Scenic excursion to Hondarribia's medieval ramparts and colorful timber fishermen cottages with painted balconies.",
-      insiderTip: "Try a grilled sardine pintxo and cold Txakoli at Bar Gran Sol.",
+      insiderTip: "Walk to the harbor end of Calle San Pedro for the best balcony photo angle.",
       approxCost: "Free",
       rating: 4.9,
       coordinates: { lat: 43.3685, lng: -1.7915 },
@@ -1870,12 +1868,27 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     return !skippedNames.some((sk) => sName.includes(sk) || sk.includes(sName));
   });
 
+  // Dining is sourced from the traveler's OWN places (user-provided data) —
+  // static pools never contain bars/cafés/restaurants anymore.
+  const userDiningRaw = (prefs.userSpots || []).filter(
+    (sp) => ["bar", "cafe", "restaurant"].includes(sp.category)
+  );
+  const destKey = dest.split(",")[0].trim().toLowerCase();
+  const userDiningForDest = userDiningRaw.filter((sp) => {
+    const n = sp.name.toLowerCase();
+    if (skippedNames.some((sk) => n.includes(sk) || sk.includes(n))) return false;
+    if (!sp.town) return true;
+    const t = sp.town.toLowerCase();
+    return t.includes(destKey) || destKey.includes(t) || dest.toLowerCase().includes(t);
+  });
+
   // Determine activities per day based on pace
   const targetActivitiesPerDay = pace === "relaxed" ? 2 : pace === "action-packed" ? 5 : 3;
 
   // Build days dynamically
   const days: DailyPlan[] = [];
   const usedSignatures = new Set<string>();
+  let userDiningIdx = 0;
 
   for (let d = 1; d <= daysCount; d++) {
     const dayActivities: ActivitySpot[] = [];
@@ -1937,6 +1950,36 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
       dayActivities.push(getUnusedBackupSpot(dest, usedSignatures, "10:00 AM - 12:30 PM", "culture"));
     }
 
+    // Weave in the traveler's own dining spot for this day (dynamically geocoded)
+    if (userDiningForDest.length > 0 && userDiningIdx < userDiningForDest.length) {
+      const us = userDiningForDest[userDiningIdx++];
+      if (!us.coordinates) {
+        const geo = await geocodeSpot(us.name, us.town || dest);
+        if (geo) us.coordinates = { lat: geo.lat, lng: geo.lng };
+      }
+      const dinnerTime =
+        pace === "relaxed" ? "06:30 PM - 08:30 PM" : pace === "action-packed" ? "09:00 PM - 11:00 PM" : "08:00 PM - 10:00 PM";
+      const userAct: ActivitySpot = {
+        id: `user-spot-${us.id}-d${d}`,
+        time: dinnerTime,
+        name: us.name,
+        category: us.category === "bar" ? "nightlife" : us.category === "cafe" ? "cafe" : "food",
+        description: us.notes ? `One of your own places: ${us.notes}` : "One of your own places, saved in My Places.",
+        insiderTip: "You added this one yourself — it belongs on the trip.",
+        approxCost: "Your budget",
+        rating: 5.0,
+        coordinates: us.coordinates || { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.002 },
+        address: us.town,
+        durationMinutes: 105,
+      };
+      // Keep the pace counts stable: replace the last slot when the day is already full
+      if (dayActivities.length >= countForThisDay) {
+        dayActivities[dayActivities.length - 1] = userAct;
+      } else {
+        dayActivities.push(userAct);
+      }
+    }
+
     // Determine day theme dynamically from vibes
     const dominantVibe = vibes[(d - 1) % vibes.length] || "Cultural Exploration";
     days.push({
@@ -1976,7 +2019,14 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
   return enforceVacationConstraintsAndPhotos(dynamicPlan, prefs);
 }
 
-function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
+/**
+ * Offline hometown fallback.
+ * IMPORTANT: dining suggestions (bars/cafés/restaurants) are NEVER fabricated
+ * here — they are sourced from the user's own places ("My Places"). Known
+ * local places and user places are geocoded dynamically (KB fast-path +
+ * Nominatim), so pins always point at the real location.
+ */
+async function generateFallbackHometown(prefs: HometownPreferences): Promise<ItineraryPlan> {
   const loc = prefs.location.trim() || "Local Neighborhood";
   const baseCoords = lookupKnownCoordinates(loc);
   const verified = findVerifiedDestination(prefs.location);
@@ -1991,8 +2041,32 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     return excludedLower.some((ex) => n.includes(ex) || ex.includes(n));
   };
 
+  // Dining demand is satisfied with DATA PROVIDED BY THE USER, never static lists
+  const userDiningAll = (prefs.userSpots || []).filter(
+    (sp) => ["bar", "cafe", "restaurant"].includes(sp.category) && !isExcludedSpot(sp.name)
+  );
+  const townMatched = userDiningAll.filter(
+    (sp) =>
+      !sp.town ||
+      sp.town.toLowerCase().includes(townName.toLowerCase()) ||
+      townName.toLowerCase().includes(sp.town.toLowerCase())
+  );
+  const diningPool = townMatched.length > 0 ? townMatched : userDiningAll;
+
   const spotCount = prefs.timeAvailable === "quick" ? 2 : prefs.timeAvailable === "full-day" ? 4 : 3;
   const wetWeather = /rain|storm|drizzle|wet|cold|chilly|wind|overcast/i.test(prefs.weatherCondition || "");
+
+  let diningSlots =
+    prefs.occasion === "Local Tapas & Eateries" ? spotCount : prefs.timeAvailable === "full-day" ? 2 : 1;
+  diningSlots = Math.min(diningSlots, spotCount);
+
+  // Dynamically geocode the user's places if their coordinates are pending
+  for (const sp of diningPool.slice(0, diningSlots)) {
+    if (!sp.coordinates) {
+      const geo = await geocodeSpot(sp.name, sp.town || townName);
+      if (geo) sp.coordinates = { lat: geo.lat, lng: geo.lng };
+    }
+  }
 
   // How a resident re-lives a familiar place, per occasion
   const occasionAngles: Record<string, { suffix: string; tip: string }> = {
@@ -2030,20 +2104,28 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     },
   };
   const angle = occasionAngles[prefs.occasion] || occasionAngles["Solo Chill & Read"];
+  // Non-dining spots on a dining-focused outing get a stroll-style framing instead
+  const realSpotAngle =
+    prefs.occasion === "Local Tapas & Eateries"
+      ? {
+          suffix: "Evening-Stroll Stop",
+          tip: "The classic between-bites walk locals do — this is the scenic breather.",
+        }
+      : angle;
 
-  // Occasion-matched archetypes used when no verified local knowledge exists
+  // Occasion-matched NON-DINING archetypes (dining comes exclusively from user data)
   const archetypesByOccasion: Record<string, { name: string; category: ActivityCategory; description: string; tip: string; cost: string }[]> = {
     "Solo Chill & Read": [
-      { name: "Independent Café with a Reading Corner", category: "cafe", description: "A quiet independent café where regulars read and nobody rushes you.", tip: "Ask which corner gets the afternoon light — that's the locals' seat.", cost: "€4 - €8" },
+      { name: "Library or Quiet Reading Corner", category: "relaxation", description: "The calmest public corner in town to sit, read and disconnect.", tip: "The upper floor is the quietest after lunch.", cost: "Free" },
       { name: "Quiet Green Loop & Locals' Bench", category: "nature", description: "The calmest walking loop nearby, ending at the bench residents actually use.", tip: "The bench facing west gets the last sun of the day.", cost: "Free" },
       { name: "Bookshop or Kiosk Browsing Stroll", category: "hidden-gem", description: "Slow browsing through local shelves and magazines, no agenda.", tip: "Check the small local-press section for town history zines.", cost: "Free to browse" },
-      { name: "Empty-Hour Square Terrace", category: "cafe", description: "The main square's terrace at its quietest, coffee in hand.", tip: "Locals go between lunch and the evening rush — that's the calm window.", cost: "€3 - €6" },
+      { name: "Empty-Hour Square Bench", category: "relaxation", description: "The main square at its quietest — just the fountain and the pigeons.", tip: "Locals go between lunch and the evening rush — that's the calm window.", cost: "Free" },
     ],
     "Date Night & Ambiance": [
       { name: "Sunset Viewpoint the Locals Actually Use", category: "nature", description: "The lookout where residents take visitors — and each other.", tip: "Arrive 20 minutes before sunset for the best light and a free bench.", cost: "Free" },
-      { name: "Intimate Neighborhood Bistro", category: "food", description: "Small room, short menu, candlelight — the kind of place you book for a reason.", tip: "Ask for the corner table; it's the quietest in the house.", cost: "€25 - €45" },
-      { name: "Evening Terrace & Slow Drinks", category: "nightlife", description: "String lights and slow conversation — the resident's default end to a date.", tip: "Order the house vermouth or local pour rather than the cocktail list.", cost: "€10 - €18" },
       { name: "Night-Illuminated Old-Quarter Walk", category: "sightseeing", description: "Familiar streets read completely differently after dark.", tip: "Walk the lit route counter-clockwise — the best facades face you.", cost: "Free" },
+      { name: "Skyline or Riverbank Evening Bench", category: "relaxation", description: "The bench with the evening view locals keep to themselves.", tip: "Bring a thermos; there's no kiosk, which is exactly why it's quiet.", cost: "Free" },
+      { name: "Concert Hall or Theatre Facade & Program", category: "culture", description: "Check tonight's program — locals plan the evening around it.", tip: "Last-minute seats often free up right before the doors open.", cost: "Varies" },
     ],
     "Outdoor Adventure": [
       { name: "Ridge or Trailhead Active Loop", category: "nature", description: "The proper local loop with real elevation, not the signposted stroll.", tip: "Take the residents' shortcut on the way back — it saves 15 minutes.", cost: "Free" },
@@ -2053,15 +2135,13 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     ],
     "Rainy Day Indoor": [
       { name: "Small Museum or Gallery Corner", category: "culture", description: "The town's indoor refuge — one good room beats five rushed ones.", tip: "Rainy days are when the curator actually has time to talk.", cost: "€3 - €8" },
-      { name: "Covered Market Counter Lunch", category: "food", description: "Dry, warm, and full of stall-side snacks.", tip: "The counters at the back serve the best portions once the rush ends.", cost: "€8 - €15" },
-      { name: "Café with Window Seats", category: "cafe", description: "Rain on the glass, coffee in hand — the classic local hideout.", tip: "Window seats go first; the side table by the radiator is the backup.", cost: "€4 - €8" },
+      { name: "Covered Market Hall Browsing", category: "shopping", description: "Dry, warm, and full of local life between the stalls.", tip: "The back aisles are calmest once the morning rush ends.", cost: "Free to browse" },
+      { name: "Library or Reading Room", category: "relaxation", description: "Rain on the windows and a quiet chair — the classic local hideout.", tip: "The reading room by the tall windows fills first; the side tables are the backup.", cost: "Free" },
       { name: "Bookshop, Workshop or Artisan Visit", category: "hidden-gem", description: "Indoor wandering through shelves or a maker's bench.", tip: "Ask about repairs or custom orders — rainy days are when makers work.", cost: "Free to browse" },
     ],
     "Local Tapas & Eateries": [
-      { name: "Market Counter Tastings", category: "food", description: "Graze across the market stalls like the regulars do.", tip: "Go before 1 PM while the best counters still have everything.", cost: "€10 - €18" },
-      { name: "The Bar with the Daily Special", category: "food", description: "One bar, one blackboard, the dish locals actually queue for.", tip: "Ask what came in today — the blackboard special beats the menu.", cost: "€12 - €22" },
-      { name: "Dessert & Vermouth Stop", category: "cafe", description: "The sweet finish residents tack onto any outing.", tip: "The house vermouth with a citrus twist is the local order.", cost: "€5 - €10" },
-      { name: "Neighborhood Counter of the Month", category: "food", description: "Rotate through the small counters — this month, try one you walk past daily.", tip: "Stand at the bar, not the tables: better portions, better chat.", cost: "€8 - €16" },
+      { name: "Old-Quarter Evening Stroll", category: "sightseeing", description: "The classic between-bars walk locals do — facades, squares and street life.", tip: "Start at the main square and let the side alleys decide the route.", cost: "Free" },
+      { name: "Seafront or Riverside Promenade at Dusk", category: "nature", description: "The digestivo walk residents take after eating.", tip: "Go against the crowd flow for the quiet stretch.", cost: "Free" },
     ],
     "Nature & River Spots": [
       { name: "Riverside Greenway Slow Loop", category: "nature", description: "The flat green path along the water, done at resident pace.", tip: "Cross at the second bridge for the quieter return bank.", cost: "Free" },
@@ -2073,18 +2153,17 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
       { name: "Vintage & Thrift Back Rooms", category: "shopping", description: "The racks behind the racks, where the good stuff hides.", tip: "New stock goes out midweek mornings — not weekends.", cost: "€5 - €20" },
       { name: "Murals, Courtyards & Hidden Corners", category: "hidden-gem", description: "A self-guided loop of the details residents stop noticing.", tip: "Look up — half the best pieces are above street level.", cost: "Free" },
       { name: "Independent Workshop Visit", category: "culture", description: "A maker's bench you can actually stand and watch.", tip: "Weekday afternoons are when makers work; weekends they sell.", cost: "Free to browse" },
-      { name: "The Alley Café Nobody Finds First", category: "cafe", description: "Tucked one street off the obvious route.", tip: "It's the one with no sign — look for the regulars outside.", cost: "€4 - €8" },
+      { name: "Hidden Staircase & Passage Loop", category: "hidden-gem", description: "The shortcut stairs and passages only residents use.", tip: "The upper passage has the best view without the climb.", cost: "Free" },
     ],
     "Family Fun Outing": [
       { name: "Playground & Shaded Picnic Park", category: "relaxation", description: "The park local families actually default to.", tip: "The shaded benches near the small slide fill first on warm days.", cost: "Free" },
-      { name: "Family Treat Stop", category: "food", description: "The ice-cream or pastry counter kids ask for by name.", tip: "The small size is generous here — upgrade only if sharing.", cost: "€4 - €9" },
+      { name: "Fountain & Shaded Play Square", category: "relaxation", description: "Splash, shade, and benches within sight of each other.", tip: "Mornings are calmer; the fountain is switched off at dusk.", cost: "Free" },
       { name: "Easy Nature Stroll with a Destination", category: "nature", description: "Short legs, big payoff: a walk that ends somewhere worth it.", tip: "Promise the destination first — it halves the whining.", cost: "Free" },
       { name: "Animal or Water-Watching Corner", category: "nature", description: "Ducks, herons or boats — the spot kids can watch for an hour.", tip: "Bring bread only if locals do; some ponds ban feeding.", cost: "Free" },
     ],
   };
 
   let archetypePool = archetypesByOccasion[prefs.occasion] || archetypesByOccasion["Solo Chill & Read"];
-  // Wet weather: outdoor-heavy occasions fall back to indoor ideas
   if (wetWeather && (prefs.occasion === "Outdoor Adventure" || prefs.occasion === "Nature & River Spots")) {
     archetypePool = archetypesByOccasion["Rainy Day Indoor"];
   }
@@ -2096,50 +2175,101 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
       ? ["10:30 AM - 12:00 PM", "12:30 PM - 02:30 PM", "03:00 PM - 04:30 PM"]
       : ["10:00 AM - 11:30 AM", "12:00 PM - 02:00 PM", "02:30 PM - 04:00 PM", "04:30 PM - 06:00 PM"];
 
-  // Real local places (verified knowledge base) re-experienced at a resident angle,
-  // minus anything the resident has excluded.
-  const realSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedSpot(sp));
+  // Real local places (verified knowledge base) re-experienced at a resident angle.
+  // Exception: a dining-focused occasion with no user dining places falls back to
+  // the evening-stroll archetypes instead of tagging mountains with food suffixes.
+  const realSpots =
+    prefs.occasion === "Local Tapas & Eateries" && diningPool.length === 0
+      ? []
+      : (verified?.popularSpots || []).filter((sp) => !isExcludedSpot(sp) && !isDiningName(sp));
   const rotate = realSpots.length > 0 ? new Date().getDate() % realSpots.length : 0;
 
+  // Which slot indices are dining (lunch mid-plan, dinner last)
+  const diningSlotIdx = new Set<number>();
+  if (diningPool.length > 0 && diningSlots > 0) {
+    if (diningSlots >= 2 && spotCount >= 3) {
+      diningSlotIdx.add(Math.floor(spotCount / 2));
+      diningSlotIdx.add(spotCount - 1);
+    } else {
+      diningSlotIdx.add(spotCount - 1);
+    }
+  }
+
   const activities: ActivitySpot[] = [];
+  let diningUsed = 0;
+  let realUsed = 0;
+  let archUsed = 0;
+
   for (let i = 0; i < spotCount; i++) {
     const jitterLat = baseCoords.lat + Math.sin(i * 2.1 + 0.7) * 0.004;
     const jitterLng = baseCoords.lng + Math.cos(i * 2.1 + 0.7) * 0.004;
 
-    const realSpot = realSpots.length > 0 ? realSpots[(rotate + i) % realSpots.length] : null;
-    // Resolve REAL coordinates for known spots so map pins point at the actual
-    // place (e.g. Erlo Summit on the mountain, not a random point in town).
-    const knownCoords = realSpot ? getKnownSpotCoordinates(loc, realSpot) : null;
-    const spotCoords = knownCoords || { lat: jitterLat, lng: jitterLng };
+    // 1) Dining slots → the user's OWN places (dynamic, user-provided data)
+    if (diningSlotIdx.has(i) && diningUsed < diningPool.length) {
+      const sp = diningPool[diningUsed++];
+      activities.push({
+        id: `ht-user-${sp.id || diningUsed}-${Date.now()}`,
+        time: timeSlots[i],
+        name: sp.name,
+        category: sp.category === "bar" ? "nightlife" : sp.category === "cafe" ? "cafe" : "food",
+        description: sp.notes
+          ? `One of your own places — ${sp.notes}`
+          : "One of your own places, saved in My Places. Dining suggestions always come from you — never from a built-in list.",
+        insiderTip: "You chose this one — it's on the plan because it's yours.",
+        approxCost: "Your budget",
+        rating: 5.0,
+        coordinates: sp.coordinates || { lat: jitterLat, lng: jitterLng },
+        address: sp.town,
+        durationMinutes: 75,
+      });
+      continue;
+    }
 
-    if (realSpot && i < realSpots.length) {
+    // 2) Known local places at a resident angle (real name, dynamic coordinates)
+    const realSpot = realSpots.length > 0 && realUsed < realSpots.length
+      ? realSpots[(rotate + realUsed) % realSpots.length]
+      : null;
+    if (realSpot) {
+      realUsed++;
+      let coords = getKnownSpotCoordinates(loc, realSpot) || null;
+      if (!coords) {
+        const geo = await geocodeSpot(realSpot, townName);
+        if (geo) coords = { lat: geo.lat, lng: geo.lng };
+      }
       activities.push({
         id: `ht-local-${i}-${Date.now()}`,
         time: timeSlots[i],
-        name: `${realSpot} — ${angle.suffix}`,
-        category: wetWeather ? (i % 2 === 0 ? "culture" : "cafe") : (["nature", "cafe", "hidden-gem", "sightseeing"] as ActivityCategory[])[i % 4],
+        name: `${realSpot} — ${realSpotAngle.suffix}`,
+        category: wetWeather ? (i % 2 === 0 ? "culture" : "relaxation") : (["nature", "relaxation", "hidden-gem", "sightseeing"] as ActivityCategory[])[i % 4],
         description: `You already know ${realSpot} — this is the resident's way of re-living it: at an unusual hour and a slower pace, when the place belongs to locals rather than visitors.`,
-        insiderTip: angle.tip,
+        insiderTip: realSpotAngle.tip,
         approxCost: "Free",
         rating: 4.8,
-        coordinates: spotCoords,
+        coordinates: coords || { lat: jitterLat, lng: jitterLng },
         durationMinutes: 75,
       });
-    } else {
-      const arch = archetypePool[i % archetypePool.length];
-      activities.push({
-        id: `ht-arch-${i}-${Date.now()}`,
-        time: timeSlots[i],
-        name: `${townName}: ${arch.name}`,
-        category: arch.category,
-        description: `${arch.description} (Offline curated sample — configure GEMINI_API_KEY for real, live-searched local places.)`,
-        insiderTip: arch.tip,
-        approxCost: arch.cost,
-        rating: 4.7,
-        coordinates: { lat: jitterLat, lng: jitterLng },
-        durationMinutes: 75,
-      });
+      continue;
     }
+
+    // 3) Non-dining archetypes (honest offline placeholders, clearly labeled)
+    const arch = archetypePool[archUsed++ % archetypePool.length];
+    activities.push({
+      id: `ht-arch-${i}-${Date.now()}`,
+      time: timeSlots[i],
+      name: `${townName}: ${arch.name}`,
+      category: arch.category,
+      description: `${arch.description} (Offline curated sample — configure GEMINI_API_KEY for real, live-searched local places.)`,
+      insiderTip: arch.tip,
+      approxCost: arch.cost,
+      rating: 4.7,
+      coordinates: { lat: jitterLat, lng: jitterLng },
+      durationMinutes: 75,
+    });
+  }
+
+  let summary = `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`;
+  if (diningSlots > 0 && diningPool.length === 0) {
+    summary += ` Dining ideas need your input: add your favorite bars, cafés or restaurants in "My Places" (top right), or configure a Gemini API key for live local search.`;
   }
 
   return {
@@ -2147,9 +2277,11 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     mode: "hometown",
     title: `Local Explorer: ${prefs.occasion} in ${townName}`,
     destinationOrTown: loc,
-    summary: `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`,
+    summary,
     highlights: [
-      `Familiar ${townName} places re-experienced at quiet, resident-only hours`,
+      diningUsed > 0
+        ? `${diningUsed} of your own places woven into the outing`
+        : `Familiar ${townName} places re-experienced at quiet, resident-only hours`,
       `Tuned to "${prefs.occasion}" and today's ${prefs.weatherCondition.toLowerCase()} conditions`,
       `Your permanent exclusions and 30-day memory are respected`,
     ],
@@ -2172,12 +2304,13 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
   };
 }
 
-function generateFallbackCandidates(
+async function generateFallbackCandidates(
   destination: string,
   count: number,
   vibes: string[] = [],
-  budgetTier?: string
-): CandidateSpot[] {
+  budgetTier?: string,
+  userSpots: UserSpot[] = []
+): Promise<CandidateSpot[]> {
   const isDonostia = destination.toLowerCase().includes("donosti") || destination.toLowerCase().includes("san sebastian") || destination.toLowerCase().includes("san sebastián");
   const baseCoords = lookupKnownCoordinates(destination);
 
@@ -2187,6 +2320,31 @@ function generateFallbackCandidates(
   };
 
   let pool: CandidateWithMeta[] = [];
+
+  // USER-PROVIDED PLACES COME FIRST: dining/leisure discovery is driven by
+  // the user's own data, never by static venue lists.
+  for (const sp of userSpots) {
+    if (!sp.coordinates) {
+      const geo = await geocodeSpot(sp.name, sp.town || destination);
+      if (geo) sp.coordinates = { lat: geo.lat, lng: geo.lng };
+    }
+    pool.push({
+      id: `cand-user-${sp.id}`,
+      time: "Any time — your place",
+      name: sp.name,
+      category: sp.category === "bar" ? "nightlife" : sp.category === "cafe" ? "cafe" : sp.category === "restaurant" ? "food" : "hidden-gem",
+      description: sp.notes ? `One of your own places: ${sp.notes}` : "One of your own places, saved in My Places.",
+      insiderTip: "You saved this one — swipe right to build the plan around it.",
+      approxCost: "Your budget",
+      rating: 5.0,
+      coordinates: sp.coordinates || { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.002 },
+      address: sp.town,
+      durationMinutes: 90,
+      vibeTags: ["Gastronomy & Local Food", "Hidden Gems / Non-Touristy"],
+      budgetCategory: "mid-range",
+      reviews: [],
+    });
+  }
 
   if (isDonostia) {
     pool = [
@@ -2227,43 +2385,7 @@ function generateFallbackCandidates(
           { author: "Jon A. (Resident)", rating: 5, timeAgo: "2 weeks ago", text: "The postcard view of San Sebastián." },
         ],
       },
-      {
-        id: "cand-ss-3",
-        time: "Lunch / Dinner",
-        name: "Bar Nestor (Parte Vieja)",
-        category: "food",
-        description: "Legendary temple of Basque gastronomy famous for Txuleta ribeye, tomato salad, and rare potato tortilla.",
-        insiderTip: "Arrive 30 mins before opening to get on the tortilla list.",
-        approxCost: "€30 - €50",
-        rating: 5.0,
-        coordinates: { lat: 43.3238, lng: -1.9845 },
-        address: "Calle Artekale 11, Parte Vieja",
-        durationMinutes: 90,
-        vibeTags: ["Gastronomy & Local Food", "Nightlife & Bars"],
-        budgetCategory: "mid-range",
-        reviews: [
-          { author: "Chef David K.", rating: 5, timeAgo: "3 weeks ago", text: "The tomato salad and ribeye steak will redefine steak for you." },
-        ],
-      },
-      {
-        id: "cand-ss-4",
-        time: "Evening Pintxos",
-        name: "La Cuchara de San Telmo",
-        category: "food",
-        description: "Innovative hot pintxos made strictly to order: braised beef cheek and seared foie gras with apple compote.",
-        insiderTip: "Squeeze up to the bar and order directly from the chalkboard.",
-        approxCost: "€20 - €35",
-        rating: 4.9,
-        coordinates: { lat: 43.3240, lng: -1.9822 },
-        address: "Calle 31 de Agosto 28, Parte Vieja",
-        durationMinutes: 90,
-        vibeTags: ["Gastronomy & Local Food", "Nightlife & Bars"],
-        budgetCategory: "mid-range",
-        reviews: [
-          { author: "Sophie L.", rating: 5, timeAgo: "2 weeks ago", text: "The braised beef cheek melts in your mouth." },
-        ],
-      },
-      {
+                  {
         id: "cand-ss-5",
         time: "Morning / Afternoon",
         name: "Paseo de La Concha & Miramar Palace",
@@ -2299,43 +2421,7 @@ function generateFallbackCandidates(
           { author: "Elena M.", rating: 5, timeAgo: "1 week ago", text: "Pure bliss watching the Atlantic waves from the warm hydrotherapy pool." }
         ],
       },
-      {
-        id: "cand-ss-7",
-        time: "Evening",
-        name: "Akelarre / Arzak Michelin Gastronomy Experience",
-        category: "food",
-        description: "World-renowned multi-course Basque haute-cuisine tasting menu overlooking Mount Igueldo ocean cliffs.",
-        insiderTip: "Reserve well in advance for the sunset window table overlooking Biscay Bay.",
-        approxCost: "€220 - €320",
-        rating: 5.0,
-        coordinates: { lat: 43.3210, lng: -2.0150 },
-        address: "Padre Orkolaga 56, Donostia",
-        durationMinutes: 180,
-        vibeTags: ["Gastronomy & Local Food", "Luxury"],
-        budgetCategory: "luxury",
-        reviews: [
-          { author: "Gourmet Traveler", rating: 5, timeAgo: "2 weeks ago", text: "An unforgettable culinary journey." }
-        ],
-      },
-      {
-        id: "cand-ss-8",
-        time: "Nightlife / Evening",
-        name: "Gros District Pintxo & Craft Cocktail Crawl (Bergara & Bodega Donostiarra)",
-        category: "nightlife",
-        description: "Trendy surf quarter pintxo tour featuring the famous 'Txalupa' gratin boat at Bergara and artisan cocktails.",
-        insiderTip: "Order the 'Completo' tuna sandwich and a glass of Txakoli at Bodega Donostiarra.",
-        approxCost: "€25 - €40",
-        rating: 4.9,
-        coordinates: { lat: 43.3220, lng: -1.9740 },
-        address: "Calle General Artetxe 8, Gros",
-        durationMinutes: 120,
-        vibeTags: ["Nightlife & Bars", "Gastronomy & Local Food"],
-        budgetCategory: "mid-range",
-        reviews: [
-          { author: "Markus S.", rating: 5, timeAgo: "3 days ago", text: "Vibrant local scene away from main tourist crowds." }
-        ],
-      },
-      {
+                  {
         id: "cand-ss-9",
         time: "Morning / Afternoon",
         name: "Mount Ulia Coastal Trail to Pasaia (Camino de Santiago Route)",
@@ -2353,25 +2439,7 @@ function generateFallbackCandidates(
           { author: "Hiker Dan", rating: 5, timeAgo: "1 month ago", text: "Sensational cliffside trail along the Atlantic." }
         ],
       },
-      {
-        id: "cand-ss-10",
-        time: "Midday / Lunch",
-        name: "Astigarraga Basque Ciderhouse (Sagardotegi Txotx Experience)",
-        category: "food",
-        description: "Traditional oak-barrel ciderhouse experience serving wood-fired cod omelette, massive steaks, and cider poured straight from giant vats.",
-        insiderTip: "Shout 'Txotx!' when the cider master opens the barrel to line up with your glass.",
-        approxCost: "€38 - €45",
-        rating: 4.9,
-        coordinates: { lat: 43.2820, lng: -1.9480 },
-        address: "Astigarraga Cider Valley",
-        durationMinutes: 150,
-        vibeTags: ["Gastronomy & Local Food", "Hidden Gems / Non-Touristy"],
-        budgetCategory: "mid-range",
-        reviews: [
-          { author: "Aitor G.", rating: 5, timeAgo: "2 weeks ago", text: "The most authentic Basque dining experience!" }
-        ],
-      },
-      {
+            {
         id: "cand-ss-11",
         time: "Afternoon",
         name: "Santa Clara Island Ferry & Lighthouse Promenade",
@@ -2409,8 +2477,8 @@ function generateFallbackCandidates(
       },
     ];
   } else {
-    // Generic candidate generator
-    pool = [
+    // Generic candidate generator (non-dining archetypes only)
+    pool = [...pool, 
       {
         id: "cand-1",
         time: "Morning",
@@ -2459,23 +2527,7 @@ function generateFallbackCandidates(
         budgetCategory: "budget",
         reviews: [{ author: "Photographer M", rating: 5, timeAgo: "3 weeks ago", text: "Spectacular 360-degree view." }],
       },
-      {
-        id: "cand-4",
-        time: "Evening",
-        name: `${destination} Craft Cocktail & Speakeasy Bar`,
-        category: "nightlife",
-        description: "Atmospheric evening lounge crafting bespoke botanical cocktails and local wines.",
-        insiderTip: "Ask the bartender for off-menu seasonal infusions.",
-        approxCost: "€25 - €45",
-        rating: 4.9,
-        coordinates: { lat: baseCoords.lat - 0.001, lng: baseCoords.lng - 0.003 },
-        address: `Entertainment District, ${destination}`,
-        durationMinutes: 90,
-        vibeTags: ["Nightlife & Bars", "Gastronomy & Local Food", "Luxury"],
-        budgetCategory: "mid-range",
-        reviews: [{ author: "Mixology Enthusiast", rating: 5, timeAgo: "1 week ago", text: "Incredible drinks and intimate vibe." }],
-      },
-    ];
+          ];
   }
 
   // Score candidates based on user's selected vibes and budget tier
@@ -2508,22 +2560,51 @@ function generateFallbackCandidates(
   }));
 }
 
-function generateFallbackSwap(req: SwapActivityRequest): ActivitySpot {
+async function generateFallbackSwap(req: SwapActivityRequest): Promise<ActivitySpot> {
   const baseCoords = lookupKnownCoordinates(req.destinationOrTown);
+
+  // Dining-type swaps are sourced from the user's OWN places — never static lists.
+  const isDiningSwap = ["food", "cafe", "nightlife"].includes(req.category);
+  if (isDiningSwap && req.userSpots && req.userSpots.length > 0) {
+    const candidates = req.userSpots.filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category));
+    if (candidates.length > 0) {
+      const sp = candidates[Math.floor(Math.random() * candidates.length)];
+      if (!sp.coordinates) {
+        const geo = await geocodeSpot(sp.name, sp.town || req.destinationOrTown);
+        if (geo) sp.coordinates = { lat: geo.lat, lng: geo.lng };
+      }
+      return {
+        id: "swap-user-" + Date.now(),
+        time: normalizeTimeSlot(req.timeSlot || "Flexible"),
+        name: sp.name,
+        category: sp.category === "bar" ? "nightlife" : sp.category === "cafe" ? "cafe" : "food",
+        description: sp.notes ? `One of your own places: ${sp.notes}` : "One of your own places, saved in My Places.",
+        insiderTip: "You added this one yourself — it belongs on the trip.",
+        approxCost: "Your budget",
+        rating: 5.0,
+        coordinates: sp.coordinates || { lat: baseCoords.lat + (Math.random() - 0.5) * 0.01, lng: baseCoords.lng + (Math.random() - 0.5) * 0.01 },
+        address: sp.town,
+        isSwapped: true,
+        googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${sp.name}, ${req.destinationOrTown}`)}`,
+      };
+    }
+  }
+
+  // Non-dining swaps: generic experience types (no invented venues)
   const alternatives = [
     {
-      name: "The Artisan Roast & Courtyard Cafe",
-      category: "cafe" as const,
-      description: "Quiet micro-roastery serving pour-overs and freshly baked cardamom buns.",
-      insiderTip: "The secluded garden seating in the back is a peaceful oasis.",
-      approxCost: "$6 - $12",
+      name: "Historic Arcade & Craft Shops",
+      category: "shopping" as const,
+      description: "A covered arcade of small independent shops and craft counters.",
+      insiderTip: "The back row of stalls is where the makers actually work.",
+      approxCost: "Free to browse",
     },
     {
-      name: "Old Quarter Cellar Trattoria",
-      category: "food" as const,
-      description: "Atmospheric family-run kitchen handcrafting seasonal pastas and wood-fired dishes.",
-      insiderTip: "Their chef's daily burrata appetizer and natural wine list are exceptional.",
-      approxCost: "$22 - $40",
+      name: "Old Quarter Photo Walk & Hidden Squares",
+      category: "sightseeing" as const,
+      description: "A slow loop through the oldest lanes and quietest squares.",
+      insiderTip: "Look up — the best details are above street level.",
+      approxCost: "Free",
     },
     {
       name: "Riverside Sculpture Promenade",

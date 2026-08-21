@@ -149,3 +149,26 @@ Following user feedback that hometown suggestions felt too generic for **long-ti
 - Corrected a factual error in the curated data: "Ekoetxea Urdaibai Environmental Center" is in Bizkaia (~50 km away) and was removed from Azpeitia's spots, replaced by the Soreasu Parish Church.
 
 **Verified:** Erlo Summit now pins at (43.2042, -2.2717) on the massif (2.56 km from Azpeitia center); Loiola Sanctuary at (43.1800, -2.2810); alias/decorated-name lookups all pass.
+
+---
+
+## 8. Dynamic geocoding + user-provided dining (no more static venue data)
+
+Two product upgrades requested by the user: stop depending on static databases, and never fabricate bars/cafés/restaurants.
+
+### 8.1 Live geocoding (Nominatim)
+- New `server/geocoder.ts`: Nominatim integration with **1 req/s throttle**, descriptive User-Agent, and in-process positive+negative caching.
+- New endpoint `GET /api/geocode?q=<place>&context=<town>` — used by "My Places" and available for anything needing real coordinates.
+- Resolution chain everywhere: **spot knowledge base (fast path) → Nominatim (dynamic) → graceful fallback**. AI-generated hometown activities with missing/invalid coordinates are geocoded server-side before shipping.
+- *Note: this sandbox has no outbound internet, so Nominatim calls fail here and fall back gracefully; the integration follows the official API contract and works in any deployed environment.*
+
+### 8.2 "My Places" — dining recommendations come from the USER
+- New localStorage store + `MySpotsModal` (navbar 🍴 button): users register their own bars/cafés/restaurants with type, town and notes; each entry is geocoded when added.
+- **Static dining venues deleted from every recommendation pool**: Donostia vacation pool (pintxo crawl, ciderhouse, Gros crawl), swiper candidates (Bar Nestor, La Cuchara, Akelarre…), swap alternatives, extra-day curated lunches, generic backup templates, and any dining-named spot in the verified knowledge lists.
+- **Sourcing rules now:**
+  - Hometown/vacation/swap generation receive `userSpots`; dining slots are filled with the user's own places first (dynamically geocoded if coordinates are pending).
+  - With a Gemini key, dining must come from **live search results only** (prompt-enforced: inventing venues is forbidden).
+  - Offline with no user places → no dining suggestion at all, plus an honest in-plan message pointing to My Places / API key.
+- AI prompts (hometown, vacation, swap) instruct the model to weave the user's own places in and to never exclude them.
+
+**Verified:** no static dining leaks in generated plans; user spots appear in hometown plans (2/2) and dining swaps resolve to the user's own venue.

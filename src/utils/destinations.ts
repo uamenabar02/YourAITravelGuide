@@ -1112,8 +1112,12 @@ export function getKnownSpotsForDestination(
   const baseCoords = verified?.coordinates || { lat: 43.3183, lng: -1.9812 };
   const destName = verified?.name || destinationQuery;
 
+  // Dining venues are never recommended from static data (user data / live search only)
+  const DINING_HINTS = ["pintxo", "tapas", "tavern", "bar ", "café", "cafe", "restaurant", "gastronomy", "michelin", "ciderhouse", "tasting"];
+  const isDiningName = (n: string) => DINING_HINTS.some((h) => n.toLowerCase().includes(h));
+
   const spotNames = verified?.popularSpots && verified.popularSpots.length > 0
-    ? verified.popularSpots
+    ? verified.popularSpots.filter((sp) => !isDiningName(sp))
     : [
         `Historic Old Quarter & Local Food Trail`,
         `Panoramic Scenic Viewpoint & Promenade`,

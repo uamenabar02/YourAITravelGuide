@@ -9,6 +9,7 @@ import {
   swapActivitySpot,
   generateCandidateSpots,
 } from "./server/geminiService.js";
+import { geocodeSpot } from "./server/geocoder.js";
 
 dotenv.config();
 
@@ -30,7 +31,7 @@ async function startServer() {
   // Generate Candidates for Activity Swiper
   app.post("/api/generate-candidates", async (req, res) => {
     try {
-      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace } = req.body;
+      const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace, userSpots } = req.body;
       if (!destination) {
         return res.status(400).json({ error: "Destination is required." });
       }
@@ -41,7 +42,8 @@ async function startServer() {
         budgetTier,
         exactBudgetPerDay,
         currency || "€",
-        pace
+        pace,
+        Array.isArray(userSpots) ? userSpots : []
       );
       res.json(candidates);
     } catch (err: any) {
@@ -88,6 +90,26 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error swapping activity:", err);
       res.status(500).json({ error: err.message || "Failed to swap activity." });
+    }
+  });
+
+  // Dynamic geocoding (Nominatim): resolve any named place to coordinates.
+  // Used by "My Places" and anywhere the app must not depend on static data.
+  app.get("/api/geocode", async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const context = String(req.query.context || "").trim();
+      if (!q) {
+        return res.status(400).json({ error: "q query parameter is required" });
+      }
+      const result = await geocodeSpot(q, context);
+      if (!result) {
+        return res.status(404).json({ error: "No geocoding results for this place." });
+      }
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error geocoding:", err);
+      res.status(500).json({ error: "Could not geocode this place right now." });
     }
   });
 

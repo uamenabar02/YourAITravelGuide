@@ -7,6 +7,7 @@ import { SavedTripsDrawer } from "./components/SavedTripsDrawer";
 import { ActivityHistoryModal } from "./components/ActivityHistoryModal";
 import { ExportModal } from "./components/ExportModal";
 import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
+import { MySpotsModal } from "./components/MySpotsModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
@@ -20,6 +21,7 @@ import {
   getRecentExcludedPlaces,
   getPermanentSkipNames,
   addPermanentSkip,
+  getMySpots,
 } from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
@@ -34,6 +36,8 @@ export default function App() {
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isMySpotsOpen, setIsMySpotsOpen] = useState(false);
+  const [mySpotsCount, setMySpotsCount] = useState(0);
 
   // Swiper Modal State
   const [isSwiperOpen, setIsSwiperOpen] = useState(false);
@@ -50,6 +54,7 @@ export default function App() {
     const loadedSaved = getSavedTrips();
     setSavedTrips(loadedSaved);
     setHistoryCount(getActivityHistory().length);
+    setMySpotsCount(getMySpots().length);
 
     const shared = parseShareableUrl();
     if (shared) {
@@ -97,6 +102,7 @@ export default function App() {
             exactBudgetPerDay: prefs.exactBudgetPerDay,
             currency: prefs.currency,
             pace: prefs.pace,
+            userSpots: getMySpots(),
           }),
         });
 
@@ -161,6 +167,7 @@ export default function App() {
       likedSpots: finalLikedSpots,
       skippedSpots: finalSkippedSpots,
       permanentSkips: getPermanentSkipNames(),
+      userSpots: getMySpots(),
     };
 
     try {
@@ -211,7 +218,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "hometown",
-          hometownPrefs: prefs,
+          hometownPrefs: { ...prefs, userSpots: getMySpots() },
         }),
       });
 
@@ -275,6 +282,7 @@ export default function App() {
             ...getRecentExcludedPlaces(currentPlan.destinationOrTown),
             ...getPermanentSkipNames(),
           ],
+          userSpots: getMySpots(),
         }),
       });
 
@@ -352,6 +360,8 @@ export default function App() {
         onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
         historyCount={historyCount}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onOpenMySpots={() => setIsMySpotsOpen(true)}
+        mySpotsCount={mySpotsCount}
         onOpenExport={() => setIsExportModalOpen(true)}
         hasActiveTrip={!!currentPlan}
       />
@@ -426,6 +436,16 @@ export default function App() {
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         plan={currentPlan}
+      />
+
+      {/* My Places: user-provided bars, cafés & restaurants */}
+      <MySpotsModal
+        isOpen={isMySpotsOpen}
+        onClose={() => {
+          setIsMySpotsOpen(false);
+          setMySpotsCount(getMySpots().length);
+        }}
+        defaultTown={currentPlan?.destinationOrTown?.split(",")[0] || ""}
       />
 
       {/* Activity Discovery Swiper Modal */}
