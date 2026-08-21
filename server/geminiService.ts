@@ -12,7 +12,7 @@ import {
   UserSpot,
   TasteProfile,
 } from "../src/types.js";
-import { geocodeSpot, resolveActivityCoordinates, enrichActivitiesWithDynamicAI } from "./geocoder.js";
+import { geocodeSpot, resolveActivityCoordinates, enrichActivitiesWithDynamicAI, dynamicAIGeocodeBatch } from "./geocoder.js";
 import {
   getCuratedPhotosForSpot,
   getTicketOrBookingUrl,
@@ -2705,6 +2705,225 @@ async function generateFallbackCandidates(
     ticketUrl: getTicketOrBookingUrl(s.item.name, destination, s.item.approxCost),
     googleMapsUrl: generateGoogleMapsSearchUrl(s.item.name, destination),
   }));
+}
+
+export interface ActivityDetailRequest {
+  activityName: string;
+  activityDescription: string;
+  category: string;
+  destination: string;
+  address?: string;
+  coordinates?: { lat: number; lng: number };
+}
+
+export interface ActivityDetailResponse {
+  detailedDescription: string;
+  anecdotes: string[];
+  subLocations: { name: string; description: string; lat: number; lng: number; address?: string; highlight?: string }[];
+  suggestedQuestions: string[];
+  historicalContext?: string;
+  practicalTips?: string[];
+}
+
+export async function generateActivityDetails(req: ActivityDetailRequest): Promise<ActivityDetailResponse> {
+  const ai = getAiClient();
+
+  const isBroadActivity = /walk|stroll|explore|tour|district|quarter|neighborhood|old town|wander|discover/i.test(req.activityName);
+
+  const systemInstruction = `You are an expert local travel guide and cultural historian for ${req.destination}.
+You provide rich, engaging, and accurate information about places and activities.
+Be specific, factual, and engaging. Include real historical facts, cultural context, and interesting anecdotes.
+For broad activities (like walking tours or district explorations), identify 3-6 specific must-visit sub-locations within that area with accurate GPS coordinates.
+For specific venues/landmarks, provide 1-2 nearby complementary spots.
+Suggested questions should be creative, engaging, and specific to THIS place (not generic). Include questions like historical curiosities, hidden stories, local legends, architectural details, or cultural practices.
+ALWAYS respond with valid JSON.`;
+
+  const prompt = `Provide detailed information about this activity/place in ${req.destination}:
+
+Activity: ${req.activityName}
+Category: ${req.category}
+Description: ${req.activityDescription}
+${req.address ? `Address: ${req.address}` : ""}
+${req.coordinates ? `Coordinates: ${req.coordinates.lat}, ${req.coordinates.lng}` : ""}
+
+Provide:
+1. A detailed, engaging description (3-5 paragraphs) covering history, significance, what to expect, and what makes it special.
+2. 3-5 fascinating anecdotes, legends, or little-known facts about this place.
+3. ${isBroadActivity ? "4-6 specific must-visit sub-locations" : "2-3 nearby complementary spots"} with real GPS coordinates and addresses.
+4. 5-7 creative suggested questions a curious traveler might ask a local guide about this specific place.
+5. Historical context (1-2 sentences placing this in the broader history of ${req.destination}).
+6. 3-4 practical tips for visiting (best time, what to bring, accessibility, local etiquette).
+
+Output strictly valid JSON matching the expected schema.`;
+
+  if (!ai) {
+    return generateFallbackActivityDetails(req);
+  }
+
+  try {
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL];
+    let parsed: ActivityDetailResponse | null = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                detailedDescription: { type: Type.STRING },
+                anecdotes: { type: Type.ARRAY, items: { type: Type.STRING } },
+                subLocations: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                      address: { type: Type.STRING },
+                      highlight: { type: Type.STRING },
+                    },
+                    required: ["name", "description", "lat", "lng"],
+                  },
+                },
+                suggestedQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+                historicalContext: { type: Type.STRING },
+                practicalTips: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["detailedDescription", "anecdotes", "subLocations", "suggestedQuestions"],
+            },
+          },
+        });
+        if (response.text) {
+          parsed = JSON.parse(response.text);
+          if (parsed && parsed.detailedDescription) break;
+        }
+      } catch (err) {
+        console.warn(`Activity details generation failed on ${modelName}:`, (err as any)?.message || err);
+      }
+    }
+
+    if (!parsed) return generateFallbackActivityDetails(req);
+
+    // Geocode sub-locations for accuracy
+    if (parsed.subLocations && parsed.subLocations.length > 0) {
+      const subSpotInputs = parsed.subLocations.map((sl) => ({
+        name: sl.name,
+        address: sl.address,
+        category: "sightseeing",
+      }));
+      const geoMap = await dynamicAIGeocodeBatch(subSpotInputs, req.destination);
+      for (const subLoc of parsed.subLocations) {
+        const match = geoMap.get(subLoc.name.trim().toLowerCase());
+        if (match) {
+          subLoc.lat = match.lat;
+          subLoc.lng = match.lng;
+          if (match.address) subLoc.address = match.address;
+        }
+      }
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error("Error generating activity details:", error);
+    return generateFallbackActivityDetails(req);
+  }
+}
+
+function generateFallbackActivityDetails(req: ActivityDetailRequest): ActivityDetailResponse {
+  const baseLat = req.coordinates?.lat || 43.3183;
+  const baseLng = req.coordinates?.lng || -1.9812;
+
+  return {
+    detailedDescription: `${req.activityName} is a noteworthy experience in ${req.destination}. ${req.activityDescription} This place offers visitors a unique glimpse into the local culture and heritage, making it a memorable stop on any itinerary. The atmosphere is authentic and the surroundings are rich with character, reflecting the deep traditions of the area.`,
+    anecdotes: [
+      `This area of ${req.destination} has been a gathering place for locals for generations.`,
+      `Many visitors are surprised by the layers of history hidden within these surroundings.`,
+      `Local residents often share stories that guidebooks never capture.`,
+    ],
+    subLocations: [
+      { name: req.activityName, description: "Main location", lat: baseLat, lng: baseLng, address: req.address, highlight: "Main spot" },
+    ],
+    suggestedQuestions: [
+      "What's the most interesting story about this place?",
+      "When is the best time of day to visit?",
+      "What do locals recommend nearby?",
+      "Are there any hidden spots most tourists miss?",
+      "What's the history behind this location?",
+    ],
+    historicalContext: `This location is part of the rich cultural tapestry of ${req.destination}.`,
+    practicalTips: [
+      "Wear comfortable walking shoes",
+      "Visit during morning hours for fewer crowds",
+      "Bring a camera for the architecture and scenery",
+    ],
+  };
+}
+
+export interface ActivityChatRequest {
+  activityName: string;
+  activityDescription: string;
+  category: string;
+  destination: string;
+  conversationHistory: { role: 'user' | 'assistant'; text: string }[];
+  userMessage: string;
+}
+
+export async function chatAboutActivity(req: ActivityChatRequest): Promise<string> {
+  const ai = getAiClient();
+
+  const systemInstruction = `You are a friendly, knowledgeable Local Guide and Travel Agent specializing in ${req.destination}. 
+You are an expert about "${req.activityName}" — ${req.activityDescription}.
+Category: ${req.category}.
+
+Your personality: Warm, enthusiastic, and full of local insight. You speak as a real local who has visited this place hundreds of times. You share personal recommendations, historical tidbits, and practical advice.
+
+Rules:
+- Keep responses concise (2-4 sentences unless the question demands more detail).
+- Be specific and factual — mention real details, names, dates, and local customs.
+- If you don't know something specific, say so honestly and suggest how to find out.
+- Always relate your answer back to the traveler's experience at this specific place.
+- Use a conversational, friendly tone.
+- Include emoji sparingly for warmth (1-2 per response max).`;
+
+  if (!ai) {
+    return `As your local guide for ${req.destination}, I'd love to help with that! "${req.activityName}" is a wonderful spot. Unfortunately, I'm in offline mode right now — try again when connected to get personalized answers! 🗺️`;
+  }
+
+  try {
+    const contents = [
+      ...req.conversationHistory.map((msg) => ({
+        role: msg.role === 'user' ? 'user' as const : 'model' as const,
+        parts: [{ text: msg.text }],
+      })),
+      { role: 'user' as const, parts: [{ text: req.userMessage }] },
+    ];
+
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents,
+          config: { systemInstruction },
+        });
+        if (response.text) return response.text;
+      } catch (err) {
+        console.warn(`Activity chat failed on ${modelName}:`, (err as any)?.message || err);
+      }
+    }
+
+    return `I'd love to tell you more about ${req.activityName}! Unfortunately, I'm having trouble connecting right now. Please try your question again in a moment. 😊`;
+  } catch (error) {
+    console.error("Error in activity chat:", error);
+    return `I'm sorry, I couldn't process your question right now. Please try again! 🗺️`;
+  }
 }
 
 async function generateFallbackSwap(req: SwapActivityRequest): Promise<ActivitySpot> {

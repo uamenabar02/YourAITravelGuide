@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Ticket,
   Ban,
+  Info,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
 import { normalizeTimeSlot } from "../utils/time";
@@ -35,6 +36,7 @@ interface ActivityCardProps {
   onMoveActivity: (dayNumber: number, fromIndex: number, toIndex: number) => void;
   onSelectAlternativeOption: (dayNumber: number, activityIndex: number, optionIndex: number) => void;
   onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
+  onViewDetails?: (activity: ActivitySpot) => void;
   destinationOrTown: string;
 }
 
@@ -64,6 +66,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   onMoveActivity,
   onSelectAlternativeOption,
   onSkipPermanently,
+  onViewDetails,
   destinationOrTown,
 }) => {
   const [isSwapping, setIsSwapping] = useState(false);
@@ -307,6 +310,21 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
       {/* Bottom Action Row */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#e5e5df] text-xs">
         <div className="flex flex-wrap items-center gap-3">
+          {/* View Details Button */}
+          {onViewDetails && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewDetails(activity);
+              }}
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#5A5A40] text-white text-xs font-serif italic hover:bg-[#4a4a35] transition-all shadow-xs"
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>View Details</span>
+            </button>
+          )}
+
           {/* Purchase Ticket / Booking Link (if available or paid activity) */}
           {resolvedTicketUrl && (
             <a

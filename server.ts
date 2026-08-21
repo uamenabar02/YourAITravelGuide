@@ -8,6 +8,8 @@ import {
   generateHometownItinerary,
   swapActivitySpot,
   generateCandidateSpots,
+  generateActivityDetails,
+  chatAboutActivity,
 } from "./server/geminiService.js";
 import { geocodeSpot } from "./server/geocoder.js";
 
@@ -92,6 +94,50 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error swapping activity:", err);
       res.status(500).json({ error: err.message || "Failed to swap activity." });
+    }
+  });
+
+  // Activity Detail Pop-up: fetch rich info, anecdotes, sub-locations
+  app.post("/api/activity-details", async (req, res) => {
+    try {
+      const { activityName, activityDescription, category, destination, address, coordinates } = req.body;
+      if (!activityName || !destination) {
+        return res.status(400).json({ error: "activityName and destination are required." });
+      }
+      const details = await generateActivityDetails({
+        activityName,
+        activityDescription: activityDescription || "",
+        category: category || "sightseeing",
+        destination,
+        address,
+        coordinates,
+      });
+      res.json(details);
+    } catch (err: any) {
+      console.error("Error generating activity details:", err);
+      res.status(500).json({ error: err.message || "Failed to generate activity details." });
+    }
+  });
+
+  // Activity Chatbot: Local Guide conversation about a specific activity
+  app.post("/api/activity-chat", async (req, res) => {
+    try {
+      const { activityName, activityDescription, category, destination, conversationHistory, userMessage } = req.body;
+      if (!activityName || !destination || !userMessage) {
+        return res.status(400).json({ error: "activityName, destination, and userMessage are required." });
+      }
+      const reply = await chatAboutActivity({
+        activityName,
+        activityDescription: activityDescription || "",
+        category: category || "sightseeing",
+        destination,
+        conversationHistory: conversationHistory || [],
+        userMessage,
+      });
+      res.json({ reply });
+    } catch (err: any) {
+      console.error("Error in activity chat:", err);
+      res.status(500).json({ error: err.message || "Failed to process chat message." });
     }
   });
 
