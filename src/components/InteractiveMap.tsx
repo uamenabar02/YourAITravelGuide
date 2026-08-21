@@ -48,6 +48,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routesLayerRef = useRef<L.LayerGroup | null>(null);
+  const lastFitKeyRef = useRef<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeCardSpot, setActiveCardSpot] = useState<{
     spot: ActivitySpot;
@@ -70,17 +71,16 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         attributionControl: false,
       });
 
+      // Controls MUST be added before tile layers so layer attributions get
+      // registered (required by the OpenStreetMap tile usage policy).
+      L.control.zoom({ position: "topright" }).addTo(map);
+      L.control.attribution({ position: "bottomright" }).addTo(map);
+
       // OpenStreetMap Standard Tiles
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(map);
-
-      // Add zoom control top right
-      L.control.zoom({ position: "topright" }).addTo(map);
-
-      // Attribution bottom right
-      L.control.attribution({ position: "bottomright" }).addTo(map);
 
       markersLayerRef.current = L.layerGroup().addTo(map);
       routesLayerRef.current = L.layerGroup().addTo(map);
@@ -194,12 +194,24 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       }
     });
 
-    // Fit map bounds to show all markers nicely if we have them
-    if (allLatLngs.length > 0) {
+    // Fit map bounds to show all markers nicely — but ONLY when the plan or
+    // the day filter actually changed. Re-fitting on every marker selection
+    // would cancel the panTo() triggered by clicking a pin.
+    const fitKey = `${plan.id}|${activeDayNumber}`;
+    if (allLatLngs.length > 0 && lastFitKeyRef.current !== fitKey) {
+      lastFitKeyRef.current = fitKey;
       const bounds = L.latLngBounds(allLatLngs);
       map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
     }
   }, [plan, activeDayNumber, selectedSpotId, activeCardSpot?.spot.id]);
+
+  // Leaflet needs invalidateSize() after the container resizes (fullscreen toggle)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      mapInstanceRef.current?.invalidateSize();
+    }, 80);
+    return () => clearTimeout(t);
+  }, [isFullscreen]);
 
   // Recenter Map Helper
   const handleRecenter = () => {
@@ -214,6 +226,16 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     }
     setActiveCardSpot(null);
   };
+
+  // Resolve once (was being computed twice in the JSX below)
+  const cardTicketUrl = activeCardSpot
+    ? getTicketOrBookingUrl(
+        activeCardSpot.spot.name,
+        plan.destinationOrTown,
+        activeCardSpot.spot.approxCost,
+        activeCardSpot.spot.ticketUrl
+      )
+    : undefined;
 
   return (
     <div
@@ -336,19 +358,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
             {/* Actions: Ticket purchase (if applicable) & Go to Activity List */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              {getTicketOrBookingUrl(
-                activeCardSpot.spot.name,
-                plan.destinationOrTown,
-                activeCardSpot.spot.approxCost,
-                activeCardSpot.spot.ticketUrl
-              ) && (
+              {cardTicketUrl && (
                 <a
-                  href={getTicketOrBookingUrl(
-                    activeCardSpot.spot.name,
-                    plan.destinationOrTown,
-                    activeCardSpot.spot.approxCost,
-                    activeCardSpot.spot.ticketUrl
-                  )}
+                  href={cardTicketUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded-xl bg-[#ecece4] hover:bg-[#d1d1ca] text-[#2c2c24] text-xs font-serif italic flex items-center space-x-1 transition-all border border-[#d1d1ca]"

@@ -1,5 +1,5 @@
 import React from "react";
-import { Compass, Sparkles, Bookmark, History, MapPin, Plane, Share2, Sun } from "lucide-react";
+import { Bookmark, History, MapPin, Plane, Share2 } from "lucide-react";
 import { AppMode } from "../types";
 
 interface NavbarProps {

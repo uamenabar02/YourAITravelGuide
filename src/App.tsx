@@ -13,7 +13,7 @@ import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData"
 import { getSavedTrips, saveTrip, deleteSavedTrip, isTripSaved, recordPlanActivities, getActivityHistory } from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
-import { Sparkles, MapPin, Plane, ArrowDown, RefreshCw, Compass } from "lucide-react";
+import { Compass } from "lucide-react";
 
 export default function App() {
   const [activeMode, setActiveMode] = useState<AppMode>("vacation");
@@ -41,15 +41,15 @@ export default function App() {
     setSavedTrips(loadedSaved);
     setHistoryCount(getActivityHistory().length);
 
-    // Record sample plan in history on first load
-    recordPlanActivities(SAMPLE_VACATION_PLAN);
-
     const shared = parseShareableUrl();
     if (shared) {
       setCurrentPlan(shared);
       setActiveMode(shared.mode);
       addToast("success", `Loaded shared itinerary for ${shared.destinationOrTown}!`);
     }
+    // NOTE: The bundled SAMPLE plans are intentionally NOT recorded into the
+    // 30-day activity history. Doing so polluted the anti-repeat dedup memory
+    // with demo data before the user had generated anything.
   }, []);
 
   const addToast = (type: "success" | "error" | "info", message: string) => {

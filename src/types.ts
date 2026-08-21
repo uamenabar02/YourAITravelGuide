@@ -71,6 +71,7 @@ export interface ActivitySpot {
 export interface CandidateSpot extends ActivitySpot {
   vibeCategories?: string[];
   matchScore?: number;
+  isLiked?: boolean;
 }
 
 export interface DailyPlan {
@@ -183,9 +184,5 @@ export interface SwapActivityRequest {
   vibes: string[];
   budgetTier?: BudgetTier;
   excludedPlaces?: string[];
-}
-
-export interface CandidateSpot extends ActivitySpot {
-  isLiked?: boolean;
 }
 

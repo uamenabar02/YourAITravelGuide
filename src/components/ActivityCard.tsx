@@ -19,6 +19,7 @@ import {
   Ticket,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
+import { normalizeTimeSlot } from "../utils/time";
 
 interface ActivityCardProps {
   activity: ActivitySpot;
@@ -133,7 +134,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 
           <div className="flex items-center space-x-1.5 text-xs font-serif italic text-[#2c2c24]">
             <Clock className="w-3.5 h-3.5 text-[#8a8a7e]" />
-            <span>{activity.time}</span>
+            <span>{normalizeTimeSlot(activity.time)}</span>
           </div>
 
           <span

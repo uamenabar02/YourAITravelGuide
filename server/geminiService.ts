@@ -17,6 +17,19 @@ import {
   calculateTransitLogistics,
   findVerifiedDestination,
 } from "../src/utils/destinations.js";
+import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/utils/time.js";
+
+// ---------------------------------------------------------------------------
+// Gemini model configuration.
+// Model IDs are validated against the Gemini API catalog (Aug 2026):
+//  - gemini-1.5-flash was SHUT DOWN on Sep 29, 2025 (do not use).
+//  - gemini-2.5-flash is the current GA flash model.
+//  - gemini-2.5-flash-lite is the GA low-cost fallback.
+// Override via env if needed.
+// ---------------------------------------------------------------------------
+const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-2.5-flash-lite";
+const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-2.5-flash";
 
 // Lazy-initialized Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -120,31 +133,6 @@ function lookupKnownCoordinates(placeName: string): { lat: number; lng: number }
   return { lat: 43.3183, lng: -1.9812 }; // Default baseline
 }
 
-export function parseTimeToHours(timeStr: string): number {
-  if (!timeStr) return 12;
-  const str = timeStr.trim().toLowerCase();
-  const match = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  if (!match) {
-    if (str.includes("morning")) return 9;
-    if (str.includes("noon") || str.includes("lunch") || str.includes("midday")) return 12;
-    if (str.includes("afternoon")) return 14;
-    if (str.includes("evening") || str.includes("night") || str.includes("dinner") || str.includes("sunset")) return 18;
-    return 12;
-  }
-
-  let hours = parseInt(match[1], 10);
-  const minutes = match[2] ? parseInt(match[2], 10) : 0;
-  const ampm = match[3] ? match[3].toLowerCase() : undefined;
-
-  if (ampm === "pm" && hours < 12) {
-    hours += 12;
-  } else if (ampm === "am" && hours === 12) {
-    hours = 0;
-  }
-
-  return hours + minutes / 60;
-}
-
 function getSpotSignatures(name: string, description: string = ""): string[] {
   const text = (name + " " + description).toLowerCase();
   const signatures: string[] = [];
@@ -180,13 +168,20 @@ function getSpotSignatures(name: string, description: string = ""): string[] {
     signatures.push(cleanWords[0]);
   }
 
+  // Exact-name signature: guarantees that even subtle name differences
+  // (e.g. "(Variation 2)" fallback spots) are treated as distinct.
+  const exactName = name.trim().toLowerCase();
+  if (exactName) {
+    signatures.push(`name:${exactName}`);
+  }
+
   return signatures;
 }
 
 function getUnusedBackupSpot(
   destination: string,
   usedSignatures: Set<string>,
-  timeSlot: string = "14:30 PM - 16:30 PM",
+  timeSlot: string = "02:30 PM - 04:30 PM",
   preferredCategory: ActivityCategory = "culture"
 ): ActivitySpot {
   const isDonostia =
@@ -275,16 +270,129 @@ function getUnusedBackupSpot(
     }
   }
 
-  // Generic backup spot fallback
+  // Generic backup spot fallback.
+  // IMPORTANT: rotate through a varied template pool so consecutive fallback
+  // spots are always distinct (previously the same spot was returned for every
+  // call, producing itineraries full of duplicates for non-curated cities).
+  const GENERIC_TEMPLATES: {
+    name: string;
+    category: ActivityCategory;
+    description: string;
+    insiderTip: string;
+    approxCost: string;
+  }[] = [
+    {
+      name: "Historic Old Quarter & Landmark Square Walk",
+      category: "sightseeing",
+      description: "Wander the oldest streets of the center, admiring preserved facades, churches, and the main square where locals gather.",
+      insiderTip: "Start at the main square and duck into the side alleys where the original street layout survives.",
+      approxCost: "Free",
+    },
+    {
+      name: "Panoramic Viewpoint & Scenic Lookout Trail",
+      category: "nature",
+      description: "A gentle climb to the best elevated viewpoint over the rooftops and surrounding landscape.",
+      insiderTip: "Arrive shortly before sunset for the best light and photographs.",
+      approxCost: "Free",
+    },
+    {
+      name: "Central Market Hall & Regional Food Counters",
+      category: "food",
+      description: "The city's main food market with regional produce, cheese and charcuterie stalls, and casual lunch counters.",
+      insiderTip: "Go mid-morning when stalls are fullest and grab a seat at the standing counters.",
+      approxCost: "€10 - €20",
+    },
+    {
+      name: "Local History Museum & Craft Exhibition",
+      category: "culture",
+      description: "A compact museum tracing the region's history, crafts, and traditions through well-curated exhibits.",
+      insiderTip: "Ask the front desk about any temporary exhibitions or guided visits.",
+      approxCost: "€5 - €12",
+    },
+    {
+      name: "Riverside or Waterfront Promenade Stroll",
+      category: "nature",
+      description: "A flat, shaded walking path along the water connecting bridges, benches, and small cafés.",
+      insiderTip: "Cross to the opposite bank for the classic postcard view back toward the center.",
+      approxCost: "Free",
+    },
+    {
+      name: "Specialty Coffee Roastery & Pastry House",
+      category: "cafe",
+      description: "An independent café known for single-origin coffee, fresh pastries, and a relaxed local crowd.",
+      insiderTip: "Order the signature pastry with a flat white mid-morning.",
+      approxCost: "€6 - €12",
+    },
+    {
+      name: "Botanical Garden & Quiet Park Loop",
+      category: "relaxation",
+      description: "A leafy urban park or botanical garden perfect for an unhurried loop between flower beds and old trees.",
+      insiderTip: "The benches near the water feature are the calmest spot on warm afternoons.",
+      approxCost: "Free",
+    },
+    {
+      name: "Artisan Quarter & Independent Workshop Visits",
+      category: "shopping",
+      description: "A cluster of small workshops and boutiques selling ceramics, textiles, and handmade souvenirs.",
+      insiderTip: "Chat with the makers; many will demonstrate their craft if asked politely.",
+      approxCost: "Free to browse",
+    },
+    {
+      name: "Traditional Tavern & Regional Dinner",
+      category: "food",
+      description: "A long-standing local tavern serving the region's signature dishes and wines in a convivial setting.",
+      insiderTip: "Order the house specialty and a local wine; arrive before peak dinner hours for a table.",
+      approxCost: "€25 - €45",
+    },
+    {
+      name: "Historic Church or Monument Interior Visit",
+      category: "culture",
+      description: "Step inside the most significant historic monument to admire its architecture, art, and quiet atmosphere.",
+      insiderTip: "Mornings are quietest; check opening hours as they can change for services.",
+      approxCost: "€3 - €8",
+    },
+    {
+      name: "Hidden Courtyard & Street-Art Discovery Walk",
+      category: "hidden-gem",
+      description: "A self-guided loop linking quiet courtyards, murals, and corners most visitors never find.",
+      insiderTip: "Look up—many of the best details are above street level.",
+      approxCost: "Free",
+    },
+    {
+      name: "Evening Terrace & Local Drinks",
+      category: "nightlife",
+      description: "A favorite local terrace or bar to end the day with regional drinks and easy conversation.",
+      insiderTip: "Ask the bartender for the local specialty rather than the standard list.",
+      approxCost: "€10 - €20",
+    },
+  ];
+
+  // Pick the first template whose signature has not been used yet.
+  let chosen = GENERIC_TEMPLATES.find((tpl) => {
+    const sigs = getSpotSignatures(tpl.name, tpl.description);
+    return !sigs.some((s) => usedSignatures.has(s));
+  });
+
+  // Absolute last resort: everything is exhausted, vary the name with a suffix
+  // so the spot remains unique within this itinerary.
+  if (!chosen) {
+    const base = GENERIC_TEMPLATES[usedSignatures.size % GENERIC_TEMPLATES.length];
+    const variantNum = Math.floor(usedSignatures.size / GENERIC_TEMPLATES.length) + 1;
+    chosen = {
+      ...base,
+      name: `${base.name} (Variation ${variantNum})`,
+    };
+  }
+
   const uniqueId = `dyn-gen-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`;
   const genericSpot: ActivitySpot = {
     id: uniqueId,
-    time: timeSlot,
-    name: `${destination} Artisan Gallery & Historic Courtyard Stroll`,
-    category: preferredCategory,
-    description: `Discover independent workshops, local craft galleries, and quiet historic courtyards in ${destination}.`,
-    insiderTip: "Chat with studio owners for local recommendations off the main streets.",
-    approxCost: "Free",
+    time: normalizeTimeSlot(timeSlot),
+    name: chosen.name,
+    category: chosen.category || preferredCategory,
+    description: chosen.description,
+    insiderTip: chosen.insiderTip,
+    approxCost: chosen.approxCost,
     rating: 4.8,
     coordinates: { lat: baseCoords.lat + (Math.random() * 0.004 - 0.002), lng: baseCoords.lng + (Math.random() * 0.004 - 0.002) },
     durationMinutes: 75,
@@ -329,7 +437,7 @@ function generateExtraDayForDestination(
           },
           {
             id: `ss-${dayNum}-2`,
-            time: "13:00 PM - 16:00 PM",
+            time: "01:00 PM - 04:00 PM",
             name: "Albaola Sea Factory of the Basques & Pasaia Boat Shuttle",
             category: "culture",
             description: "Cross Pasaia harbor on a green wooden motor launch to visit the live shipyard building a full-scale replica of the 16th-century whaling galleon San Juan.",
@@ -366,7 +474,7 @@ function generateExtraDayForDestination(
           },
           {
             id: `ss-${dayNum}-2`,
-            time: "13:00 PM - 16:00 PM",
+            time: "01:00 PM - 04:00 PM",
             name: "Elkano or Kaia-Kaipe Wood-Grilled Turbot Feast",
             category: "food",
             description: "Dine at the birthplace of outdoor charcoal-grilled whole fish, savoring pristine turbot grilled over open hearth coals.",
@@ -403,7 +511,7 @@ function generateExtraDayForDestination(
           },
           {
             id: `ss-${dayNum}-2`,
-            time: "13:30 PM - 16:00 PM",
+            time: "01:30 PM - 04:00 PM",
             name: "Hiruzta Txakoli Vineyard Tour & Basque Countryside Lunch",
             category: "food",
             description: "Tour steep coastal grape arbors producing crisp, slightly effervescent Getariako Txakolina wine at the foot of Mount Jaizkibel, paired with local cheeses and fresh anchovies.",
@@ -438,7 +546,7 @@ function generateExtraDayForDestination(
     estimatedTotalBudget: "€40 - €75",
     activities: [
       getUnusedBackupSpot(destination, usedSignatures, "10:00 AM - 12:30 PM", "culture"),
-      getUnusedBackupSpot(destination, usedSignatures, "13:30 PM - 16:30 PM", "food"),
+      getUnusedBackupSpot(destination, usedSignatures, "01:30 PM - 04:30 PM", "food"),
     ],
   };
 }
@@ -572,7 +680,7 @@ export function enforceVacationConstraintsAndPhotos(
           day.activities.push({
             ...freshAlt,
             id: `expanded-spot-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-            time: "16:30 PM - 18:00 PM",
+            time: "04:30 PM - 06:00 PM",
             photos: getCuratedPhotosForSpot(freshAlt.category, freshAlt.name, dest),
             ticketUrl: getTicketOrBookingUrl(freshAlt.name, dest, freshAlt.approxCost),
             googleMapsUrl: generateGoogleMapsSearchUrl(freshAlt.name, dest),
@@ -590,74 +698,79 @@ export function enforceVacationConstraintsAndPhotos(
   // 6. Strict Arrival Hour Constraint on Day 1
   if (prefs.arrivalHour && updatedDays.length > 0) {
     const arrHourNum = parseTimeToHours(prefs.arrivalHour);
-    if (arrHourNum !== null) {
-      const day1 = updatedDays[0];
-      const startH = Math.floor(arrHourNum);
-      const startM = Math.round((arrHourNum - startH) * 60);
-      const startFormatted = `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
+    const day1 = updatedDays[0];
+    const startH = Math.min(Math.floor(arrHourNum), 22);
 
-      const afternoonTimeSlots = [
-        `${startFormatted} - ${Math.min(startH + 2, 19)}:30`,
-        `${Math.min(startH + 3, 20)}:00 - ${Math.min(startH + 5, 22)}:30`,
-        `20:30 - 23:00`,
-      ];
-
-      const keptActivities = day1.activities.slice(0, 3);
-      day1.activities = keptActivities.map((act, i) => ({
-        ...act,
-        time: afternoonTimeSlots[i] || `${startH + i * 2}:00 - ${startH + i * 2 + 2}:00`,
-      }));
-
-      day1.dayTitle = `Day 1: Arrival & Evening Exploration (${prefs.arrivalHour})`;
-      day1.summary = `Arrive in ${dest} at ${prefs.arrivalHour}, settle into accommodation, and begin exploration with an afternoon orientation stroll and dinner.`;
+    // Build up to 3 sane slots starting after arrival, always with end > start
+    // and never running past 23:30.
+    const slots: string[] = [];
+    let cursor = startH + 0.5; // 30 min buffer to settle in
+    for (let i = 0; i < 3; i++) {
+      const slotStart = cursor;
+      const slotEnd = Math.min(slotStart + 2.5, 23.5);
+      if (slotEnd - slotStart < 0.75) break; // not enough evening left
+      slots.push(`${formatHoursTo12(slotStart)} - ${formatHoursTo12(slotEnd)}`);
+      cursor = slotEnd + 0.5; // 30 min transition buffer
     }
+
+    const keptActivities = day1.activities.slice(0, Math.max(1, slots.length));
+    day1.activities = keptActivities.map((act, i) => ({
+      ...act,
+      time: slots[i] || act.time,
+    }));
+
+    day1.dayTitle = `Day 1: Arrival & Evening Exploration (${prefs.arrivalHour})`;
+    day1.summary = `Arrive in ${dest} at ${prefs.arrivalHour}, settle into accommodation, and begin exploration with an afternoon orientation stroll and dinner.`;
   }
 
   // 7. Strict Departure Hour Constraint on Final Day
   if (prefs.departureHour && updatedDays.length > 0) {
     const depHourNum = parseTimeToHours(prefs.departureHour);
-    if (depHourNum !== null) {
-      const lastDayIdx = updatedDays.length - 1;
-      const lastDay = updatedDays[lastDayIdx];
+    const lastDayIdx = updatedDays.length - 1;
+    const lastDay = updatedDays[lastDayIdx];
 
-      const filtered = lastDay.activities.filter((act) => {
-        const actStartHour = parseTimeToHours(act.time);
-        if (actStartHour === null) return false;
-        return actStartHour < depHourNum - 0.25;
-      });
+    const filtered = lastDay.activities.filter((act) => {
+      const actStartHour = parseTimeToHours(act.time);
+      return actStartHour < depHourNum - 0.25;
+    });
 
-      if (filtered.length > 0) {
-        lastDay.activities = filtered.map((act, i) => ({
-          ...act,
-          time: i === 0 && depHourNum <= 12
-            ? `08:30 AM - ${prefs.departureHour}`
-            : act.time,
-        }));
-      } else {
-        const baseCoords = lookupKnownCoordinates(dest);
-        lastDay.activities = [
-          {
-            id: `farewell-morning-${Date.now()}`,
-            time: `08:30 AM - ${prefs.departureHour}`,
-            name: `Farewell Morning Walk, Traditional Bakery & Scenic Lookout`,
-            category: "cafe",
-            description: `Savor final panoramic vistas of ${dest} and visit an artisan local bakery for fresh morning coffee and pastries before departure.`,
-            insiderTip: "Pick up local gourmet specialties to bring home as souvenirs.",
-            approxCost: "€8 - €15",
-            rating: 4.9,
-            coordinates: { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.001 },
-            durationMinutes: 90,
-            photos: getCuratedPhotosForSpot("cafe", "bakery morning breakfast", dest),
-            ticketUrl: undefined,
-            googleMapsUrl: generateGoogleMapsSearchUrl("Artisan Bakery & Cafe", dest),
-          },
-        ];
-      }
+    // Farewell window: start 1.5h before departure (never earlier than 06:00)
+    // so the range is always valid, even for very early departures.
+    const farewellStartH = Math.max(6, depHourNum - 1.5);
+    const farewellTime =
+      farewellStartH < depHourNum
+        ? `${formatHoursTo12(farewellStartH)} - ${formatHoursTo12(depHourNum)}`
+        : `${formatHoursTo12(Math.max(6, depHourNum - 0.75))} - ${formatHoursTo12(depHourNum)}`;
 
-      lastDay.dayTitle = `Day ${lastDay.dayNumber}: Morning Farewell & Departure (${prefs.departureHour})`;
-      lastDay.theme = "Farewell Morning & Departure";
-      lastDay.summary = `Enjoy a relaxed final morning in ${dest}, enjoying traditional coffee and breakfast before departing at ${prefs.departureHour}.`;
+    if (filtered.length > 0) {
+      lastDay.activities = filtered.map((act, i) => ({
+        ...act,
+        time: i === 0 && depHourNum <= 12 ? farewellTime : act.time,
+      }));
+    } else {
+      const baseCoords = lookupKnownCoordinates(dest);
+      lastDay.activities = [
+        {
+          id: `farewell-morning-${Date.now()}`,
+          time: farewellTime,
+          name: `Farewell Morning Walk, Traditional Bakery & Scenic Lookout`,
+          category: "cafe",
+          description: `Savor final panoramic vistas of ${dest} and visit an artisan local bakery for fresh morning coffee and pastries before departure.`,
+          insiderTip: "Pick up local gourmet specialties to bring home as souvenirs.",
+          approxCost: "€8 - €15",
+          rating: 4.9,
+          coordinates: { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.001 },
+          durationMinutes: 90,
+          photos: getCuratedPhotosForSpot("cafe", "bakery morning breakfast", dest),
+          ticketUrl: undefined,
+          googleMapsUrl: generateGoogleMapsSearchUrl("Artisan Bakery & Cafe", dest),
+        },
+      ];
     }
+
+    lastDay.dayTitle = `Day ${lastDay.dayNumber}: Morning Farewell & Departure (${prefs.departureHour})`;
+    lastDay.theme = "Farewell Morning & Departure";
+    lastDay.summary = `Enjoy a relaxed final morning in ${dest}, enjoying traditional coffee and breakfast before departing at ${prefs.departureHour}.`;
   }
 
   // --- ABSOLUTE QUALITY GATE: MULTI-DAY DEDUPLICATION PASS ---
@@ -711,8 +824,13 @@ export function enforceVacationConstraintsAndPhotos(
     }
   });
 
-  // 8. Strict Chronological Sorting & Transit Logistics Pass
+  // 8. Strict Chronological Sorting, Time Normalization & Transit Logistics Pass
   updatedDays.forEach((day) => {
+    // Normalize malformed time strings (e.g. "01:00 PM", "02:30 PM - 04:30 PM")
+    day.activities.forEach((act) => {
+      act.time = normalizeTimeSlot(act.time);
+    });
+
     // Sort activities strictly chronologically by start time
     day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
 
@@ -805,7 +923,7 @@ CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
 4. GEOGRAPHIC COORDINATES ACCURACY: You MUST provide real-world latitude and longitude for ${prefs.destination}.
 5. MULTIPLE CHOICE OPTIONS: For EACH scheduled activity slot, provide 1-2 curated "alternativeOptions" with full details (name, category, description, insiderTip, approxCost, coordinates) so the user can easily toggle between options!
 6. ACTIONABLE INSIDER TIPS: Write high-value, precise insider tips.
-7. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 15:30 PM -> Evening 19:30 PM). NEVER place an evening activity before a morning activity.
+7. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 03:30 PM -> Evening 07:30 PM). NEVER place an evening activity before a morning activity.
 8. SCHEDULE TIME AWARENESS: ${timeScheduleInstructions}
 9. ${durationInstruction}
 10. ${paceInstruction}
@@ -939,16 +1057,24 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
   try {
     let response;
     try {
-      response = await generateWithModel("gemini-2.5-flash");
-    } catch (err37) {
-      console.warn("Primary model failed, trying fallback model gemini-1.5-flash:", err37);
-      response = await generateWithModel("gemini-1.5-flash");
+      response = await generateWithModel(PRIMARY_TEXT_MODEL);
+    } catch (errPrimary) {
+      console.warn(`Primary model failed, trying fallback model ${FALLBACK_TEXT_MODEL}:`, errPrimary);
+      response = await generateWithModel(FALLBACK_TEXT_MODEL);
     }
 
     const text = response.text;
     if (!text) throw new Error("Empty response from Gemini API");
 
     const parsed = JSON.parse(text);
+
+    // Shape validation: never ship a plan without usable days/activities
+    if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
+      throw new Error("Gemini response missing days array");
+    }
+    parsed.days.forEach((day: any) => {
+      if (!Array.isArray(day.activities)) day.activities = [];
+    });
 
     const mapCenter = parsed.mapCenter && typeof parsed.mapCenter.lat === "number" && !isNaN(parsed.mapCenter.lat)
       ? parsed.mapCenter
@@ -1023,6 +1149,10 @@ function enforceHometownRadiusAndCoordinates(
     plan.days.forEach((day) => {
       if (day.activities) {
         day.activities.forEach((act, idx) => {
+          // Normalize malformed time strings coming from the model
+          if (typeof act.time === "string") {
+            act.time = normalizeTimeSlot(act.time);
+          }
           const lat = act.coordinates?.lat ?? baseCoords.lat;
           const lng = act.coordinates?.lng ?? baseCoords.lng;
           const dist = haversineDistanceKm(baseCoords.lat, baseCoords.lng, lat, lng);
@@ -1183,7 +1313,7 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: PRIMARY_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction,
@@ -1196,6 +1326,15 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
     if (!text) throw new Error("Empty response from Gemini API");
 
     const parsed = cleanAndParseJson<any>(text);
+
+    // Shape validation: never ship a plan without usable days/activities
+    if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
+      throw new Error("Hometown response missing days array");
+    }
+    parsed.days.forEach((day: any) => {
+      if (!Array.isArray(day.activities)) day.activities = [];
+    });
+
     const mapCenter = parsed.mapCenter && typeof parsed.mapCenter.lat === "number" && !isNaN(parsed.mapCenter.lat)
       ? parsed.mapCenter
       : baseCoords;
@@ -1291,7 +1430,7 @@ Output strictly valid JSON array of candidate spots.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+      model: CREATIVE_MODEL,
       contents: prompt,
       config: {
         systemInstruction,
@@ -1376,7 +1515,7 @@ Output strictly valid JSON.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.7-flash",
+      model: CREATIVE_MODEL,
       contents: prompt,
       config: {
         systemInstruction,
@@ -1413,7 +1552,7 @@ Output strictly valid JSON.`;
     return {
       ...parsed,
       id: "spot-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
-      time: req.timeSlot || parsed.time || "Flexible",
+      time: normalizeTimeSlot(req.timeSlot || parsed.time || "Flexible"),
       isSwapped: true,
       googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${parsed.name}, ${req.destinationOrTown}`)}`,
     };
@@ -1436,7 +1575,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     // Gastronomy
     {
       id: "fb-1",
-      time: "19:30 PM - 22:30 PM",
+      time: "07:30 PM - 10:30 PM",
       name: "Parte Vieja Pintxo Crawl: Bar Nestor, Ganbara & La Cuchara",
       category: "food",
       description: "Experience world-famous Basque gastronomy: txuleta ribeye at Nestor, wild mushrooms at Ganbara, and braised beef cheek at La Cuchara.",
@@ -1450,7 +1589,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-2",
-      time: "12:30 PM - 14:30 PM",
+      time: "12:30 PM - 02:30 PM",
       name: "Mercado de la Bretxa & Local Artisanal Cheese Tasting",
       category: "food",
       description: "Historic covered market square where Michelin chefs shop for daily seafood, Idiazabal cheeses, and Guernica peppers.",
@@ -1464,7 +1603,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-3",
-      time: "13:30 PM - 16:30 PM",
+      time: "01:30 PM - 04:30 PM",
       name: "Traditional Basque Ciderhouse (Sagardotegi) Txotx! Experience",
       category: "food",
       description: "Centuries-old cider barrel cellar ritual with charcoal-grilled steak, cod omelet, and unlimited fresh cider straight from colossal casks.",
@@ -1478,7 +1617,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-4",
-      time: "19:45 PM - 22:30 PM",
+      time: "07:45 PM - 10:30 PM",
       name: "Gros District Pintxo Crawl: Bodega Donostiarra & Bar Bergara",
       category: "food",
       description: "Trendy surf quarter pintxo tour featuring the 'Completo' tuna sandwich at Bodega Donostiarra and award-winning hot tapas at Bergara.",
@@ -1507,7 +1646,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-6",
-      time: "11:45 AM - 13:15 PM",
+      time: "11:45 AM - 01:15 PM",
       name: "Peine del Viento (Comb of the Wind by Eduardo Chillida)",
       category: "culture",
       description: "Monumental steel sculptures forged into sea cliffs where Atlantic swells roar through granite blowholes.",
@@ -1521,7 +1660,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-7",
-      time: "14:30 PM - 17:00 PM",
+      time: "02:30 PM - 05:00 PM",
       name: "Monte Urgull, English Cemetery & Castillo de la Mota Fortress",
       category: "sightseeing",
       description: "Ascend shaded coastal forest trails to 12th-century stone ramparts with panoramic vistas over the harbor and old town.",
@@ -1535,7 +1674,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-8",
-      time: "17:30 PM - 19:30 PM",
+      time: "05:30 PM - 07:30 PM",
       name: "Sagüés Sea Wall Sunset & Zurriola Surf Beach Promenade",
       category: "relaxation",
       description: "Join locals on the massive sea wall at Zurriola surf beach to watch the sun drop behind Monte Igueldo.",
@@ -1550,7 +1689,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     // Family Friendly & Relaxation
     {
       id: "fb-9",
-      time: "13:30 PM - 16:00 PM",
+      time: "01:30 PM - 04:00 PM",
       name: "Monte Igueldo 1912 Vintage Funicular & Panoramic Lookout",
       category: "sightseeing",
       description: "Ride the vintage wooden funicular 180m above the bay for postcard views and the classic 1928 oceanfront roller coaster.",
@@ -1578,7 +1717,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     },
     {
       id: "fb-11",
-      time: "10:30 AM - 13:00 PM",
+      time: "10:30 AM - 01:00 PM",
       name: "La Perla Thalassotherapy Thermal Spa & Promenade Terrace",
       category: "relaxation",
       description: "Unwind at La Perla, an iconic Belle Époque seawater spa with heated hydrotherapy pools directly on La Concha beach.",
@@ -1593,7 +1732,7 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
     // Art, History & Culture
     {
       id: "fb-12",
-      time: "11:45 AM - 13:45 PM",
+      time: "11:45 AM - 01:45 PM",
       name: "San Telmo Museum of Basque Society & Renaissance Cloister",
       category: "culture",
       description: "Basque ethnographic history and monumental Sert murals housed in a 16th-century monastery integrated with modern architecture.",
@@ -1696,22 +1835,22 @@ function generateFallbackVacation(prefs: VacationPreferences): ItineraryPlan {
       } else {
         // Draw a fresh backup spot
         const defaultTime = pace === "relaxed"
-          ? (a === 0 ? "10:30 AM - 12:30 PM" : "14:30 PM - 16:30 PM")
-          : (a === 0 ? "09:30 AM - 11:30 AM" : a === 1 ? "12:00 PM - 14:00 PM" : a === 2 ? "14:30 PM - 16:30 PM" : a === 3 ? "17:00 PM - 19:00 PM" : "19:30 PM - 22:00 PM");
+          ? (a === 0 ? "10:30 AM - 12:30 PM" : "02:30 PM - 04:30 PM")
+          : (a === 0 ? "09:30 AM - 11:30 AM" : a === 1 ? "12:00 PM - 02:00 PM" : a === 2 ? "02:30 PM - 04:30 PM" : a === 3 ? "05:00 PM - 07:00 PM" : "07:30 PM - 10:00 PM");
         spotToAdd = getUnusedBackupSpot(dest, usedSignatures, defaultTime, "culture");
       }
 
       let formattedTime = spotToAdd.time;
       if (pace === "relaxed") {
         if (a === 0) formattedTime = "10:30 AM - 12:30 PM";
-        else if (a === 1) formattedTime = "14:30 PM - 16:30 PM";
-        else formattedTime = "18:30 PM - 20:30 PM";
+        else if (a === 1) formattedTime = "02:30 PM - 04:30 PM";
+        else formattedTime = "06:30 PM - 08:30 PM";
       } else if (pace === "action-packed") {
         if (a === 0) formattedTime = "09:00 AM - 10:30 AM";
         else if (a === 1) formattedTime = "11:00 AM - 12:30 PM";
-        else if (a === 2) formattedTime = "13:30 PM - 15:00 PM";
-        else if (a === 3) formattedTime = "15:30 PM - 17:30 PM";
-        else formattedTime = "18:30 PM - 21:00 PM";
+        else if (a === 2) formattedTime = "01:30 PM - 03:00 PM";
+        else if (a === 3) formattedTime = "03:30 PM - 05:30 PM";
+        else formattedTime = "06:30 PM - 09:00 PM";
       }
 
       dayActivities.push({
@@ -1808,7 +1947,7 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
           },
           {
             id: "hometown-2",
-            time: "12:30 PM - 14:30 PM",
+            time: "12:30 PM - 02:30 PM",
             name: "Secluded Green Trail & Botanical Pergola",
             category: "nature",
             description: "Tranquil walking path tucked behind the residential quarter leading to a hidden wooden observation deck.",
@@ -1820,7 +1959,7 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
           },
           {
             id: "hometown-3",
-            time: "15:00 PM - 16:30 PM",
+            time: "03:00 PM - 04:30 PM",
             name: "Neighborhood Vinyl & Artisan Loft",
             category: "hidden-gem",
             description: "Cozy upstairs sanctuary featuring curated vintage vinyl, books, and handmade ceramics.",
@@ -2201,7 +2340,7 @@ function generateFallbackSwap(req: SwapActivityRequest): ActivitySpot {
   const picked = alternatives[Math.floor(Math.random() * alternatives.length)];
   return {
     id: "swap-" + Date.now(),
-    time: req.timeSlot || "Flexible",
+    time: normalizeTimeSlot(req.timeSlot || "Flexible"),
     name: picked.name,
     category: picked.category,
     description: picked.description,

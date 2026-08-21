@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import http from "http";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import {
@@ -13,7 +14,7 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: "10mb" }));
 
@@ -110,10 +111,25 @@ async function startServer() {
     }
   });
 
+  // Shared HTTP server so the Vite HMR websocket can be served from the SAME
+  // port as the app. This is required for the app to work behind a reverse
+  // proxy / preview host (only one port is exposed), and keeps local dev working.
+  const httpServer = http.createServer(app);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        // Allow the sandboxed preview host (and any origin) so the dev app is
+        // reachable through the proxied *.e2b.app preview URL.
+        allowedHosts: true,
+        hmr: {
+          // Serve HMR upgrades on the main app server/port rather than a
+          // separate port that a proxy may not expose.
+          server: httpServer,
+        },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -125,7 +141,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`LocalExplorer AI server running on http://0.0.0.0:${PORT}`);
   });
 }

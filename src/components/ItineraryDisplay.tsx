@@ -12,13 +12,10 @@ import {
   Sparkles,
   MapPin,
   Sun,
-  RefreshCw,
-  Layers,
-  CheckCircle,
   Plus,
-  Edit2,
 } from "lucide-react";
 import confetti from "canvas-confetti";
+import { parseTimeToHours } from "../utils/time";
 
 interface ItineraryDisplayProps {
   plan: ItineraryPlan;
@@ -28,31 +25,6 @@ interface ItineraryDisplayProps {
   onSwapActivity: (activity: ActivitySpot, dayNumber: number) => Promise<void>;
   onUpdatePlan: (updatedPlan: ItineraryPlan) => void;
   onRegenerateAll?: () => void;
-}
-
-function parseTimeToHours(timeStr: string): number {
-  if (!timeStr) return 12;
-  const str = timeStr.trim().toLowerCase();
-  const match = str.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
-  if (!match) {
-    if (str.includes("morning")) return 9;
-    if (str.includes("noon") || str.includes("lunch") || str.includes("midday")) return 12;
-    if (str.includes("afternoon")) return 14;
-    if (str.includes("evening") || str.includes("night") || str.includes("dinner") || str.includes("sunset")) return 18;
-    return 12;
-  }
-
-  let hours = parseInt(match[1], 10);
-  const minutes = match[2] ? parseInt(match[2], 10) : 0;
-  const ampm = match[3] ? match[3].toLowerCase() : undefined;
-
-  if (ampm === "pm" && hours < 12) {
-    hours += 12;
-  } else if (ampm === "am" && hours === 12) {
-    hours = 0;
-  }
-
-  return hours + minutes / 60;
 }
 
 export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
@@ -132,18 +104,20 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
       const acts = [...day.activities];
       if (toIndex < 0 || toIndex >= acts.length) return day;
 
+      // Capture the original time slots, then reassign them positionally so the
+      // schedule stays chronologically ascending after the move. Build NEW
+      // objects instead of mutating the existing ones (which would not trigger
+      // a React re-render reliably).
       const originalTimes = acts.map((a) => a.time);
       const [moved] = acts.splice(fromIndex, 1);
       acts.splice(toIndex, 0, moved);
 
-      // Reassign times so positions maintain ascending time slots
-      acts.forEach((act, idx) => {
-        if (originalTimes[idx]) {
-          act.time = originalTimes[idx];
-        }
-      });
+      const reassigned = acts.map((act, idx) => ({
+        ...act,
+        time: originalTimes[idx] || act.time,
+      }));
 
-      return { ...day, activities: acts };
+      return { ...day, activities: reassigned };
     });
     onUpdatePlan({ ...plan, days: newDays });
   };
@@ -203,6 +177,14 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
     onUpdatePlan({ ...plan, days: newDays });
   };
 
+  // Day Header (title/theme) Edit Handler — immutable update through parent
+  const handleUpdateDayHeader = (dayNumber: number, patch: { dayTitle?: string; theme?: string }) => {
+    const newDays = plan.days.map((day) =>
+      day.dayNumber === dayNumber ? { ...day, ...patch } : day
+    );
+    onUpdatePlan({ ...plan, days: newDays });
+  };
+
   // Add New Day
   const handleAddNewDay = () => {
     const nextDayNum = plan.days.length + 1;
@@ -229,7 +211,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         },
         {
           id: `act-new-${nextDayNum}-2`,
-          time: "13:00 PM - 15:30 PM",
+          time: "01:00 PM - 03:30 PM",
           name: "Local Tasting & Relaxed Luncheon",
           category: "food",
           description: "Savor authentic regional dishes and local wine or cider.",
@@ -471,6 +453,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               onSelectAlternativeOption={handleSelectAlternativeOption}
               onOpenAddActivity={(dNum) => setAddingDayNumber(dNum)}
               onDeleteDay={plan.days.length > 1 ? handleDeleteDay : undefined}
+              onUpdateDayHeader={handleUpdateDayHeader}
               destinationOrTown={plan.destinationOrTown}
             />
           ))}
