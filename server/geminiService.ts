@@ -26,15 +26,14 @@ import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/uti
 // ---------------------------------------------------------------------------
 // Gemini model configuration.
 // Model IDs are validated against the Gemini API catalog:
-//  - gemini-3.6-flash is the primary high-speed model.
-//  - gemini-3.1-flash-lite is the fast, resilient secondary model.
-//  - gemini-3.7-flash is the advanced tertiary model.
+//  - gemini-3.5-flash is the primary and creative model.
+//  - gemini-3.5-flash-lite is the resilient fallback and tertiary model.
 // Override via env if needed.
 // ---------------------------------------------------------------------------
-const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.6-flash";
-const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite";
-const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-3.6-flash";
-const TERTIARY_TEXT_MODEL = "gemini-3.7-flash";
+const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.5-flash-lite";
+const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-3.5-flash";
+const TERTIARY_TEXT_MODEL = "gemini-3.5-flash-lite";
 
 // Lazy-initialized Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -1009,7 +1008,6 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
       contents: prompt,
       config: {
         systemInstruction,
-        temperature: 0.7,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1211,83 +1209,49 @@ function enforceHometownRadiusAndCoordinates(
   const verified = findVerifiedDestination(prefs.location);
   const maxRadius = prefs.radiusKm;
   const locName = verified?.name || prefs.location;
-
-  // Replacement candidates must respect the resident's exclusions
-  const excludedLower = [
-    ...(prefs.excludedPlaces || []),
-    ...(prefs.permanentSkips || []),
-  ].map((x) => x.trim().toLowerCase()).filter(Boolean);
-  const isExcludedName = (name: string) => {
+  const excludedLower = [...(prefs.excludedPlaces || []), ...(prefs.permanentSkips || [])]
+    .map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const isExcludedName = (name: string) => excludedLower.some((ex) => {
     const n = name.toLowerCase();
-    return excludedLower.some((ex) => n.includes(ex) || ex.includes(n));
-  };
-  const safeLocalSpots = (verified?.popularSpots || []).filter((sp) => !isExcludedName(sp) && !isDiningName(sp));
+    return n.includes(ex) || ex.includes(n);
+  });
+  const safeLocalSpots = (verified?.popularSpots || []).filter(
+    (spot) => !isExcludedName(spot) && !isDiningName(spot)
+  );
 
-  if (plan.days) {
-    plan.days.forEach((day) => {
-      if (day.activities) {
-        day.activities.forEach((act, idx) => {
-          // Normalize malformed time strings coming from the model
-          if (typeof act.time === "string") {
-            act.time = normalizeTimeSlot(act.time);
-          }
+  for (const day of plan.days || []) {
+    for (const [idx, act] of (day.activities || []).entries()) {
+      if (typeof act.time === "string") act.time = normalizeTimeSlot(act.time);
 
-          // Coordinate snapping: if this is a known local spot, pin it to its
-          // real-world position (models often return imprecise coordinates).
-          const knownCoords = getKnownSpotCoordinates(locName, act.name);
-          if (knownCoords) {
-            const knownDist = haversineDistanceKm(baseCoords.lat, baseCoords.lng, knownCoords.lat, knownCoords.lng);
-            if (knownDist <= maxRadius * 1.25) {
-              act.coordinates = { lat: knownCoords.lat, lng: knownCoords.lng };
-            }
-          }
+      // Prefer a verified, real coordinate for a known local place.
+      const known = getKnownSpotCoordinates(locName, act.name);
+      if (known) act.coordinates = known;
 
-          const lat = act.coordinates?.lat ?? baseCoords.lat;
-          const lng = act.coordinates?.lng ?? baseCoords.lng;
-          const dist = haversineDistanceKm(baseCoords.lat, baseCoords.lng, lat, lng);
+      const lat = act.coordinates?.lat ?? baseCoords.lat;
+      const lng = act.coordinates?.lng ?? baseCoords.lng;
+      const distance = haversineDistanceKm(baseCoords.lat, baseCoords.lng, lat, lng);
+      const text = `${act.name} ${act.description} ${act.address || ""}`.toLowerCase();
+      const namesAnotherCity =
+        !/donostia|san sebasti[aá]n/.test(locName.toLowerCase()) &&
+        /donostia|san sebasti[aá]n|concha|gros|parte vieja|bilbao/.test(text);
 
-          const actText = (act.name + " " + act.description + " " + (act.address || "")).toLowerCase();
-          
-          // Detect if activity belongs to a distant city like Donostia / San Sebastian when location is NOT Donostia and distance > maxRadius
-          const isDistantCity =
-            !locName.toLowerCase().includes("donostia") &&
-            !locName.toLowerCase().includes("san sebastian") &&
-            !locName.toLowerCase().includes("san sebastián") &&
-            (actText.includes("donostia") || actText.includes("san sebastián") || actText.includes("san sebastian") || actText.includes("concha") || actText.includes("gros") || actText.includes("parte vieja") || actText.includes("bilbao"));
-
-          if (dist > maxRadius * 1.25 || isDistantCity) {
-            // Reposition activity strictly within radius of baseCoords
-            const angle = (idx * 1.2 + 0.5) * Math.PI;
-            const clampDistKm = Math.min(maxRadius * 0.4, 3.0); // Within 3km of town center
-            const deltaLat = (clampDistKm / 111) * Math.cos(angle);
-            const deltaLng = (clampDistKm / (111 * Math.cos(baseCoords.lat * (Math.PI / 180)))) * Math.sin(angle);
-
-            act.coordinates = {
-              lat: +(baseCoords.lat + deltaLat).toFixed(4),
-              lng: +(baseCoords.lng + deltaLng).toFixed(4),
-            };
-
-            // If the spot name mentioned a distant city, replace it with a genuine local spot from verified popular spots or town-anchored name
-            if (isDistantCity || dist > maxRadius * 2) {
-              if (safeLocalSpots.length > 0) {
-                const spotName = safeLocalSpots[idx % safeLocalSpots.length];
-                act.name = spotName;
-                act.description = `Authentic local highlight in ${locName} within your ${maxRadius}km radius.`;
-                act.insiderTip = `A favorite local spot right here in ${locName}.`;
-                // Pin the replacement to its real coordinates when known
-                const replacedCoords = getKnownSpotCoordinates(locName, spotName);
-                if (replacedCoords) {
-                  act.coordinates = { lat: replacedCoords.lat, lng: replacedCoords.lng };
-                }
-              } else {
-                act.name = act.name.replace(/donostia|san sebastián|san sebastian|bilbao/gi, locName);
-                act.description = act.description.replace(/donostia|san sebastián|san sebastian|bilbao/gi, locName);
-              }
-            }
-          }
-        });
+      // A legitimate place just beyond the requested radius keeps its real pin.
+      // Replace only an unmistakably wrong-city result; never fabricate/jitter coordinates.
+      if (namesAnotherCity || distance > maxRadius * 2) {
+        const replacement = safeLocalSpots[idx % Math.max(safeLocalSpots.length, 1)];
+        if (replacement) {
+          act.name = replacement;
+          act.description = `Authentic local highlight in ${locName} within your ${maxRadius}km radius.`;
+          act.insiderTip = `A favorite local spot right here in ${locName}.`;
+          act.coordinates = getKnownSpotCoordinates(locName, replacement) || baseCoords;
+        } else {
+          act.name = `${locName} Town Centre`;
+          act.description = `Explore the real town centre of ${locName}.`;
+          act.insiderTip = `Start in the centre and follow locally signposted points of interest.`;
+          act.coordinates = baseCoords;
+        }
       }
-    });
+    }
   }
 
   plan.mapCenter = baseCoords;
@@ -1444,7 +1408,6 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
           contents: prompt,
           config: {
             systemInstruction,
-            temperature: 0.7,
             tools: [{ googleSearch: {} }],
           },
         });
@@ -1464,7 +1427,6 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
             contents: prompt,
             config: {
               systemInstruction,
-              temperature: 0.7,
               responseMimeType: "application/json",
             },
           });
@@ -1630,7 +1592,6 @@ Output strictly valid JSON array of candidate spots.`;
           contents: prompt,
           config: {
             systemInstruction,
-            temperature: 0.75,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.ARRAY,
@@ -1746,7 +1707,6 @@ Output strictly valid JSON.`;
           contents: prompt,
           config: {
             systemInstruction,
-            temperature: 0.85,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
