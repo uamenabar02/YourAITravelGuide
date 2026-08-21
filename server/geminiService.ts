@@ -16,6 +16,7 @@ import {
   generateGoogleMapsSearchUrl,
   calculateTransitLogistics,
   findVerifiedDestination,
+  getKnownSpotCoordinates,
 } from "../src/utils/destinations.js";
 import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/utils/time.js";
 
@@ -832,6 +833,12 @@ export function enforceVacationConstraintsAndPhotos(
     // Normalize malformed time strings (e.g. "01:00 PM", "02:30 PM - 04:30 PM")
     day.activities.forEach((act) => {
       act.time = normalizeTimeSlot(act.time);
+
+      // Pin known spots to their real-world coordinates so map markers are accurate
+      const knownCoords = getKnownSpotCoordinates(dest, act.name);
+      if (knownCoords) {
+        act.coordinates = { lat: knownCoords.lat, lng: knownCoords.lng };
+      }
     });
 
     // Sort activities strictly chronologically by start time
@@ -1167,6 +1174,17 @@ function enforceHometownRadiusAndCoordinates(
           if (typeof act.time === "string") {
             act.time = normalizeTimeSlot(act.time);
           }
+
+          // Coordinate snapping: if this is a known local spot, pin it to its
+          // real-world position (models often return imprecise coordinates).
+          const knownCoords = getKnownSpotCoordinates(locName, act.name);
+          if (knownCoords) {
+            const knownDist = haversineDistanceKm(baseCoords.lat, baseCoords.lng, knownCoords.lat, knownCoords.lng);
+            if (knownDist <= maxRadius * 1.25) {
+              act.coordinates = { lat: knownCoords.lat, lng: knownCoords.lng };
+            }
+          }
+
           const lat = act.coordinates?.lat ?? baseCoords.lat;
           const lng = act.coordinates?.lng ?? baseCoords.lng;
           const dist = haversineDistanceKm(baseCoords.lat, baseCoords.lng, lat, lng);
@@ -1199,6 +1217,11 @@ function enforceHometownRadiusAndCoordinates(
                 act.name = spotName;
                 act.description = `Authentic local highlight in ${locName} within your ${maxRadius}km radius.`;
                 act.insiderTip = `A favorite local spot right here in ${locName}.`;
+                // Pin the replacement to its real coordinates when known
+                const replacedCoords = getKnownSpotCoordinates(locName, spotName);
+                if (replacedCoords) {
+                  act.coordinates = { lat: replacedCoords.lat, lng: replacedCoords.lng };
+                }
               } else {
                 act.name = act.name.replace(/donostia|san sebastián|san sebastian|bilbao/gi, locName);
                 act.description = act.description.replace(/donostia|san sebastián|san sebastian|bilbao/gi, locName);
@@ -2084,6 +2107,11 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
     const jitterLng = baseCoords.lng + Math.cos(i * 2.1 + 0.7) * 0.004;
 
     const realSpot = realSpots.length > 0 ? realSpots[(rotate + i) % realSpots.length] : null;
+    // Resolve REAL coordinates for known spots so map pins point at the actual
+    // place (e.g. Erlo Summit on the mountain, not a random point in town).
+    const knownCoords = realSpot ? getKnownSpotCoordinates(loc, realSpot) : null;
+    const spotCoords = knownCoords || { lat: jitterLat, lng: jitterLng };
+
     if (realSpot && i < realSpots.length) {
       activities.push({
         id: `ht-local-${i}-${Date.now()}`,
@@ -2094,7 +2122,7 @@ function generateFallbackHometown(prefs: HometownPreferences): ItineraryPlan {
         insiderTip: angle.tip,
         approxCost: "Free",
         rating: 4.8,
-        coordinates: { lat: jitterLat, lng: jitterLng },
+        coordinates: spotCoords,
         durationMinutes: 75,
       });
     } else {

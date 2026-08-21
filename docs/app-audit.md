@@ -132,3 +132,20 @@ Following user feedback that hometown suggestions felt too generic for **long-ti
 - **Enforced everywhere server-side**: hometown generation (prompt + post-parse filter of activities *and* alternatives), vacation generation (filtered like swiper-skips), single-spot swaps (`excludedPlaces` now carries permanent skips), and radius-enforcement replacements never reintroduce a banned place.
 
 **Verified:** banned spots leak 0/3 into regenerated plans; occasion/weather/time-of-day adapt correctly; lint + build + all endpoints green.
+
+---
+
+## 7. Map accuracy fix — real coordinates for known spots
+
+**Bug:** hometown activities showed real *names* but synthetic *coordinates* (a trigonometric jitter around the town center), so pins like "Erlo Summit" or "Loiola Sanctuary" landed on random streets in town.
+
+**Fix:**
+- New **spot-level coordinate knowledge base** (`SPOT_COORDINATES_DB` in `src/utils/destinations.ts`): real-world coordinates for the known spots of every verified destination, including alias entries (Basque/Spanish spellings, short names: `Erlo`, `Loiola`, `Loyola`…).
+- New `getKnownSpotCoordinates(destination, spotName)` resolver with substring matching that tolerates decorated names ("Erlo Summit — Quiet-Hour Revisit").
+- **Applied on every generation path:**
+  - Offline hometown fallback: known spots get their real pin (fallback jitter kept only for archetypes).
+  - Hometown radius enforcement: AI output is *snapped* to KB coordinates when the spot is recognized and inside the radius; distant-spot replacements are re-pinned too.
+  - Vacation enforcement: same snap pass for known spots.
+- Corrected a factual error in the curated data: "Ekoetxea Urdaibai Environmental Center" is in Bizkaia (~50 km away) and was removed from Azpeitia's spots, replaced by the Soreasu Parish Church.
+
+**Verified:** Erlo Summit now pins at (43.2042, -2.2717) on the massif (2.56 km from Azpeitia center); Loiola Sanctuary at (43.1800, -2.2810); alias/decorated-name lookups all pass.
