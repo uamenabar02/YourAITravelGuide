@@ -2,6 +2,7 @@ export type AppMode = 'vacation' | 'hometown';
 
 export type PaceType = 'relaxed' | 'balanced' | 'action-packed';
 export type BudgetTier = 'budget' | 'mid-range' | 'luxury';
+export type TransportMode = 'public_transit' | 'car' | 'bicycle' | 'taxi';
 
 export type TimeAvailability = 'quick' | 'half-day' | 'full-day';
 
@@ -66,6 +67,7 @@ export interface ActivitySpot {
   alternativeOptions?: ActivitySpot[]; // Multiple choice options for user to pick from
   selectedOptionIndex?: number;
   transitToNext?: TransitInfo;
+  isLocked?: boolean;
 }
 
 export interface CandidateSpot extends ActivitySpot {
@@ -118,6 +120,8 @@ export interface ItineraryPlan {
   destinations?: DestinationStop[];
   arrivalHour?: string;
   departureHour?: string;
+  transportMode?: TransportMode;
+  transportModes?: TransportMode[];
 }
 
 export interface VacationPreferences {
@@ -130,6 +134,8 @@ export interface VacationPreferences {
   exactBudgetPerDay?: number;
   currency?: string;
   groupSize: number; // e.g. 1, 2, 4
+  transportMode?: TransportMode;
+  transportModes?: TransportMode[];
   permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   userSpots?: UserSpot[]; // The traveler's own favorite places (dining is sourced from here, never static lists)
   tasteProfile?: TasteProfile; // How the user likes to eat & drink (personalizes dining suggestions)
@@ -150,6 +156,8 @@ export interface HometownPreferences {
   occasion: string;
   weatherCondition: string;
   currentTemp?: number;
+  transportMode?: TransportMode;
+  transportModes?: TransportMode[];
   excludedPlaces?: string[]; // IDs or names of places visited in past 30 days
   permanentSkips?: string[]; // Names permanently excluded by the resident (never suggest again)
   userSpots?: UserSpot[]; // The resident's own places — primary source for dining suggestions
@@ -191,6 +199,30 @@ export interface UserSpot {
   addedAt: number;
 }
 
+export interface SwapActivityRequest {
+  currentActivityName: string;
+  category: ActivityCategory;
+  destinationOrTown: string;
+  mode?: AppMode;
+  dayNumber: number;
+  timeSlot?: string;
+  priorActivity?: ActivitySpot | null;
+  posteriorActivity?: ActivitySpot | null;
+  allItineraryActivityNames?: string[];
+  currentItinerarySummary?: string;
+  vibes?: string[];
+  budgetTier?: BudgetTier;
+  pace?: PaceType;
+  groupSize?: number;
+  meansOfTransport?: string;
+  excludedPlaces?: string[];
+  permanentSkips?: string[];
+  excludedNames?: string[];
+  tripVibes?: string[];
+  tasteProfile?: TasteProfile;
+  userSpots?: UserSpot[];
+}
+
 /**
  * The user's TASTE PROFILE: how they like to eat & drink.
  * Captured via a questionnaire and used by the AI to recommend dining that
@@ -217,17 +249,50 @@ export interface WeatherData {
   isAutoDetected?: boolean;
 }
 
-export interface SwapActivityRequest {
-  destinationOrTown: string;
-  mode: AppMode;
-  dayNumber: number;
-  timeSlot: string;
-  currentActivityName: string;
-  category: ActivityCategory;
-  vibes: string[];
-  budgetTier?: BudgetTier;
-  excludedPlaces?: string[];
-  userSpots?: UserSpot[]; // So dining swaps can be sourced from the user's own places
-  tasteProfile?: TasteProfile; // So dining swaps match how the user likes to eat & drink
+export interface SubSpotPin {
+  name: string;
+  description: string;
+  category?: string;
+  coordinates: Coordinates;
+  address?: string;
+  mustSeeReason?: string;
 }
+
+export interface AnecdoteItem {
+  title: string;
+  story: string;
+  type: "legend" | "history" | "secret" | "quote" | "fun-fact";
+  sourceOrPeriod?: string;
+}
+
+export interface ActivityDeepDetails {
+  spotName: string;
+  destination: string;
+  category: ActivityCategory;
+  headline: string;
+  fullExplanation: string;
+  historicalContext: string;
+  culturalSignificance: string;
+  architecturalOrNaturalHighlights?: string;
+  whatToExpect: string[];
+  anecdotes: AnecdoteItem[];
+  subSpots?: SubSpotPin[];
+  bestTimeToVisit?: string;
+  recommendedDuration?: string;
+  photographyTips?: string[];
+  insiderAdvice?: string[];
+  suggestedQuestions: string[];
+  exactAddress?: string;
+  coordinates: Coordinates;
+  googleMapsUrl?: string;
+  photos?: string[];
+}
+
+export interface ActivityChatMessage {
+  id: string;
+  sender: "user" | "guide";
+  text: string;
+  timestamp: number;
+}
+
 

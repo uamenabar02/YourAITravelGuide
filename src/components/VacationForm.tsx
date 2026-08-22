@@ -14,8 +14,12 @@ import {
   Layers,
   Users,
   Minus,
+  Car,
+  Bus,
+  Bike,
+  Navigation,
 } from "lucide-react";
-import { VacationPreferences, PaceType, BudgetTier, DestinationStop } from "../types";
+import { VacationPreferences, PaceType, BudgetTier, TransportMode, DestinationStop } from "../types";
 import { DestinationAdvisor } from "./DestinationAdvisor";
 
 interface VacationFormProps {
@@ -36,6 +40,8 @@ const POPULAR_DESTINATIONS = [
 
 const VIBE_OPTIONS = [
   { label: "Gastronomy & Local Food", icon: "🍜" },
+  { label: "Regional Excursions & Viewpoints", icon: "🚗" },
+  { label: "Shopping & Local Boutiques", icon: "🛍️" },
   { label: "Scenic & Outdoors", icon: "🌲" },
   { label: "History & Architecture", icon: "🏛️" },
   { label: "Family Friendly", icon: "👨‍👩‍👧" },
@@ -51,11 +57,22 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
   const [groupSize, setGroupSize] = useState<number>(2);
   const [duration, setDuration] = useState<number>(3);
   const [pace, setPace] = useState<PaceType>("balanced");
+  const [transportModes, setTransportModes] = useState<TransportMode[]>(["public_transit"]);
   const [selectedVibes, setSelectedVibes] = useState<string[]>([
     "Gastronomy & Local Food",
     "History & Architecture",
     "Hidden Gems / Non-Touristy",
   ]);
+
+  const toggleTransportMode = (mode: TransportMode) => {
+    setTransportModes((prev) => {
+      if (prev.includes(mode)) {
+        if (prev.length === 1) return prev; // keep at least 1 mode selected
+        return prev.filter((m) => m !== mode);
+      }
+      return [...prev, mode];
+    });
+  };
 
   // Budget settings: Tier vs Exact
   const [budgetType, setBudgetType] = useState<"tier" | "exact">("tier");
@@ -133,6 +150,8 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
         destinations,
         arrivalHour: destinations[0]?.arrivalHour || arrivalHour,
         departureHour: destinations[destinations.length - 1]?.departureHour || departureHour,
+        transportMode: transportModes[0] || "public_transit",
+        transportModes,
         enableSwiper,
       });
     } else {
@@ -151,6 +170,8 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
         isMultiDestination: false,
         arrivalHour,
         departureHour,
+        transportMode: transportModes[0] || "public_transit",
+        transportModes,
         enableSwiper,
       });
     }
@@ -401,6 +422,85 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
             <p className="text-[11px] text-[#8a8a7e] mt-1 font-sans">
               Final day wraps up before your departure time.
             </p>
+          </div>
+        </div>
+
+        {/* 3b. Means of Transport Available */}
+        <div className="bg-[#f5f5f0] p-4 sm:p-5 rounded-2xl border border-[#e5e5df]">
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+              <Navigation className="w-3.5 h-3.5 text-[#5A5A40]" />
+              Means of Transport Available
+            </label>
+            <span className="text-[10px] text-[#5A5A40] bg-white px-2 py-0.5 rounded-full border border-[#d1d1ca] font-mono">
+              Multiple Choice
+            </span>
+          </div>
+          <p className="text-xs text-[#6b6b5e] mb-3 font-sans">
+            Select all transportation options available during your trip:
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {[
+              {
+                mode: "public_transit" as TransportMode,
+                label: "Public Transit & Walking",
+                icon: <Bus className="w-4 h-4" />,
+                desc: "Local buses, trains & walking",
+              },
+              {
+                mode: "car" as TransportMode,
+                label: "Private / Rental Car",
+                icon: <Car className="w-4 h-4" />,
+                desc: "Excursions & coastal drives",
+              },
+              {
+                mode: "bicycle" as TransportMode,
+                label: "Bicycle / E-Bike",
+                icon: <Bike className="w-4 h-4" />,
+                desc: "Bike paths & urban rides",
+              },
+              {
+                mode: "taxi" as TransportMode,
+                label: "Taxi / Rideshare",
+                icon: <Navigation className="w-4 h-4" />,
+                desc: "Door-to-door city transfers",
+              },
+            ].map((t) => {
+              const isSelected = transportModes.includes(t.mode);
+              return (
+                <button
+                  key={t.mode}
+                  type="button"
+                  onClick={() => toggleTransportMode(t.mode)}
+                  className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                    isSelected
+                      ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xs"
+                      : "bg-white text-[#2c2c24] border-[#d1d1ca] hover:border-[#5A5A40]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className={isSelected ? "text-white" : "text-[#5A5A40]"}>
+                      {t.icon}
+                    </span>
+                    {isSelected && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-serif italic font-semibold text-xs leading-tight">
+                      {t.label}
+                    </div>
+                    <div
+                      className={`text-[10px] mt-0.5 font-sans ${
+                        isSelected ? "text-white/80" : "text-[#8a8a7e]"
+                      }`}
+                    >
+                      {t.desc}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 

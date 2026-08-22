@@ -1,6 +1,7 @@
 import { ItineraryPlan, ActivityHistoryItem, ActivitySpot, PermanentSkip, UserSpot, TasteProfile } from "../types";
 
 const SAVED_TRIPS_KEY = "localexplorer_saved_trips_v1";
+const CURRENT_SESSION_PLAN_KEY = "localexplorer_current_session_plan_v1";
 const ACTIVITY_HISTORY_KEY = "localexplorer_activity_history_v1";
 const PERMANENT_SKIPS_KEY = "localexplorer_permanent_skips_v1";
 const MY_SPOTS_KEY = "localexplorer_my_spots_v1";
@@ -50,6 +51,31 @@ export function deleteSavedTrip(id: string): void {
 export function isTripSaved(id: string): boolean {
   const current = getSavedTrips();
   return current.some((t) => t.id === id);
+}
+
+// --- Active Session Persistence ---
+
+export function getCurrentSessionPlan(): ItineraryPlan | null {
+  try {
+    const raw = localStorage.getItem(CURRENT_SESSION_PLAN_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Failed to read current session plan from localStorage:", err);
+    return null;
+  }
+}
+
+export function saveCurrentSessionPlan(plan: ItineraryPlan | null): void {
+  try {
+    if (!plan) {
+      localStorage.removeItem(CURRENT_SESSION_PLAN_KEY);
+    } else {
+      localStorage.setItem(CURRENT_SESSION_PLAN_KEY, JSON.stringify(plan));
+    }
+  } catch (err) {
+    console.error("Failed to save current session plan to localStorage:", err);
+  }
 }
 
 // --- 30-Day Activity History & Deduplication ---

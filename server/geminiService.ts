@@ -11,8 +11,12 @@ import {
   DestinationStop,
   UserSpot,
   TasteProfile,
+  ActivityDeepDetails,
+  SubSpotPin,
+  AnecdoteItem,
 } from "../src/types.js";
 import { geocodeSpot, resolveActivityCoordinates, enrichActivitiesWithDynamicAI } from "./geocoder.js";
+import { getRealPhotosForSpot } from "./photoService.js";
 import {
   getCuratedPhotosForSpot,
   getTicketOrBookingUrl,
@@ -22,6 +26,87 @@ import {
   getKnownSpotCoordinates,
 } from "../src/utils/destinations.js";
 import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/utils/time.js";
+
+function parseTimeInterval(timeStr: string): { start: number; end: number } {
+  if (!timeStr) return { start: 9.0, end: 10.5 };
+  const parts = timeStr.split(/\s+[-–—]\s+|\s+to\s+/i);
+  let start = parseTimeToHours(parts[0]);
+  let end = parts.length > 1 ? parseTimeToHours(parts[1]) : start + 1.5;
+  if (end <= start) end = start + 1.25;
+  return { start, end };
+}
+
+export function deoverlapDayActivities(
+  activities: ActivitySpot[],
+  originalLockedNames: string[] = []
+): ActivitySpot[] {
+  if (!activities || activities.length <= 1) return activities || [];
+
+  const lockedSet = new Set(originalLockedNames.map((n) => n.trim().toLowerCase()));
+
+  // Wrap activities with parsed time intervals
+  const items = activities.map((act) => {
+    const range = parseTimeInterval(act.time);
+    const isLocked = !!(act as any).isLocked || lockedSet.has(act.name.trim().toLowerCase());
+    return {
+      act: { ...act, isLocked },
+      start: range.start,
+      end: range.end,
+      duration: Math.max(0.75, range.end - range.start),
+      isLocked,
+    };
+  });
+
+  // Sort chronologically by start time.
+  // If start times are identical, place locked activities before newly generated ones.
+  items.sort((a, b) => {
+    if (Math.abs(a.start - b.start) < 0.01) {
+      if (a.isLocked && !b.isLocked) return -1;
+      if (!a.isLocked && b.isLocked) return 1;
+    }
+    return a.start - b.start;
+  });
+
+  // Adjust overlapping activities
+  for (let i = 0; i < items.length - 1; i++) {
+    const current = items[i];
+    const next = items[i + 1];
+
+    const buffer = 0.25; // 15 minute transit/buffer
+    if (next.start < current.end) {
+      // Overlap detected!
+      if (next.isLocked && !current.isLocked) {
+        // 'next' is locked, so 'current' (which is unlocked) must end before 'next' starts
+        current.end = Math.max(current.start + 0.75, next.start - buffer);
+        current.act.time = `${formatHoursTo12(current.start)} - ${formatHoursTo12(current.end)}`;
+      } else if (!next.isLocked) {
+        // 'next' is UNLOCKED, so move 'next' to start after 'current'
+        const isMorningBakery =
+          /breakfast|pasteler[íi]a|bakery|caf[ée]|coffee|desayuno/i.test(next.act.name + " " + next.act.category) &&
+          current.start >= 9.0;
+
+        if (isMorningBakery && i === 0 && current.start - next.duration >= 7.5 && !current.isLocked) {
+          next.start = Math.max(7.5, current.start - next.duration - buffer);
+          next.end = next.start + next.duration;
+          next.act.time = `${formatHoursTo12(next.start)} - ${formatHoursTo12(next.end)}`;
+        } else {
+          next.start = Math.round((current.end + buffer) * 4) / 4;
+          next.end = next.start + next.duration;
+          next.act.time = `${formatHoursTo12(next.start)} - ${formatHoursTo12(next.end)}`;
+        }
+      }
+      // If BOTH are locked, leave their original time slots intact without mutating!
+    } else {
+      if (!next.isLocked) next.act.time = normalizeTimeSlot(next.act.time);
+    }
+    if (!current.isLocked) current.act.time = normalizeTimeSlot(current.act.time);
+  }
+
+  // Re-sort items chronologically by updated start times
+  items.sort((a, b) => a.start - b.start);
+
+  return items.map((item) => item.act);
+}
 
 // ---------------------------------------------------------------------------
 // Gemini model configuration.
@@ -584,9 +669,105 @@ function generateExtraDayForDestination(
   };
 }
 
+function isDaytimeOnlySpot(act: ActivitySpot): boolean {
+  const cat = (act.category || "").toLowerCase();
+  const text = `${act.name} ${act.description}`.toLowerCase();
+
+  // Museums, cloisters, galleries, exhibitions, cathedrals, shopping, market stalls
+  if (["culture", "shopping", "art", "museum"].includes(cat)) return true;
+  if (/museum|cloister|gallery|exhibition|monastery|convent|cathedral|church|boutique|market stalls|guided tour|workshop/.test(text)) {
+    if (/night tour|evening tour|illuminated/.test(text)) return false;
+    return true;
+  }
+
+  // High effort hikes/nature without sunset/night context
+  if (cat === "nature" || cat === "sightseeing") {
+    if (/hike|hiking|trail|trek|climb|mount\s|monte\s|summit/.test(text)) {
+      if (/sunset|golden hour|evening|night|lookout|viewpoint/.test(text)) {
+        return false;
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function getEveningAppropriateSpot(
+  dest: string,
+  idx: number,
+  userSpots?: UserSpot[],
+  timeSlot: string = "08:00 PM - 10:30 PM"
+): ActivitySpot {
+  const baseCoords = lookupKnownCoordinates(dest);
+
+  // Check user dining options
+  const userDining = (userSpots || []).filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category));
+  if (userDining.length > 0 && userDining[idx % userDining.length]) {
+    const sp = userDining[idx % userDining.length];
+    return {
+      id: `eve-user-${Date.now()}-${idx}`,
+      time: timeSlot,
+      name: sp.name,
+      category: sp.category === "bar" ? "nightlife" : "food",
+      description: sp.notes ? `User saved dining spot: ${sp.notes}` : `Authentic evening dining experience in ${dest}.`,
+      insiderTip: "Enjoy the authentic local atmosphere in the late evening.",
+      approxCost: "€20 - €40",
+      rating: 5.0,
+      coordinates: sp.coordinates || baseCoords,
+      address: sp.town || dest,
+    };
+  }
+
+  const eveningCurated: ActivitySpot[] = [
+    {
+      id: `eve-curated-1-${idx}`,
+      time: timeSlot,
+      name: "Parte Vieja Traditional Pintxo Crawl & Local Wine Tasting",
+      category: "food",
+      description: "Hop through historic Old Town pintxo taverns sampling freshly seared local delicacies, artisanal croquettes, and crisp chilled Txakoli wine.",
+      insiderTip: "Stand at the bar counter for the authentic Basque dining atmosphere.",
+      approxCost: "€20 - €35",
+      rating: 5.0,
+      coordinates: { lat: 43.3235, lng: -1.9840 },
+      address: "Parte Vieja, Donostia",
+      durationMinutes: 120,
+    },
+    {
+      id: `eve-curated-2-${idx}`,
+      time: timeSlot,
+      name: "Gros Neighborhood Artisan Pintxo Route & Craft Beer",
+      category: "nightlife",
+      description: "Explore the bohemian Gros neighborhood, visiting artisanal craft taverns and creative modern pintxo bars near Zurriola beach.",
+      insiderTip: "Try the slow-cooked beef cheek pintxo or seared squid along Calle Zabaleta.",
+      approxCost: "€18 - €30",
+      rating: 4.9,
+      coordinates: { lat: 43.3245, lng: -1.9735 },
+      address: "Gros, Donostia",
+      durationMinutes: 120,
+    },
+    {
+      id: `eve-curated-3-${idx}`,
+      time: timeSlot,
+      name: "La Concha Bay Night Promenade & Oceanfront Terrace Drinks",
+      category: "relaxation",
+      description: "An unhurried illuminated evening stroll along La Concha bay promenade, ending with a digestif or glass of wine overlooking the ocean.",
+      insiderTip: "The wrought-iron street lamps cast beautiful reflections on the water at high tide.",
+      approxCost: "€10 - €20",
+      rating: 4.8,
+      coordinates: { lat: 43.3165, lng: -1.9880 },
+      address: "Paseo de La Concha, Donostia",
+      durationMinutes: 120,
+    },
+  ];
+
+  return eveningCurated[idx % eveningCurated.length];
+}
+
 export async function enforceVacationConstraintsAndPhotos(
   plan: ItineraryPlan,
-  prefs: VacationPreferences
+  prefs: VacationPreferences,
+  options: { isReiteration?: boolean } = {}
 ): Promise<ItineraryPlan> {
   const dest = plan.destinationOrTown || prefs.destination;
   const requestedDays = Math.min(Math.max(Number(prefs.duration) || 3, 1), 30);
@@ -652,10 +833,11 @@ export async function enforceVacationConstraintsAndPhotos(
     };
   });
 
-  // Filter out SKIPPED / REJECTED spots from all days
+  // Filter out SKIPPED / REJECTED spots from all days (unless locked)
   if (skippedNames.length > 0) {
     updatedDays.forEach((day) => {
       day.activities = day.activities.filter((act) => {
+        if ((act as any).isLocked) return true;
         const actName = act.name.toLowerCase();
         return !skippedNames.some((sn) => actName.includes(sn) || sn.includes(actName));
       });
@@ -699,36 +881,47 @@ export async function enforceVacationConstraintsAndPhotos(
     }
   });
 
-  // 5. Strict Exploration Pace Enforcement
-  const pace = prefs.pace || "balanced";
-  updatedDays.forEach((day) => {
-    if (pace === "relaxed") {
-      // 2 to 3 activities per day
-      if (day.activities.length > 3) {
-        day.activities = day.activities.slice(0, 3);
-      }
-    } else if (pace === "action-packed") {
-      // 4 to 5 activities per day
-      if (day.activities.length < 4 && day.activities.length > 0) {
-        const alts = day.activities.flatMap((a) => a.alternativeOptions || []);
-        if (alts.length > 0) {
-          const freshAlt = alts[0];
-          day.activities.push({
-            ...freshAlt,
-            id: `expanded-spot-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
-            time: "04:30 PM - 06:00 PM",
-            photos: getCuratedPhotosForSpot(freshAlt.category, freshAlt.name, dest),
-            ticketUrl: getTicketOrBookingUrl(freshAlt.name, dest, freshAlt.approxCost),
-            googleMapsUrl: generateGoogleMapsSearchUrl(freshAlt.name, dest),
-          });
-        }
-      }
-    } else {
-      // Balanced: 3 to 4 activities per day
-      if (day.activities.length > 4) {
-        day.activities = day.activities.slice(0, 4);
-      }
+  // 5. Exploration Pace & Full-Day Coverage Pass
+  // NO TRUNCATION IS PERFORMED HERE. Pace only dictates spacing and activity intensity.
+  // Ensure every single day spans from morning (~08:30 AM) through late evening (~10:30 PM) across ALL paces.
+  updatedDays.forEach((day, dayIdx) => {
+    if (!day.activities || day.activities.length === 0) return;
+
+    day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
+
+    const firstAct = day.activities[0];
+    const lastAct = day.activities[day.activities.length - 1];
+
+    const firstStartH = parseTimeToHours(firstAct.time);
+    const lastRange = parseTimeInterval(lastAct.time);
+    const lastEndH = lastRange.end;
+
+    // Morning gap check: If day starts late (>= 10:15 AM) and it's not Day 1 arrival
+    if (firstStartH >= 10.25 && !(dayIdx === 0 && prefs.arrivalHour)) {
+      const morningSpot: ActivitySpot = {
+        id: `morning-fill-${dayIdx}-${Date.now()}`,
+        time: "08:30 AM - 09:45 AM",
+        name: `${dest} Morning Promenade & Artisan Coffee Terrace`,
+        category: "cafe",
+        description: `Begin your morning with an unhurried promenade walk and fresh local pastries at a scenic outdoor cafe terrace in ${dest}.`,
+        insiderTip: "Enjoy quiet early morning views before the daytime crowds arrive.",
+        approxCost: "€5 - €10",
+        rating: 4.8,
+        coordinates: { lat: firstAct.coordinates.lat + 0.001, lng: firstAct.coordinates.lng + 0.001 },
+        durationMinutes: 75,
+        photos: getCuratedPhotosForSpot("cafe", "coffee terrace breakfast", dest),
+        googleMapsUrl: generateGoogleMapsSearchUrl("Artisan Bakery & Cafe", dest),
+      };
+      day.activities.unshift(morningSpot);
     }
+
+    // Evening gap check: If day ends early (<= 07:30 PM / 19.5) and it's not final day departure
+    if (lastEndH <= 19.5 && !(dayIdx === updatedDays.length - 1 && prefs.departureHour)) {
+      const eveSpot = getEveningAppropriateSpot(dest, day.activities.length, prefs.userSpots, "08:00 PM - 10:30 PM");
+      day.activities.push(eveSpot);
+    }
+
+    day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
   });
 
   // 6. Strict Arrival Hour Constraint on Day 1
@@ -750,10 +943,18 @@ export async function enforceVacationConstraintsAndPhotos(
     }
 
     const keptActivities = day1.activities.slice(0, Math.max(1, slots.length));
-    day1.activities = keptActivities.map((act, i) => ({
-      ...act,
-      time: slots[i] || act.time,
-    }));
+    day1.activities = keptActivities.map((act, i) => {
+      const slotTime = slots[i] || act.time;
+      const slotStartH = parseTimeToHours(slotTime);
+      if (slotStartH >= 19.5 && isDaytimeOnlySpot(act)) {
+        const eveSpot = getEveningAppropriateSpot(dest, i, prefs.userSpots, slotTime);
+        return { ...eveSpot, time: slotTime };
+      }
+      return {
+        ...act,
+        time: slotTime,
+      };
+    });
 
     day1.dayTitle = `Day 1: Arrival & Evening Exploration (${prefs.arrivalHour})`;
     day1.summary = `Arrive in ${dest} at ${prefs.arrivalHour}, settle into accommodation, and begin exploration with an afternoon orientation stroll and dinner.`;
@@ -809,6 +1010,113 @@ export async function enforceVacationConstraintsAndPhotos(
     lastDay.summary = `Enjoy a relaxed final morning in ${dest}, enjoying traditional coffee and breakfast before departing at ${prefs.departureHour}.`;
   }
 
+  // --- EVENING FEASIBILITY & ACTIVITY APPROPRIATENESS PASS ---
+  updatedDays.forEach((day) => {
+    day.activities = day.activities.map((act, actIdx) => {
+      const startH = parseTimeToHours(act.time);
+
+      // Late Night Slot (07:30 PM / 19:30 onwards)
+      if (startH >= 19.5 && isDaytimeOnlySpot(act)) {
+        // Replace with a dedicated evening experience
+        return getEveningAppropriateSpot(dest, actIdx, prefs.userSpots, act.time);
+      }
+
+      // Late Afternoon / Golden Hour Slot (05:00 PM - 07:30 PM): check hikes
+      if (startH >= 17.0 && startH < 19.5) {
+        const text = `${act.name} ${act.description}`.toLowerCase();
+        if ((act.category === "nature" || act.category === "sightseeing") && /hike|trail|trek|climb/.test(text)) {
+          if (!/sunset|golden hour|lookout|viewpoint/.test(text)) {
+            // Re-frame as a sunset lookout walk
+            act.name = `${act.name.replace(/\s*(Hike|Trail|Trek)\s*/i, ' Sunset Lookout ')} & Golden Hour Vistas`;
+            act.description = `${act.description} Specially timed for golden hour to enjoy panoramic sunset views across the landscape.`;
+            act.insiderTip = `Arrive 20 minutes before sunset for the best photo lighting.`;
+          }
+        }
+      }
+
+      return act;
+    });
+  });
+
+  // --- REGIONAL EXCURSIONS & TOWN EXPLORATION TIME ALLOCATION PASS ---
+  const knownExcursionTowns = [
+    { town: "Hondarribia", keywords: ["hondarribia", "san pedro", "jaizkibel", "fontarrabie"] },
+    { town: "Getaria", keywords: ["getaria", "balenciaga", "san antón", "mouse of getaria"] },
+    { town: "Pasaia", keywords: ["pasaia", "pasai", "san pedro", "donibane", "albaola"] },
+    { town: "Zarautz", keywords: ["zarautz", "mollarri", "luzaide"] },
+    { town: "Zumaia", keywords: ["zumaia", "flysch", "itzurun"] },
+    { town: "Tolosa", keywords: ["tolosa", "tinglado", "gorrotxategi"] },
+    { town: "Biarritz", keywords: ["biarritz", "rocher de la vierge"] },
+    { town: "Saint-Jean-de-Luz", keywords: ["saint-jean-de-luz", "donibane loizune"] },
+  ];
+
+  updatedDays.forEach((day) => {
+    let excursionTown: string | null = null;
+    const excursionIndices: number[] = [];
+
+    day.activities.forEach((act, idx) => {
+      const text = `${act.name} ${act.description} ${act.address || ""}`.toLowerCase();
+      const match = knownExcursionTowns.find((item) => item.keywords.some((kw) => text.includes(kw)));
+      if (match) {
+        excursionTown = match.town;
+        excursionIndices.push(idx);
+      }
+    });
+
+    if (excursionTown && excursionIndices.length > 0) {
+      if (!day.destinationName) day.destinationName = excursionTown;
+      if (!day.dayTitle.includes(excursionTown)) {
+        day.dayTitle = `${day.dayTitle.split(":")[0]}: Regional Excursion to ${excursionTown} & Surrounding Highlights`;
+      }
+
+      // If only 1 activity was assigned in the excursion town, enrich the adjacent daytime activity
+      if (excursionIndices.length === 1 && day.activities.length > 1) {
+        const singleIdx = excursionIndices[0];
+        const targetNextIdx = singleIdx < day.activities.length - 1 ? singleIdx + 1 : singleIdx - 1;
+        const targetAct = day.activities[targetNextIdx];
+
+        const targetText = `${targetAct.name} ${targetAct.description}`.toLowerCase();
+        const targetIsBaseCity = /donostia|san sebasti[aá]n|concha|gros|parte vieja/.test(targetText) && !targetText.includes(excursionTown.toLowerCase());
+
+        if (targetIsBaseCity) {
+          if (excursionTown === "Hondarribia") {
+            targetAct.name = "Hondarribia Medieval Walled Quarter & Marina Promenade Walk";
+            targetAct.description = "Explore the 15th-century stone ramparts, Emperor Charles V Castle, and vibrant timber-framed fishermen balconies along Calle San Pedro.";
+            targetAct.insiderTip = "Stop at Bar Gran Sol for award-winning pintxos in the heart of the fishermen's quarter.";
+            targetAct.category = "culture";
+            targetAct.approxCost = "Free";
+            targetAct.coordinates = { lat: 43.3685, lng: -1.7915 };
+            targetAct.address = "Calle San Pedro, Hondarribia";
+          } else if (excursionTown === "Getaria") {
+            targetAct.name = "Getaria Medieval Old Town & San Antón Lookout Trail";
+            targetAct.description = "Wander through cobblestone fishing lanes past wood-fired turbot grills up to the panoramic summit of Mount San Antón.";
+            targetAct.insiderTip = "Grab a glass of chilled local Txakoli wine at a harbor terrace.";
+            targetAct.category = "sightseeing";
+            targetAct.approxCost = "Free";
+            targetAct.coordinates = { lat: 43.3015, lng: -2.2030 };
+            targetAct.address = "Old Town Harbor, Getaria";
+          } else if (excursionTown === "Pasaia") {
+            targetAct.name = "Pasaia Donibane Fjord Harbor Walk & Historic Timber Houses";
+            targetAct.description = "Stroll the narrow stone passageways of Pasai Donibane, passing historic maritime houses hugging the fjord water.";
+            targetAct.insiderTip = "Take the 10-cent green wooden motor launch boat across the harbor mouth.";
+            targetAct.category = "culture";
+            targetAct.approxCost = "Free";
+            targetAct.coordinates = { lat: 43.3265, lng: -1.9280 };
+            targetAct.address = "Pasai Donibane, Pasaia";
+          } else if (excursionTown === "Zumaia") {
+            targetAct.name = "Zumaia Flysch Cliffs & Itzurun Beach Geological Trail";
+            targetAct.description = "Marvel at the 60-million-year-old vertical limestone strata layers forming dramatic sea cliffs at Itzurun beach.";
+            targetAct.insiderTip = "Best visited at mid-to-low tide when the rocky seabed platforms are exposed.";
+            targetAct.category = "nature";
+            targetAct.approxCost = "Free";
+            targetAct.coordinates = { lat: 43.2990, lng: -2.2580 };
+            targetAct.address = "Itzurun Beach, Zumaia";
+          }
+        }
+      }
+    }
+  });
+
   // --- ABSOLUTE QUALITY GATE: MULTI-DAY DEDUPLICATION PASS ---
   // Runs AFTER all additions, expansions, and extra day injections to ensure 100% unique activities!
   const seenGlobalSignatures = new Set<string>();
@@ -820,7 +1128,7 @@ export async function enforceVacationConstraintsAndPhotos(
       const actSigs = getSpotSignatures(act.name, act.description);
       const isDuplicate = actSigs.some((sig) => seenGlobalSignatures.has(sig));
 
-      if (isDuplicate && dayIdx > 0) {
+      if (isDuplicate && dayIdx > 0 && !(act as any).isLocked && !options.isReiteration) {
         // Try finding an unused non-duplicate alternative
         let freshSpot: ActivitySpot | undefined;
         if (act.alternativeOptions && act.alternativeOptions.length > 0) {
@@ -864,6 +1172,9 @@ export async function enforceVacationConstraintsAndPhotos(
   for (const day of updatedDays) {
     const dayDest = day.destinationName || dest;
 
+    // Deoverlap & normalize time slots
+    day.activities = deoverlapDayActivities(day.activities);
+
     // Normalize time slots
     for (const act of day.activities) {
       act.time = normalizeTimeSlot(act.time);
@@ -889,6 +1200,51 @@ export async function enforceVacationConstraintsAndPhotos(
     }
     if (day.activities.length > 0) {
       day.activities[day.activities.length - 1].transitToNext = undefined;
+    }
+  }
+
+  // ABSOLUTE HARD SAFETY CHECK FOR FINAL DAY DEPARTURE HOUR
+  if (prefs.departureHour && updatedDays.length > 0) {
+    const depHourNum = parseTimeToHours(prefs.departureHour);
+    const lastDay = updatedDays[updatedDays.length - 1];
+
+    const validActs = lastDay.activities.filter((act) => {
+      const startH = parseTimeToHours(act.time);
+      const range = parseTimeInterval(act.time);
+      return startH < depHourNum - 0.1 && range.end <= depHourNum + 0.1;
+    });
+
+    if (validActs.length > 0) {
+      lastDay.activities = validActs.map((act) => {
+        const range = parseTimeInterval(act.time);
+        if (range.end > depHourNum) {
+          return {
+            ...act,
+            time: `${formatHoursTo12(range.start)} - ${formatHoursTo12(depHourNum)}`,
+          };
+        }
+        return act;
+      });
+    } else {
+      const farewellStartH = Math.max(6, depHourNum - 1.5);
+      const farewellTime = `${formatHoursTo12(farewellStartH)} - ${formatHoursTo12(depHourNum)}`;
+      const baseCoords = lookupKnownCoordinates(dest);
+      lastDay.activities = [
+        {
+          id: `farewell-morning-${Date.now()}`,
+          time: farewellTime,
+          name: `Farewell Morning Walk & Local Bakery`,
+          category: "cafe",
+          description: `Enjoy a quiet final morning promenade in ${dest} with fresh local pastries and artisan coffee before departing.`,
+          insiderTip: "Pick up local treats for your trip home.",
+          approxCost: "€5 - €10",
+          rating: 4.9,
+          coordinates: { lat: baseCoords.lat + 0.002, lng: baseCoords.lng - 0.001 },
+          durationMinutes: Math.round((depHourNum - farewellStartH) * 60),
+          photos: getCuratedPhotosForSpot("cafe", "bakery morning breakfast", dest),
+          googleMapsUrl: generateGoogleMapsSearchUrl("Bakery & Cafe", dest),
+        },
+      ];
     }
   }
 
@@ -944,13 +1300,45 @@ export async function generateVacationItinerary(prefs: VacationPreferences): Pro
     skippedSpotsInstruction = `\n- USER SWIPER REJECTED SPOTS MANDATE: The user explicitly swiped LEFT / REJECTED / SKIPPED these places in the candidate swiper: [${prefs.skippedSpots.map(s => s.name).join(", ")}]. YOU ARE STRICTLY FORBIDDEN FROM INCLUDING ANY OF THESE SKIPPED SPOTS OR THEIR DIRECT EQUIVALENTS ANYWHERE IN THE ITINERARY OR ALTERNATIVES!`;
   }
 
-  const paceTarget = prefs.pace === "relaxed" ? "EXACTLY 2 to 3" : prefs.pace === "action-packed" ? "EXACTLY 4 to 5" : "EXACTLY 3 to 4";
-  let paceInstruction = `\n- EXPLORATION PACE MANDATE: The user selected pace "${prefs.pace || 'balanced'}". You MUST output ${paceTarget} activities per day for ALL ${daysCount} days.`;
+  const paceTarget = prefs.pace === "relaxed"
+    ? "EXACTLY 3 to 4 well-spaced activities"
+    : prefs.pace === "action-packed"
+    ? "EXACTLY 5 to 7 high-energy, full-day activities"
+    : "EXACTLY 4 to 5 balanced activities";
+
+  let paceInstruction = `\n- EXPLORATION PACE & FULL-DAY COVERAGE MANDATE: The user selected pace "${prefs.pace || 'balanced'}".
+* You MUST output ${paceTarget} per day for ALL ${daysCount} days.
+* FULL-DAY SPAN RULE: Every single day's itinerary MUST span the ENTIRE DAY starting in the morning (e.g. 08:30 AM / 09:00 AM) through afternoon, golden hour / sunset, and into the late evening (~08:00 PM - 10:30 PM for dinner, evening pintxos, illuminated night strolls, or scenic viewpoints).
+* DO NOT END A DAY AT 5:00 PM OR 6:00 PM! The evening is an essential part of a packed itinerary.
+* EVENING FEASIBILITY MANDATE: Daytime high-effort activities (museums, hiking trails, gallery visits, mountain treks, shopping boutiques, daytime boat tours) MUST END BEFORE DINNER TIME (~07:30 PM). NEVER schedule a museum or hiking trail at or after 07:30 PM! The late evening slot (07:30 PM onwards) MUST be dedicated to sit-down dining, pintxo crawls, wine bars, or illuminated night strolls.
+* BUFFER & TRANSIT TIMES: Provide realistic 15-30 minute transition buffers between activities to account for walking, driving, or public transit between locations (e.g. 08:30 AM - 10:00 AM -> 15 min buffer -> 10:15 AM - 12:00 PM -> 30 min lunch buffer -> 12:30 PM - 02:30 PM -> 30 min transit -> 03:00 PM - 05:00 PM -> 30 min buffer -> 05:30 PM - 07:30 PM sunset -> 30 min buffer -> 08:00 PM - 10:30 PM evening dinner/walk).`;
+
+  const modes = prefs.transportModes && prefs.transportModes.length > 0
+    ? prefs.transportModes
+    : (prefs.transportMode ? [prefs.transportMode] : ["public_transit"]);
+
+  const transportNotes: string[] = [];
+  if (modes.includes("car")) {
+    transportNotes.push("PRIVATE / RENTAL CAR AVAILABLE: Highly encourage scenic coastal drives, elevated mountain lookouts, and regional day trip excursions to surrounding towns & villages within 20-60km (e.g. Getaria, Hondarribia, Zarautz, Pasaia, Tolosa)!");
+  }
+  if (modes.includes("public_transit")) {
+    transportNotes.push("PUBLIC TRANSIT & WALKING: Group urban spots into walkable neighborhood clusters or along direct bus/train corridors.");
+  }
+  if (modes.includes("bicycle")) {
+    transportNotes.push("BICYCLE / E-BIKE: Include bike-friendly greenways, seaside promenade paths, and scenic urban cycle routes.");
+  }
+  if (modes.includes("taxi")) {
+    transportNotes.push("TAXI / RIDESHARE: Door-to-door transit for quick city transfers or direct access to hilltop viewpoints.");
+  }
+
+  let transportInstruction = `\n- MEANS OF TRANSPORTATION MANDATE: Selected transport options: [${modes.join(", ")}].\n${transportNotes.map(n => `* ${n}`).join("\n")}`;
 
   let vibesInstruction = "";
   if (prefs.vibes && prefs.vibes.length > 0) {
     vibesInstruction = `\n- TRAVEL VIBES & INTERESTS MANDATE: The traveler explicitly selected these vibes: [${prefs.vibes.join(", ")}].
 At least 70% of scheduled activities MUST directly reflect these selected vibes!
+* If 'Regional Excursions & Viewpoints' is selected: prioritize day trips to scenic surrounding towns/villages, coastal drives, high pacing, panoramic lookouts, and viewpoints. Reduce time spent in slow museums/sit-down dining!
+* If 'Shopping & Local Boutiques' is selected: prioritize premier shopping avenues, fashion districts, local artisan boutiques, markets, and craft shops.
 * If 'Scenic & Outdoors' is selected: prioritize coastal promenades, cliff walks, viewpoints, nature trails, and beaches.
 * If 'Nightlife & Bars' is selected: include evening pintxo taverns, cocktail lounges, and wine bars.
 * If 'Family Friendly' is selected: include family-accessible funiculars, parks, gentle walks, and museums.
@@ -965,18 +1353,30 @@ At least 70% of scheduled activities MUST directly reflect these selected vibes!
   const systemInstruction = `You are LocalExplorer AI, an elite travel curator and local cultural insider.
 CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
 1. STRICT MULTI-DAY DEDUPLICATION: NEVER repeat the same activity, landmark, or excursion town (e.g. Hondarribia, Getaria, or Pasaia) across different days! Every single day in the itinerary must feature completely unique, non-repeating attractions and establishments. An excursion to a neighboring town like Hondarribia, Getaria, or Pasaia can ONLY happen ONCE in the entire multi-day trip.
-2. GEOGRAPHIC CLUSTERING & ROUTE LOGISTICS: Each day's activities MUST be grouped logically by geographic proximity and district corridor to minimize travel and ensure a natural walking flow.
-3. ALWAYS provide EXACT, REAL, NAMED ESTABLISHMENTS, historic landmarks, and specific venues with real names. NEVER give generic descriptions.
-4. GEOGRAPHIC COORDINATES ACCURACY: You MUST provide real-world latitude and longitude for ${prefs.destination}.
-5. MULTIPLE CHOICE OPTIONS: For EACH scheduled activity slot, provide 1-2 curated "alternativeOptions" with full details (name, category, description, insiderTip, approxCost, coordinates) so the user can easily toggle between options!
-6. ACTIONABLE INSIDER TIPS: Write high-value, precise insider tips.
-7. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 03:30 PM -> Evening 07:30 PM). NEVER place an evening activity before a morning activity.
-8. SCHEDULE TIME AWARENESS: ${timeScheduleInstructions}
+2. GEOGRAPHIC CLUSTERING & REGIONAL EXCURSION TIME ALLOCATION:
+   * SINGLE CONTINUOUS EXCURSION BLOCK: When visiting a neighboring town or taking a regional drive/excursion (e.g. driving or taking transit to Hondarribia, Getaria, Pasaia, Zarautz, Tolosa, Zumaia):
+     - YOU MUST NOT schedule a single quick drive or viewpoint and immediately send the traveler back to the base city for the next activity!
+     - YOU MUST allocate a dedicated multi-activity block (at least 2 to 3 consecutive spots or a full half-day) TO EXPLORE THAT TOWN AND ITS SURROUNDING HIGHLIGHTS (e.g. scenic drive/viewpoint -> medieval quarter/ramparts -> harbor walk & local pintxo tavern in that town).
+     - A viewpoint on its own takes ~45 minutes, but you must pair it with nearby interest places in that same area so the traveler experiences the destination properly before returning!
+   * ZERO INTERLEAVING / ZERO BACKTRACKING: You are STRICTLY FORBIDDEN from interleaving spots from different towns within the same half-day (e.g. NEVER do: Donostia -> Hondarribia -> Donostia -> Hondarribia). Once you arrive in an excursion town like Hondarribia, complete all local spots there consecutively before returning to your base city.
+   * TRANSPORT MODE CONSISTENCY: If the traveler drives a rental car to an excursion town, keep transportation choices consistent per journey segment.
+3. TIME-OF-DAY FEASIBILITY & EVENING APPROPRIATENESS:
+   * DAYTIME HIGH-EFFORT ACTIVITIES: High-effort, opening-hours-dependent, and daytime outdoor activities (such as museums, cloister visits, galleries, hiking trails, mountain treks, shopping boutiques, and daytime boat tours) MUST END BEFORE DINNER TIME (~07:30 PM).
+   * NO LATE-NIGHT MUSEUMS OR HIKES: IT IS STRICTLY FORBIDDEN to schedule a museum, gallery, cloister, hiking trail, or daytime tour starting at or after 07:30 PM (19:30).
+   * HIKES & OUTDOOR TRAILS AFTER 05:00 PM: If a hike or outdoor trail is scheduled in the late afternoon / sunset window (between 05:00 PM and 07:30 PM), it MUST be specifically tailored as a SUNSET LOOKOUT / GOLDEN HOUR WALK (e.g. watching the sunset from a coastal viewpoint or hill bastion). Strenuous daytime hikes with no sunset purpose are strictly forbidden in the late afternoon/evening.
+   * EVENING SLOTS (~07:30 PM - 10:30 PM) MUST STRICTLY be reserved for evening-appropriate experiences: sit-down dinners, pintxo/tapas crawls, wine & cocktail lounges, illuminated old town strolls, sunset lookout points with a drink, or evening acoustic music.
+4. ALWAYS provide EXACT, REAL, NAMED ESTABLISHMENTS, historic landmarks, and specific venues with real names. NEVER give generic descriptions.
+5. GEOGRAPHIC COORDINATES ACCURACY: You MUST provide real-world latitude and longitude for ${prefs.destination}.
+6. MULTIPLE CHOICE OPTIONS: For EACH scheduled activity slot, provide 1-2 curated "alternativeOptions" with full details (name, category, description, insiderTip, approxCost, coordinates) so the user can easily toggle between options!
+7. ACTIONABLE INSIDER TIPS: Write high-value, precise insider tips.
+8. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 03:30 PM -> Evening 07:30 PM). NEVER place an evening activity before a morning activity.
+9. SCHEDULE TIME AWARENESS: ${timeScheduleInstructions}
 9. ${durationInstruction}
 10. ${paceInstruction}
 11. ${vibesInstruction}
-12. ${skippedSpotsInstruction}
-13. ${likedSpotsInstruction}
+12. ${transportInstruction}
+13. ${skippedSpotsInstruction}
+14. ${likedSpotsInstruction}
 ${(() => {
   const tasteLine = buildTasteInstruction(prefs.tasteProfile);
   return tasteLine ? `15. TRAVELER TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
@@ -1166,6 +1566,277 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
     console.error("Error generating vacation itinerary with Gemini:", error);
     return generateFallbackVacation(prefs);
   }
+}
+
+export interface ReiterateExtraContext {
+  excludedPlaces?: string[];
+  permanentSkips?: string[];
+  tasteProfile?: TasteProfile;
+  userSpots?: UserSpot[];
+  transportModes?: string[];
+  arrivalHour?: string;
+  departureHour?: string;
+}
+
+export async function reiterateItineraryPlan(
+  existingPlan: ItineraryPlan,
+  userInstructions?: string,
+  extraContext?: ReiterateExtraContext
+): Promise<ItineraryPlan> {
+  const ai = getAiClient();
+  const dest = existingPlan.destinationOrTown;
+  const daysCount = existingPlan.totalDays || existingPlan.days.length;
+
+  const arrHour = extraContext?.arrivalHour || existingPlan.arrivalHour;
+  const depHour = extraContext?.departureHour || existingPlan.departureHour;
+
+  const lockedNamesAllDays = existingPlan.days.flatMap((d) => d.activities.map((a) => a.name));
+  const excludedPlaces = extraContext?.excludedPlaces || [];
+  const permanentSkips = extraContext?.permanentSkips || [];
+  const tasteProfile = extraContext?.tasteProfile;
+  const userSpots = extraContext?.userSpots || [];
+  const transportModes = extraContext?.transportModes || existingPlan.transportModes || [];
+
+  const allBlacklistRaw = Array.from(
+    new Set([
+      ...lockedNamesAllDays,
+      ...excludedPlaces,
+      ...permanentSkips,
+    ])
+  ).filter(Boolean);
+
+  const globalBlacklistSigs = new Set<string>();
+  allBlacklistRaw.forEach((name) => {
+    getSpotSignatures(name, name).forEach((sig) => globalBlacklistSigs.add(sig));
+  });
+
+  const daysOverview = existingPlan.days
+    .map((day) => {
+      const actList = day.activities
+        .map(
+          (a, i) =>
+            `   - LOCKED Activity ${i + 1}: "${a.name}" [Category: ${a.category}] | TIME SLOT: ${a.time} | Description: ${a.description} | Location: ${a.address || dest}`
+        )
+        .join("\n");
+      return `Day ${day.dayNumber} ("${day.dayTitle}"):\n${
+        actList || "   - (No activities currently scheduled - empty day)"
+      }\n   UNOCCUPIED TIME SLOTS TO AUTO-FILL: Propose non-overlapping spots strictly for open schedule windows (before, between, or after locked spots).`;
+    })
+    .join("\n\n");
+
+  const tasteInstruction = buildTasteInstruction(tasteProfile);
+
+  const systemInstruction = `You are LocalExplorer AI, an expert travel curator and local insider.
+The user has customized their travel itinerary for ${dest}. They have adjusted, deleted, or allocated extra time to specific activities, creating empty schedule slots that now need to be filled with new, complementary activities.
+
+CRITICAL MANDATES FOR REITERATION & AUTO-FILL:
+1. PRESERVE LOCKED ACTIVITIES (ABSOLUTE COMPULSORY MANDATE):
+   - Every existing activity currently listed on each day is LOCKED!
+   - YOU MUST NOT DELETE, REMOVE, REPLACE, RE-NAME, OR ALTER ANY LOCKED ACTIVITY!
+   - Keep the times assigned to locked activities intact.
+   - Place new auto-filled activities strictly in unoccupied times before, between, or after locked activities.
+
+2. ARRIVAL & DEPARTURE BOUNDARY MANDATES:
+   ${arrHour ? `- DAY 1 ARRIVAL TIME: The traveler arrives at ${arrHour}. DO NOT schedule any auto-fill activity before ${arrHour} on Day 1.` : "- Day 1 starts morning ~08:30 AM."}
+   ${depHour ? `- FINAL DAY DEPARTURE TIME: The traveler departs at ${depHour} on Day ${daysCount}. DO NOT schedule ANY activity that starts at or after ${depHour} or extends past ${depHour} on Day ${daysCount}!` : "- Final Day finishes evening ~10:30 PM."}
+
+3. FULL-DAY COVERAGE & EFFORT LEVEL HARMONY:
+   - Ensure days without departure constraints span from morning through late evening (~08:00 PM - 10:30 PM).
+   - Effort level flow: evaluate the physical exertion of prior and posterior activities around each open slot. If adjacent activities are high-effort (e.g. hikes or large museums), propose low-effort, relaxing complementary spots (e.g., terrace cafe, beach lounge, scenic viewpoint, old town promenade).
+   - EVENING FEASIBILITY MANDATE: Daytime high-effort activities MUST end before 07:30 PM. Late evening slots (07:30 PM onwards) MUST strictly be sit-down dining, pintxo crawls, wine bars, or night strolls.
+
+4. MULTI-DAY DEDUPLICATION & BLACKLIST:
+   - Do NOT propose any spot already present anywhere in the itinerary or blacklisted!
+   - Avoid these forbidden spots: [${allBlacklistRaw.slice(0, 25).join(", ")}].
+
+5. TRAVELER PREFERENCES & TASTE PROFILE:
+   - Pace: ${existingPlan.customPace || "balanced"}
+   - Budget Tier: ${existingPlan.budgetTier || "mid-range"}
+   - Vibes & Interests: ${(existingPlan.tags || []).join(", ") || "Culture, Gastronomy, Scenic"}
+   - Means of Transport: ${transportModes.join(", ") || "public transit & walking"}
+   ${tasteInstruction ? `- Taste Profile for Dining/Cafes: ${tasteInstruction}` : ""}
+   ${userSpots.length > 0 ? `- User Favorite Places to prefer for dining/cafes: [${userSpots.map((s) => s.name).join(", ")}].` : ""}
+
+6. OUTPUT FORMAT:
+   - Output strictly valid JSON matching the \`ItineraryPlan\` schema.`;
+
+  const prompt = `Auto-fill empty schedule slots for this customized itinerary in ${dest}.
+
+USER'S CURRENT LOCKED ITINERARY & ACTIVITIES:
+${daysOverview}
+
+USER'S INSTRUCTIONS FOR AUTO-FILL:
+${userInstructions || "Preserve all my locked activities and auto-fill remaining open slots with high-quality, non-overlapping local spots."}
+
+Ensure all locked activities remain 100% intact while open slots are seamlessly filled. Output strictly valid JSON.`;
+
+  const prefs: VacationPreferences = {
+    destination: dest,
+    duration: daysCount,
+    vibes: existingPlan.tags || [],
+    pace: existingPlan.customPace || "balanced",
+    budgetTier: existingPlan.budgetTier || "mid-range",
+    groupSize: existingPlan.groupSize || 1,
+    arrivalHour: arrHour,
+    departureHour: depHour,
+  };
+
+  let parsed: any = null;
+  if (ai) {
+    for (const modelName of [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL]) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                destinationOrTown: { type: Type.STRING },
+                summary: { type: Type.STRING },
+                highlights: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                mapCenter: {
+                  type: Type.OBJECT,
+                  properties: {
+                    lat: { type: Type.NUMBER },
+                    lng: { type: Type.NUMBER },
+                  },
+                  required: ["lat", "lng"],
+                },
+                mapZoom: { type: Type.NUMBER },
+                days: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      dayNumber: { type: Type.INTEGER },
+                      dayTitle: { type: Type.STRING },
+                      theme: { type: Type.STRING },
+                      summary: { type: Type.STRING },
+                      estimatedTotalBudget: { type: Type.STRING },
+                      destinationName: { type: Type.STRING },
+                      activities: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            id: { type: Type.STRING },
+                            time: { type: Type.STRING },
+                            name: { type: Type.STRING },
+                            category: { type: Type.STRING },
+                            description: { type: Type.STRING },
+                            insiderTip: { type: Type.STRING },
+                            approxCost: { type: Type.STRING },
+                            rating: { type: Type.NUMBER },
+                            coordinates: {
+                              type: Type.OBJECT,
+                              properties: {
+                                lat: { type: Type.NUMBER },
+                                lng: { type: Type.NUMBER },
+                              },
+                              required: ["lat", "lng"],
+                            },
+                            address: { type: Type.STRING },
+                          },
+                          required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
+                        },
+                      },
+                    },
+                    required: ["dayNumber", "dayTitle", "theme", "summary", "activities"],
+                  },
+                },
+              },
+              required: ["title", "destinationOrTown", "summary", "highlights", "mapCenter", "days"],
+            },
+          },
+        });
+
+        if (response.text) {
+          parsed = JSON.parse(response.text);
+          if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn(`Reiteration model ${modelName} failed:`, (e as Error).message);
+      }
+    }
+  }
+
+  // GUARANTEED MERGE: Preserve 100% of original locked activities
+  const updatedDays: DailyPlan[] = existingPlan.days.map((origDay) => {
+    const dayNum = origDay.dayNumber;
+    // Mark original activities as locked
+    const origActivities: ActivitySpot[] = origDay.activities.map((a) => ({ ...a, isLocked: true }));
+
+    const aiDay = parsed?.days?.find((d: any) => d.dayNumber === dayNum);
+    const aiActivities: ActivitySpot[] = aiDay && Array.isArray(aiDay.activities) ? aiDay.activities : [];
+
+    const dayLockedSigs = new Set<string>();
+    origActivities.forEach((a) => {
+      getSpotSignatures(a.name, a.description).forEach((s) => dayLockedSigs.add(s));
+    });
+
+    const isDay1 = dayNum === 1;
+    const isLastDay = dayNum === existingPlan.days.length;
+
+    const arrHourNum = isDay1 && arrHour ? parseTimeToHours(arrHour) : undefined;
+    const depHourNum = isLastDay && depHour ? parseTimeToHours(depHour) : undefined;
+
+    const freshNewFills: ActivitySpot[] = [];
+    aiActivities.forEach((aiAct) => {
+      if (!aiAct.name || !aiAct.time) return;
+
+      const actStartH = parseTimeToHours(aiAct.time);
+      const actRange = parseTimeInterval(aiAct.time);
+
+      // Arrival constraint: Skip auto-fill spots starting before arrivalHour on Day 1
+      if (arrHourNum !== undefined && actStartH < arrHourNum) {
+        return;
+      }
+
+      // Departure constraint: Skip auto-fill spots starting at/after departureHour or ending past departureHour on Last Day
+      if (depHourNum !== undefined && (actStartH >= depHourNum - 0.1 || actRange.end > depHourNum + 0.1)) {
+        return;
+      }
+
+      const sigs = getSpotSignatures(aiAct.name, aiAct.description);
+      const isDup = sigs.some((s) => dayLockedSigs.has(s) || globalBlacklistSigs.has(s));
+      if (!isDup) {
+        sigs.forEach((s) => dayLockedSigs.add(s));
+        freshNewFills.push({
+          ...aiAct,
+          id: `autofill-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          isLocked: false,
+        });
+      }
+    });
+
+    const combined = [...origActivities, ...freshNewFills];
+    const deoverlapped = deoverlapDayActivities(combined, origActivities.map((a) => a.name));
+
+    return {
+      ...origDay,
+      activities: deoverlapped,
+    };
+  });
+
+  const rawPlan: ItineraryPlan = {
+    ...existingPlan,
+    title: parsed?.title || existingPlan.title,
+    summary: parsed?.summary || existingPlan.summary,
+    highlights: parsed?.highlights || existingPlan.highlights,
+    days: updatedDays,
+    createdAt: new Date().toISOString(),
+  };
+
+  return await enforceVacationConstraintsAndPhotos(rawPlan, prefs, { isReiteration: true });
 }
 
 function cleanAndParseJson<T>(text: string): T {
@@ -1672,28 +2343,62 @@ export async function swapActivitySpot(req: SwapActivityRequest): Promise<Activi
   const ai = getAiClient();
   const baseCoords = lookupKnownCoordinates(req.destinationOrTown);
 
-  const systemInstruction = `You are LocalExplorer AI. Swap a single activity in an itinerary with a fresh, authentic, highly specific alternative in ${req.destinationOrTown}.
-Rules:
-- The new spot must fit the time slot (${req.timeSlot}) and category or complementary vibe.
-- Do NOT repeat the previous spot: "${req.currentActivityName}".
-${req.excludedPlaces && req.excludedPlaces.length > 0 ? `- Avoid these recent spots: [${req.excludedPlaces.join(", ")}]` : ""}
-- Ensure realistic coordinates near ${baseCoords.lat}, ${baseCoords.lng}.
-${["food", "cafe", "nightlife"].includes(req.category) && req.userSpots && req.userSpots.length > 0
-  ? `- For this dining-type swap, PREFER one of the resident's own places: [${req.userSpots
-      .filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category))
-      .map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`)
-      .join("; ")}].`
-  : ""}
-${["food", "cafe", "nightlife"].includes(req.category) && buildTasteInstruction(req.tasteProfile)
-  ? `- TASTE PROFILE for this dining swap: ${buildTasteInstruction(req.tasteProfile)}. The replacement must match this profile and the ${req.timeSlot} time slot.`
-  : ""}`;
+  const blacklistRaw = [
+    req.currentActivityName,
+    ...(req.allItineraryActivityNames || []),
+    ...(req.excludedPlaces || []),
+    ...(req.permanentSkips || []),
+    ...(req.excludedNames || []),
+  ].filter(Boolean);
 
-  const prompt = `Give me 1 alternative activity spot to replace "${req.currentActivityName}" in ${req.destinationOrTown}.
-Time Slot: ${req.timeSlot}. Category: ${req.category}. Vibes: ${req.vibes.join(", ")}. Budget Tier: ${req.budgetTier || "mid-range"}.
+  const blacklist = Array.from(new Set(blacklistRaw.map((x) => x.trim().toLowerCase())));
+
+  const priorSummary = req.priorActivity
+    ? `'${req.priorActivity.name}' [Category: ${req.priorActivity.category}, Time: ${req.priorActivity.time}, Address: ${req.priorActivity.address || req.destinationOrTown}, Description: ${req.priorActivity.description}]`
+    : "None (This is the first activity of the day)";
+
+  const posteriorSummary = req.posteriorActivity
+    ? `'${req.posteriorActivity.name}' [Category: ${req.posteriorActivity.category}, Time: ${req.posteriorActivity.time}, Address: ${req.posteriorActivity.address || req.destinationOrTown}, Description: ${req.posteriorActivity.description}]`
+    : "None (This is the last activity of the day)";
+
+  const tasteInstruction = buildTasteInstruction(req.tasteProfile);
+
+  const systemInstruction = `You are LocalExplorer AI, an expert local travel curator.
+Your task is to propose ONE single replacement spot for "${req.currentActivityName}" in ${req.destinationOrTown}.
+
+CRITICAL MANDATES FOR SWAPPING:
+1. ABSOLUTE DEDUPLICATION & BLACKLIST (STRICTEST PRIORITY):
+   The proposed replacement spot MUST NOT be any of the following places. They are ALREADY scheduled in the itinerary across all days, visited in 30-day memory, or permanently skipped:
+   [${blacklistRaw.join(", ")}].
+   You MUST propose a completely distinct, non-repeating, authentic local spot.
+
+2. TIME SLOT & CATEGORY COMPATIBILITY:
+   - Target Time Slot: ${req.timeSlot || "Flexible"}
+   - Requested Category: ${req.category}
+   - User Pace: ${req.pace || "balanced"}
+
+3. PRIOR & POSTERIOR ACTIVITY HARMONY (EFFORT LEVEL & LOCATION FLOW):
+   - Immediately PRIOR Activity: ${priorSummary}
+   - Immediately POSTERIOR Activity: ${posteriorSummary}
+   - EFFORT & LOCATION INSTRUCTION: Ensure the replacement spot is geographically reachable from the prior spot and smoothly bridges to the posterior spot. Match the physical exertion level (e.g. if the prior activity is a high-effort hike, provide a relaxed spot or logical transition, not back-to-back intense exertion).
+
+4. USER TASTE PROFILE (IF DINING / BAR / CAFE / FOOD):
+   ${["food", "cafe", "nightlife"].includes(req.category) && tasteInstruction ? `- Taste Profile: ${tasteInstruction}` : "- Ensure high authentic local quality."}
+
+5. TRAVEL INPUT PREFERENCES:
+   - Budget Tier: ${req.budgetTier || "mid-range"}
+   - Selected Vibes: ${(req.vibes || req.tripVibes || []).join(", ") || "Authentic local"}
+   - Transport Mode: ${req.meansOfTransport || "public transit / walking"}
+   - Group Size: ${req.groupSize || 1}
+
+Output strictly valid JSON matching the ActivitySpot schema.`;
+
+  const prompt = `Propose 1 fresh, unique replacement spot in ${req.destinationOrTown} to replace "${req.currentActivityName}" during ${req.timeSlot || "Flexible"}.
+Ensure it is NOT in the blacklist [${blacklistRaw.slice(0, 15).join(", ")}], fits between the prior and posterior activities, respects taste profile/budget/transport/pace, and matches ${req.category}.
 Output strictly valid JSON.`;
 
   if (!ai) {
-    return generateFallbackSwap(req);
+    return generateFallbackSwap(req, blacklist);
   }
 
   try {
@@ -1744,10 +2449,19 @@ Output strictly valid JSON.`;
     }
 
     if (!responseText) {
-      return generateFallbackSwap(req);
+      return generateFallbackSwap(req, blacklist);
     }
 
     const parsed = JSON.parse(responseText || "{}");
+    const parsedNameClean = (parsed.name || "").trim().toLowerCase();
+
+    // Verify parsed spot is not in blacklist
+    const isForbidden = blacklist.some((b) => parsedNameClean.includes(b) || b.includes(parsedNameClean));
+    if (isForbidden || !parsed.name) {
+      console.warn(`Swap spot '${parsed.name}' was blacklisted or empty! Generating fallback swap.`);
+      return generateFallbackSwap(req, blacklist);
+    }
+
     const resolvedCoords = await resolveActivityCoordinates(
       parsed.name,
       req.destinationOrTown,
@@ -1765,7 +2479,7 @@ Output strictly valid JSON.`;
     };
   } catch (error) {
     console.error("Error swapping activity:", error);
-    return generateFallbackSwap(req);
+    return generateFallbackSwap(req, blacklist);
   }
 }
 
@@ -1978,7 +2692,7 @@ async function generateFallbackVacation(prefs: VacationPreferences): Promise<Iti
   });
 
   // Determine activities per day based on pace
-  const targetActivitiesPerDay = pace === "relaxed" ? 2 : pace === "action-packed" ? 5 : 3;
+  const targetActivitiesPerDay = pace === "relaxed" ? 3 : pace === "action-packed" ? 6 : 4;
 
   // Build days dynamically
   const days: DailyPlan[] = [];
@@ -1990,47 +2704,98 @@ async function generateFallbackVacation(prefs: VacationPreferences): Promise<Iti
     const countForThisDay = d === 1 && prefs.arrivalHour ? Math.max(1, targetActivitiesPerDay - 1) : targetActivitiesPerDay;
 
     for (let a = 0; a < countForThisDay; a++) {
-      // 1. Try finding an unused spot matching vibe
-      let chosenSpot = validPool.find((spot) => {
-        const sigs = getSpotSignatures(spot.name, spot.description);
-        const isUsed = sigs.some((s) => usedSignatures.has(s));
-        const matchesVibe = spot.vibeCategories.some((cat) => vibes.includes(cat));
-        return !isUsed && matchesVibe;
-      });
-
-      // 2. If no matching vibe spot left, pick any unused spot from validPool
-      if (!chosenSpot) {
-        chosenSpot = validPool.find((spot) => {
-          const sigs = getSpotSignatures(spot.name, spot.description);
-          return !sigs.some((s) => usedSignatures.has(s));
-        });
-      }
+      const isEveningSlot = a === countForThisDay - 1;
 
       let spotToAdd: ActivitySpot;
 
-      if (chosenSpot) {
-        const sigs = getSpotSignatures(chosenSpot.name, chosenSpot.description);
-        sigs.forEach((s) => usedSignatures.add(s));
-        spotToAdd = chosenSpot;
+      if (isEveningSlot) {
+        // ALWAYS assign a dedicated evening experience for the late night slot
+        const eveningOptions: ActivitySpot[] = [
+          {
+            id: `fb-eve-1`,
+            time: "08:00 PM - 10:30 PM",
+            name: "Parte Vieja Traditional Pintxo Crawl & Local Wine Tasting",
+            category: "food",
+            description: "Hop through historic Old Town pintxo taverns sampling freshly seared line-caught squid, Iberian ham croquettes, and crisp chilled local wine.",
+            insiderTip: "Stand at the bar counter for the authentic Basque dining atmosphere.",
+            approxCost: "€20 - €35",
+            rating: 5.0,
+            coordinates: { lat: 43.3235, lng: -1.9840 },
+            address: "Calle 31 de Agosto, Donostia",
+            durationMinutes: 120,
+          },
+          {
+            id: `fb-eve-2`,
+            time: "08:00 PM - 10:30 PM",
+            name: "Gros Neighborhood Artisan Pintxo Route & Craft Beer",
+            category: "nightlife",
+            description: "Explore the bohemian Gros neighborhood, visiting artisanal craft taverns and creative modern pintxo bars near Zurriola beach.",
+            insiderTip: "Try the slow-cooked beef cheek pintxo along Calle Zabaleta.",
+            approxCost: "€18 - €30",
+            rating: 4.9,
+            coordinates: { lat: 43.3245, lng: -1.9735 },
+            address: "Calle Zabaleta, Donostia",
+            durationMinutes: 120,
+          },
+          {
+            id: `fb-eve-3`,
+            time: "08:00 PM - 10:30 PM",
+            name: "La Concha Bay Night Promenade & Oceanfront Terrace Drinks",
+            category: "relaxation",
+            description: "An unhurried illuminated evening stroll along La Concha bay, ending with a digestif or glass of wine overlooking the ocean.",
+            insiderTip: "The wrought-iron street lamps cast beautiful reflections on the wet sand at low tide.",
+            approxCost: "€10 - €20",
+            rating: 4.8,
+            coordinates: { lat: 43.3165, lng: -1.9880 },
+            address: "Paseo de La Concha, Donostia",
+            durationMinutes: 120,
+          },
+        ];
+        spotToAdd = eveningOptions[(d - 1) % eveningOptions.length];
       } else {
-        // Draw a fresh backup spot
-        const defaultTime = pace === "relaxed"
-          ? (a === 0 ? "10:30 AM - 12:30 PM" : "02:30 PM - 04:30 PM")
-          : (a === 0 ? "09:30 AM - 11:30 AM" : a === 1 ? "12:00 PM - 02:00 PM" : a === 2 ? "02:30 PM - 04:30 PM" : a === 3 ? "05:00 PM - 07:00 PM" : "07:30 PM - 10:00 PM");
-        spotToAdd = getUnusedBackupSpot(dest, usedSignatures, defaultTime, "culture");
+        // Daytime slot: find an unused spot matching vibe
+        let chosenSpot = validPool.find((spot) => {
+          const sigs = getSpotSignatures(spot.name, spot.description);
+          const isUsed = sigs.some((s) => usedSignatures.has(s));
+          const matchesVibe = spot.vibeCategories.some((cat) => vibes.includes(cat));
+          return !isUsed && matchesVibe;
+        });
+
+        if (!chosenSpot) {
+          chosenSpot = validPool.find((spot) => {
+            const sigs = getSpotSignatures(spot.name, spot.description);
+            return !sigs.some((s) => usedSignatures.has(s));
+          });
+        }
+
+        if (chosenSpot) {
+          const sigs = getSpotSignatures(chosenSpot.name, chosenSpot.description);
+          sigs.forEach((s) => usedSignatures.add(s));
+          spotToAdd = chosenSpot;
+        } else {
+          const defaultTime = "02:30 PM - 04:30 PM";
+          spotToAdd = getUnusedBackupSpot(dest, usedSignatures, defaultTime, "culture");
+        }
       }
 
       let formattedTime = spotToAdd.time;
       if (pace === "relaxed") {
-        if (a === 0) formattedTime = "10:30 AM - 12:30 PM";
-        else if (a === 1) formattedTime = "02:30 PM - 04:30 PM";
-        else formattedTime = "06:30 PM - 08:30 PM";
+        if (a === 0) formattedTime = "09:30 AM - 11:30 AM";
+        else if (a === 1) formattedTime = "01:00 PM - 03:30 PM";
+        else formattedTime = "06:30 PM - 09:00 PM";
       } else if (pace === "action-packed") {
+        if (a === 0) formattedTime = "08:30 AM - 10:00 AM";
+        else if (a === 1) formattedTime = "10:30 AM - 12:00 PM";
+        else if (a === 2) formattedTime = "12:30 PM - 02:30 PM";
+        else if (a === 3) formattedTime = "03:00 PM - 05:00 PM";
+        else if (a === 4) formattedTime = "05:30 PM - 07:30 PM";
+        else formattedTime = "08:00 PM - 10:30 PM";
+      } else {
         if (a === 0) formattedTime = "09:00 AM - 10:30 AM";
         else if (a === 1) formattedTime = "11:00 AM - 12:30 PM";
-        else if (a === 2) formattedTime = "01:30 PM - 03:00 PM";
-        else if (a === 3) formattedTime = "03:30 PM - 05:30 PM";
-        else formattedTime = "06:30 PM - 09:00 PM";
+        else if (a === 2) formattedTime = "01:00 PM - 03:00 PM";
+        else if (a === 3) formattedTime = "04:00 PM - 06:30 PM";
+        else formattedTime = "08:00 PM - 10:00 PM";
       }
 
       dayActivities.push({
@@ -2707,13 +3472,20 @@ async function generateFallbackCandidates(
   }));
 }
 
-async function generateFallbackSwap(req: SwapActivityRequest): Promise<ActivitySpot> {
+async function generateFallbackSwap(req: SwapActivityRequest, blacklist: string[] = []): Promise<ActivitySpot> {
   const baseCoords = lookupKnownCoordinates(req.destinationOrTown);
+
+  const isExcluded = (name: string) => {
+    const clean = name.trim().toLowerCase();
+    return blacklist.some((b) => clean.includes(b) || b.includes(clean));
+  };
 
   // Dining-type swaps are sourced from the user's OWN places — never static lists.
   const isDiningSwap = ["food", "cafe", "nightlife"].includes(req.category);
   if (isDiningSwap && req.userSpots && req.userSpots.length > 0) {
-    const candidates = req.userSpots.filter((sp) => ["bar", "cafe", "restaurant"].includes(sp.category));
+    const candidates = req.userSpots.filter(
+      (sp) => ["bar", "cafe", "restaurant"].includes(sp.category) && !isExcluded(sp.name)
+    );
     if (candidates.length > 0) {
       const sp = candidates[Math.floor(Math.random() * candidates.length)];
       if (!sp.coordinates) {
@@ -2762,7 +3534,7 @@ async function generateFallbackSwap(req: SwapActivityRequest): Promise<ActivityS
     },
   ];
 
-  const picked = alternatives[Math.floor(Math.random() * alternatives.length)];
+  const picked = alternatives.find((a) => !isExcluded(a.name)) || alternatives[0];
   return {
     id: "swap-" + Date.now(),
     time: normalizeTimeSlot(req.timeSlot || "Flexible"),
@@ -2777,3 +3549,353 @@ async function generateFallbackSwap(req: SwapActivityRequest): Promise<ActivityS
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${picked.name}, ${req.destinationOrTown}`)}`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 100% Dynamic Deep Activity Details & Anecdotes Engine
+// ---------------------------------------------------------------------------
+
+export async function fetchActivityDeepDetails(params: {
+  spotName: string;
+  destination: string;
+  category?: string;
+  address?: string;
+  description?: string;
+  coordinates?: { lat: number; lng: number };
+}): Promise<ActivityDeepDetails> {
+  const { spotName, destination, category = "sightseeing", address, description, coordinates } = params;
+  const ai = getAiClient();
+
+  const systemInstruction = `You are a world-renowned cultural historian, local tour guide, and master storyteller for travel destinations worldwide.
+Your job is to provide richly detailed, captivating, and authentic deep-dive information about a specific spot or activity in ${destination}.
+
+Requirements:
+1. Provide a concise, evocative headline.
+2. In 'fullExplanation', write 2-3 engaging, descriptive paragraphs covering what this place/activity is, why it is special, its atmosphere, and how visitors should experience it.
+3. In 'historicalContext', provide the real origins, founding dates/eras, architectural styles, or key events.
+4. In 'culturalSignificance', explain what this spot means to locals, its traditions, customs, or culinary heritage.
+5. In 'architecturalOrNaturalHighlights', highlight specific craftsmanship, viewpoints, materials, or natural formations.
+6. In 'whatToExpect', provide 3 to 5 clear bullet points.
+7. In 'anecdotes', provide at least 3 to 4 captivating, specific anecdotes, legends, quirky historical occurrences, or famous quotes associated with this place or its creators.
+8. CRITICAL FOR SUB-SPOTS: If the activity represents an area, district, walking tour, historical complex, park, or market quarter (e.g. "Old Town Walk", "Montmartre District", "Santuario de Loyola complex", "Trastevere loop", "Central Park"), identify 3 to 5 specific, high-priority landmark pins/stops within this area with their specific names, exact street addresses, and why visitors must stop there. If the activity is already a single compact building or restaurant, subSpots can be 2-3 standout rooms/galleries/adjacent spots or an empty list.
+9. In 'suggestedQuestions', provide 4 to 6 compelling template questions that a curious visitor would love to ask an AI Local Guide chatbot (e.g., "Can you tell any a random quote about this place?", "Why was this made?", "What's the best hidden secret here?", "What's the story behind the architecture?").
+10. In 'photographyTips', give 2-3 practical tips for the best angles/lighting.
+11. In 'insiderAdvice', give 2-3 insider local tips.`;
+
+  const prompt = `Provide the full in-depth travel dossier and stories for:
+Place/Activity: "${spotName}"
+Destination: "${destination}"
+Category: "${category}"
+Address context: "${address || "Unknown"}"
+Description context: "${description || "None provided"}"`;
+
+  let parsedData: any = null;
+
+  if (ai) {
+    for (const model of [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL]) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                headline: { type: Type.STRING },
+                fullExplanation: { type: Type.STRING },
+                historicalContext: { type: Type.STRING },
+                culturalSignificance: { type: Type.STRING },
+                architecturalOrNaturalHighlights: { type: Type.STRING },
+                whatToExpect: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                anecdotes: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      story: { type: Type.STRING },
+                      type: {
+                        type: Type.STRING,
+                        enum: ["legend", "history", "secret", "quote", "fun-fact"],
+                      },
+                      sourceOrPeriod: { type: Type.STRING },
+                    },
+                    required: ["title", "story", "type"],
+                  },
+                },
+                subSpots: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      category: { type: Type.STRING },
+                      address: { type: Type.STRING },
+                      mustSeeReason: { type: Type.STRING },
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                    },
+                    required: ["name", "description"],
+                  },
+                },
+                bestTimeToVisit: { type: Type.STRING },
+                recommendedDuration: { type: Type.STRING },
+                photographyTips: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                insiderAdvice: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                suggestedQuestions: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                exactAddress: { type: Type.STRING },
+              },
+              required: [
+                "headline",
+                "fullExplanation",
+                "historicalContext",
+                "culturalSignificance",
+                "whatToExpect",
+                "anecdotes",
+                "suggestedQuestions",
+              ],
+            },
+          },
+        });
+
+        parsedData = JSON.parse(response.text || "{}");
+        if (parsedData && parsedData.headline && parsedData.fullExplanation) {
+          break;
+        }
+      } catch (err) {
+        console.warn(`Deep activity details generation failed on model ${model}:`, (err as Error).message);
+      }
+    }
+  }
+
+  // Ensure baseline coordinates
+  const baseCoords = coordinates && coordinates.lat && coordinates.lng
+    ? coordinates
+    : await resolveActivityCoordinates(spotName, destination, address);
+
+  // If subSpots were provided, geocode them dynamically
+  const resolvedSubSpots: SubSpotPin[] = [];
+  if (parsedData && Array.isArray(parsedData.subSpots) && parsedData.subSpots.length > 0) {
+    for (const sub of parsedData.subSpots) {
+      if (!sub.name) continue;
+      let subCoords = baseCoords;
+      try {
+        subCoords = await resolveActivityCoordinates(sub.name, destination, sub.address || address);
+      } catch {
+        subCoords = {
+          lat: +(baseCoords.lat + (Math.random() - 0.5) * 0.005).toFixed(5),
+          lng: +(baseCoords.lng + (Math.random() - 0.5) * 0.005).toFixed(5),
+        };
+      }
+      resolvedSubSpots.push({
+        name: sub.name,
+        description: sub.description || "",
+        category: sub.category || category,
+        address: sub.address || "",
+        mustSeeReason: sub.mustSeeReason || "",
+        coordinates: subCoords,
+      });
+    }
+  }
+
+  const defaultSuggestedQuestions = [
+    "Can you tell any a random quote about this place?",
+    "Why was this made?",
+    "What is the most famous legend or story here?",
+    "What is a hidden detail that most tourists miss?",
+    "What should I order or look out for nearby?",
+  ];
+
+  const detailsObj: ActivityDeepDetails = {
+    spotName,
+    destination,
+    category: category as ActivityCategory,
+    headline: parsedData?.headline || `Discover the iconic charm of ${spotName}`,
+    fullExplanation:
+      parsedData?.fullExplanation ||
+      `${spotName} is one of the most compelling highlights in ${destination}. Offering rich cultural heritage and an authentic local atmosphere, it is a cornerstone of any memorable journey to the region.`,
+    historicalContext:
+      parsedData?.historicalContext ||
+      `Rooted in the historical tapestry of ${destination}, this location reflects generations of local traditions and craftsmanship.`,
+    culturalSignificance:
+      parsedData?.culturalSignificance ||
+      `Cherished by residents and travelers alike, it represents the living spirit and identity of ${destination}.`,
+    architecturalOrNaturalHighlights:
+      parsedData?.architecturalOrNaturalHighlights ||
+      "Features distinctive local design aesthetics, atmospheric surroundings, and exceptional craftsmanship.",
+    whatToExpect: parsedData?.whatToExpect?.length
+      ? parsedData.whatToExpect
+      : [
+          "Authentic regional atmosphere and unique ambiance",
+          "Rich photo opportunities and scenic angles",
+          "Engaging insights into local lifestyle and history",
+        ],
+    anecdotes: parsedData?.anecdotes?.length
+      ? parsedData.anecdotes
+      : [
+          {
+            title: "Origins & Foundations",
+            story: `Legend has it that this location was chosen for its unique vantage point and connection to the heartbeat of ${destination}.`,
+            type: "history",
+            sourceOrPeriod: "Historical archives",
+          },
+          {
+            title: "Local Secret",
+            story: "Locals often visit during the quiet hours of early morning or late golden hour to soak in the atmosphere away from midday crowds.",
+            type: "secret",
+            sourceOrPeriod: "Resident folklore",
+          },
+        ],
+    subSpots: resolvedSubSpots,
+    bestTimeToVisit: parsedData?.bestTimeToVisit || "Morning or golden hour before sunset for the best light and atmosphere.",
+    recommendedDuration: parsedData?.recommendedDuration || "1 to 2 hours",
+    photographyTips: parsedData?.photographyTips || [
+      "Capture wide-angle shots to frame the full surroundings",
+      "Look for architectural textures and candid local moments",
+    ],
+    insiderAdvice: parsedData?.insiderAdvice || [
+      "Take your time to stroll the perimeter and observe the fine details",
+      "Combine your visit with nearby neighborhood cafes or viewpoints",
+    ],
+    suggestedQuestions: parsedData?.suggestedQuestions?.length
+      ? parsedData.suggestedQuestions
+      : defaultSuggestedQuestions,
+    exactAddress: parsedData?.exactAddress || address || `${spotName}, ${destination}`,
+    coordinates: baseCoords,
+    googleMapsUrl: generateGoogleMapsSearchUrl(spotName, destination, address || parsedData?.exactAddress, baseCoords),
+  };
+
+  // Resolve real-world authentic photos (Wikipedia/Wikimedia open public domain imagery)
+  try {
+    const realPhotos = await getRealPhotosForSpot(spotName, destination, category, baseCoords);
+    if (realPhotos && realPhotos.length > 0) {
+      detailsObj.photos = realPhotos;
+    }
+  } catch (photoErr) {
+    console.warn("Could not fetch real photos for deep details:", photoErr);
+  }
+
+  return detailsObj;
+}
+
+// ---------------------------------------------------------------------------
+// Activity Specific Local Guide Chatbot
+// ---------------------------------------------------------------------------
+
+export async function chatWithActivityGuide(params: {
+  messages: { role: "user" | "guide" | "assistant" | "model"; text: string }[];
+  spotContext: {
+    spotName: string;
+    destination: string;
+    category?: string;
+    address?: string;
+    headline?: string;
+    fullExplanation?: string;
+    historicalContext?: string;
+    anecdotes?: AnecdoteItem[];
+  };
+}): Promise<{ reply: string; followUpQuestions: string[] }> {
+  const { messages, spotContext } = params;
+  const ai = getAiClient();
+  const defaultFollowUps = [
+    "Can you tell any a random quote about this place?",
+    "Why was this made?",
+    "What is a hidden secret here that tourists miss?",
+    "What should I taste or drink nearby?",
+  ];
+
+  if (!ai) {
+    return {
+      reply: `I'm your local guide for ${spotContext.spotName} in ${spotContext.destination}. Feel free to ask me anything about its history, legends, or secret spots!`,
+      followUpQuestions: defaultFollowUps,
+    };
+  }
+
+  const systemInstruction = `You are a warm, highly knowledgeable, and charismatic Local Guide & Travel Agent living in ${spotContext.destination}.
+You are currently providing private on-site guidance for a traveler visiting "${spotContext.spotName}" in ${spotContext.destination}.
+
+Context for this location:
+- Name: ${spotContext.spotName}
+- Destination: ${spotContext.destination}
+- Category: ${spotContext.category || "Sightseeing / Culture"}
+- Address: ${spotContext.address || "Local area"}
+- Summary: ${spotContext.headline || ""}
+- Background: ${spotContext.fullExplanation || ""}
+- History: ${spotContext.historicalContext || ""}
+- Known Lore: ${spotContext.anecdotes ? JSON.stringify(spotContext.anecdotes) : ""}
+
+Guidelines:
+1. Speak warmly and authentically in the first-person as a passionate local expert guide.
+2. If asked for a random quote, provide a genuine famous quote (or translated historical remark) by an artist, writer, historical figure, or philosopher about this place, its region, or its founders.
+3. If asked "Why was this made?" or about origins, give the vivid, captivating story behind its construction, creation, or founding.
+4. Keep answers engaging, vivid, culturally nuanced, and practical (2-4 concise paragraphs max).
+5. Always generate 3-4 natural, conversational, highly relevant follow-up questions that the user might want to ask NEXT based on what you just shared.
+6. Output JSON with:
+   - "reply": Markdown text of your guide response
+   - "followUpQuestions": Array of 3-4 short, specific suggested follow-up questions.`;
+
+  // Build the conversation history
+  const conversationContents = messages.map((m) => ({
+    role: m.role === "user" ? "user" : "model",
+    parts: [{ text: m.text }],
+  }));
+
+  for (const model of [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL]) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: conversationContents.length > 0 ? conversationContents : [{ role: "user", parts: [{ text: "Hello! Tell me about this place." }] }],
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reply: { type: Type.STRING },
+              followUpQuestions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: ["reply", "followUpQuestions"],
+          },
+        },
+      });
+
+      if (response.text) {
+        const parsed = JSON.parse(response.text);
+        if (parsed && parsed.reply) {
+          return {
+            reply: parsed.reply,
+            followUpQuestions: Array.isArray(parsed.followUpQuestions) && parsed.followUpQuestions.length > 0
+              ? parsed.followUpQuestions
+              : defaultFollowUps,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`Activity chat error with model ${model}:`, (err as Error).message);
+    }
+  }
+
+  return {
+    reply: `Welcome to ${spotContext.spotName}! As your local guide in ${spotContext.destination}, I can tell you that this is one of our most treasured locations. Feel free to ask about its historical origins, famous quotes, hidden architectural details, or what to try nearby!`,
+    followUpQuestions: defaultFollowUps,
+  };
+}
+
+

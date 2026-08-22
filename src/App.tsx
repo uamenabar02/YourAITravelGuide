@@ -24,14 +24,28 @@ import {
   addPermanentSkip,
   getMySpots,
   getTasteProfile,
+  getCurrentSessionPlan,
+  saveCurrentSessionPlan,
 } from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
 import { Compass } from "lucide-react";
 
 export default function App() {
-  const [activeMode, setActiveMode] = useState<AppMode>("vacation");
-  const [currentPlan, setCurrentPlan] = useState<ItineraryPlan>(SAMPLE_VACATION_PLAN);
+  const [currentPlan, setCurrentPlan] = useState<ItineraryPlan>(() => {
+    const shared = parseShareableUrl();
+    if (shared) return shared;
+    const activeSession = getCurrentSessionPlan();
+    if (activeSession) return activeSession;
+    return SAMPLE_VACATION_PLAN;
+  });
+  const [activeMode, setActiveMode] = useState<AppMode>(() => {
+    const shared = parseShareableUrl();
+    if (shared) return shared.mode;
+    const activeSession = getCurrentSessionPlan();
+    if (activeSession) return activeSession.mode;
+    return "vacation";
+  });
   const [isLoading, setIsLoading] = useState(false);
 
   // Modals and Drawers
@@ -53,7 +67,7 @@ export default function App() {
   const [historyCount, setHistoryCount] = useState<number>(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Initial Load: check for shared URL trip or load saved trips
+  // Initial Load: check for shared URL trip, active session, or load saved trips
   useEffect(() => {
     const loadedSaved = getSavedTrips();
     setSavedTrips(loadedSaved);
@@ -65,12 +79,23 @@ export default function App() {
     if (shared) {
       setCurrentPlan(shared);
       setActiveMode(shared.mode);
+      saveCurrentSessionPlan(shared);
       addToast("success", `Loaded shared itinerary for ${shared.destinationOrTown}!`);
+    } else {
+      const activeSession = getCurrentSessionPlan();
+      if (activeSession) {
+        setCurrentPlan(activeSession);
+        setActiveMode(activeSession.mode);
+      }
     }
-    // NOTE: The bundled SAMPLE plans are intentionally NOT recorded into the
-    // 30-day activity history. Doing so polluted the anti-repeat dedup memory
-    // with demo data before the user had generated anything.
   }, []);
+
+  // Automatically persist current itinerary session whenever it changes
+  useEffect(() => {
+    if (currentPlan) {
+      saveCurrentSessionPlan(currentPlan);
+    }
+  }, [currentPlan]);
 
   const addToast = (type: "success" | "error" | "info", message: string) => {
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
@@ -193,8 +218,6 @@ export default function App() {
 
       const newPlan: ItineraryPlan = await res.json();
       setCurrentPlan(newPlan);
-      recordPlanActivities(newPlan);
-      setHistoryCount(getActivityHistory().length);
       addToast("success", `Generated ${newPlan.totalDays}-day itinerary for ${newPlan.destinationOrTown}!`);
 
       // Smooth scroll to display
@@ -239,8 +262,6 @@ export default function App() {
 
       const newPlan: ItineraryPlan = await res.json();
       setCurrentPlan(newPlan);
-      recordPlanActivities(newPlan);
-      setHistoryCount(getActivityHistory().length);
       addToast("success", `Found local ${prefs.occasion} spots within ${prefs.radiusKm}km of ${prefs.location}!`);
 
       setTimeout(() => {
@@ -277,6 +298,19 @@ export default function App() {
   // Swap Single Activity Spot Handler
   const handleSwapActivity = async (activity: ActivitySpot, dayNumber: number) => {
     try {
+      const dayObj = currentPlan.days.find((d) => d.dayNumber === dayNumber);
+      const actIndex = dayObj ? dayObj.activities.findIndex((a) => a.id === activity.id) : -1;
+      const priorActivity = actIndex > 0 && dayObj ? dayObj.activities[actIndex - 1] : null;
+      const posteriorActivity =
+        actIndex >= 0 && dayObj && actIndex < dayObj.activities.length - 1
+          ? dayObj.activities[actIndex + 1]
+          : null;
+
+      // Collect all activity names currently in the entire itinerary across all days
+      const allItineraryActivityNames = currentPlan.days.flatMap((d) =>
+        d.activities.map((a) => a.name)
+      );
+
       const res = await fetch("/api/swap-activity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -287,12 +321,16 @@ export default function App() {
           timeSlot: activity.time,
           currentActivityName: activity.name,
           category: activity.category,
+          priorActivity,
+          posteriorActivity,
+          allItineraryActivityNames,
           vibes: currentPlan.tags || [],
           budgetTier: currentPlan.budgetTier,
-          excludedPlaces: [
-            ...getRecentExcludedPlaces(currentPlan.destinationOrTown),
-            ...getPermanentSkipNames(),
-          ],
+          pace: currentPlan.customPace,
+          groupSize: currentPlan.groupSize || pendingVacationPrefs?.groupSize,
+          meansOfTransport: (pendingVacationPrefs?.transportModes || []).join(", ") || "Public Transit & Walking",
+          excludedPlaces: getRecentExcludedPlaces(currentPlan.destinationOrTown),
+          permanentSkips: getPermanentSkipNames(),
           userSpots: getMySpots(),
           tasteProfile: getTasteProfile() || undefined,
         }),
@@ -353,6 +391,56 @@ export default function App() {
     addToast("info", `Opened saved itinerary: "${trip.title}"`);
   };
 
+  // Reiterate Plan Handler (Completes empty slots starting from user-edited itinerary)
+  const handleReiteratePlan = async (instructions?: string) => {
+    if (!currentPlan) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/reiterate-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan: currentPlan,
+          instructions,
+          excludedPlaces: getRecentExcludedPlaces(currentPlan.destinationOrTown),
+          permanentSkips: getPermanentSkipNames(),
+          tasteProfile: getTasteProfile() || undefined,
+          userSpots: getMySpots(),
+          transportModes: pendingVacationPrefs?.transportModes || currentPlan.transportModes || [],
+          arrivalHour: pendingVacationPrefs?.arrivalHour || currentPlan.arrivalHour,
+          departureHour: pendingVacationPrefs?.departureHour || currentPlan.departureHour,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const newPlan: ItineraryPlan = await res.json();
+      setCurrentPlan(newPlan);
+      if (isTripSaved(newPlan.id)) {
+        saveTrip(newPlan);
+        setSavedTrips(getSavedTrips());
+      }
+      addToast("success", "Itinerary reiterated! Empty slots auto-filled while preserving your edits.");
+    } catch (err: any) {
+      console.error("Reiteration error:", err);
+      addToast("error", "Failed to reiterate itinerary. Keeping current edits.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Visited State Changed Handler
+  const handleVisitedChanged = (_activity: ActivitySpot, isVisited: boolean) => {
+    setHistoryCount(getActivityHistory().length);
+    if (isVisited) {
+      addToast("success", `Marked as visited! Saved to 30-Day Memory.`);
+    } else {
+      addToast("info", `Removed from 30-Day Memory.`);
+    }
+  };
+
   const isCurrentSaved = isTripSaved(currentPlan.id);
 
   return (
@@ -405,6 +493,8 @@ export default function App() {
             onSwapActivity={handleSwapActivity}
             onUpdatePlan={handleUpdatePlan}
             onSkipPermanently={handleSkipPermanently}
+            onReiteratePlan={handleReiteratePlan}
+            onVisitedChanged={handleVisitedChanged}
           />
         </section>
       </main>

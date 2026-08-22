@@ -4,6 +4,7 @@ import { DayCard } from "./DayCard";
 import { InteractiveMap } from "./InteractiveMap";
 import { EditActivityModal } from "./EditActivityModal";
 import { AddActivityModal } from "./AddActivityModal";
+import { ActivityDetailModal } from "./ActivityDetailModal";
 import {
   Bookmark,
   BookmarkCheck,
@@ -13,6 +14,9 @@ import {
   MapPin,
   Sun,
   Plus,
+  Wand2,
+  X,
+  Loader2,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { parseTimeToHours } from "../utils/time";
@@ -26,6 +30,8 @@ interface ItineraryDisplayProps {
   onUpdatePlan: (updatedPlan: ItineraryPlan) => void;
   onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   onRegenerateAll?: () => void;
+  onReiteratePlan?: (instructions?: string) => Promise<void>;
+  onVisitedChanged?: (activity: ActivitySpot, isVisited: boolean) => void;
 }
 
 export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
@@ -37,6 +43,8 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   onUpdatePlan,
   onSkipPermanently,
   onRegenerateAll,
+  onReiteratePlan,
+  onVisitedChanged,
 }) => {
   const [activeDayNumber, setActiveDayNumber] = useState<number | "all">("all");
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
@@ -44,6 +52,24 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   // Modals state
   const [editingActivity, setEditingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
   const [addingDayNumber, setAddingDayNumber] = useState<number | null>(null);
+  const [detailedActivity, setDetailedActivity] = useState<{ spot: ActivitySpot; dayNumber?: number } | null>(null);
+
+  // Reiteration modal state
+  const [showReiterateModal, setShowReiterateModal] = useState(false);
+  const [reiterateInstructions, setReiterateInstructions] = useState("");
+  const [isReiterating, setIsReiterating] = useState(false);
+
+  const handleConfirmReiterate = async () => {
+    if (!onReiteratePlan) return;
+    setIsReiterating(true);
+    try {
+      await onReiteratePlan(reiterateInstructions);
+      setShowReiterateModal(false);
+      setReiterateInstructions("");
+    } finally {
+      setIsReiterating(false);
+    }
+  };
 
   const handleSaveClick = () => {
     onSaveTrip();
@@ -348,6 +374,18 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               <span>Export / Share</span>
             </button>
 
+            {onReiteratePlan && (
+              <button
+                id="btn-reiterate-itinerary"
+                onClick={() => setShowReiterateModal(true)}
+                className="flex items-center space-x-1.5 px-4 py-2 rounded-full bg-[#f5f5f0] hover:bg-[#ecece4] text-[#2c2c24] font-serif italic text-xs sm:text-sm border border-[#5A5A40] transition-all shadow-2xs"
+                title="Complete empty slots while preserving your edited activities"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#5A5A40]" />
+                <span>Auto-Fill / Reiterate with AI</span>
+              </button>
+            )}
+
             <button
               id="btn-print-itinerary"
               onClick={() => window.print()}
@@ -438,6 +476,32 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         </div>
       )}
 
+      {/* Reiterative Auto-Fill Banner Callout */}
+      {onReiteratePlan && (
+        <div className="bg-[#f5f5f0] border border-[#d1d1ca] p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs sm:text-sm text-[#2c2c24] no-print shadow-2xs">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-full bg-[#5A5A40]/10 flex items-center justify-center shrink-0 text-[#5A5A40]">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="font-serif italic text-sm font-medium text-[#2c2c24]">
+                Customized your schedule?
+              </p>
+              <p className="text-xs text-[#6b6b5e]">
+                If you removed or retimed activities, the AI will keep all your choices and fill the open schedule slots with new local spots!
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowReiterateModal(true)}
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#5A5A40] text-white hover:bg-[#4a4a35] font-serif italic shrink-0 transition-colors shadow-2xs text-xs sm:text-sm"
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            <span>Auto-Fill Empty Slots</span>
+          </button>
+        </div>
+      )}
+
       {/* Daily Itinerary Cards */}
       <div className="space-y-4">
         {plan.days
@@ -457,6 +521,8 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               onDeleteDay={plan.days.length > 1 ? handleDeleteDay : undefined}
               onUpdateDayHeader={handleUpdateDayHeader}
               onSkipPermanently={onSkipPermanently}
+              onOpenDetails={(act, dNum) => setDetailedActivity({ spot: act, dayNumber: dNum })}
+              onVisitedChanged={onVisitedChanged}
               destinationOrTown={plan.destinationOrTown}
             />
           ))}
@@ -473,6 +539,16 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
           <span>Extend Trip (+ Add Day {plan.days.length + 1})</span>
         </button>
       </div>
+
+      {/* Deep Activity Details, Lore, Map & Chatbot Modal */}
+      {detailedActivity && (
+        <ActivityDetailModal
+          spot={detailedActivity.spot}
+          destination={plan.destinationOrTown}
+          dayNumber={detailedActivity.dayNumber}
+          onClose={() => setDetailedActivity(null)}
+        />
+      )}
 
       {/* Edit Activity Modal */}
       {editingActivity && (
@@ -494,6 +570,76 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
           onAdd={handleAddCustomActivity}
           baseCoordinates={plan.mapCenter}
         />
+      )}
+
+      {/* Reiterate / Auto-Fill Itinerary Modal */}
+      {showReiterateModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 no-print">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl border border-[#d1d1ca] space-y-4">
+            <div className="flex items-center justify-between border-b border-[#ecece4] pb-3">
+              <div className="flex items-center space-x-2 text-[#2c2c24]">
+                <div className="w-8 h-8 rounded-full bg-[#5A5A40]/10 flex items-center justify-center text-[#5A5A40]">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-xl italic font-medium">Reiterate & Auto-Fill Itinerary</h3>
+                  <p className="text-xs text-[#8a8a7e]">Complete schedule gaps starting from your edits</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowReiterateModal(false)}
+                className="p-1.5 text-[#8a8a7e] hover:text-[#2c2c24] rounded-full hover:bg-[#ecece4] transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs sm:text-sm text-[#6b6b5e] leading-relaxed">
+              The AI will analyze your customized schedule, <strong>preserve all of your kept activities and time modifications</strong>, and automatically fill remaining empty slots or schedule gaps with brand new local spots matching your pacing.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#8a8a7e] mb-1.5">
+                Optional Instructions for AI
+              </label>
+              <textarea
+                value={reiterateInstructions}
+                onChange={(e) => setReiterateInstructions(e.target.value)}
+                placeholder="e.g., 'Fill empty slots with seaside walks and seafood tapas', or 'Keep afternoon open on Day 2'..."
+                className="w-full p-3.5 text-xs sm:text-sm rounded-2xl border border-[#d1d1ca] bg-[#f5f5f0]/50 text-[#2c2c24] focus:outline-none focus:border-[#5A5A40] h-24 resize-none placeholder:text-[#a0a092]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-[#ecece4]">
+              <button
+                type="button"
+                onClick={() => setShowReiterateModal(false)}
+                disabled={isReiterating}
+                className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium text-[#6b6b5e] hover:text-[#2c2c24] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReiterate}
+                disabled={isReiterating}
+                className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#5A5A40] text-white font-serif italic text-sm hover:bg-[#4a4a35] disabled:opacity-50 transition-colors shadow-xs"
+              >
+                {isReiterating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Reiterating & Auto-Filling...</span>
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4" />
+                    <span>Fill Empty Slots with AI</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

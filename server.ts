@@ -6,10 +6,14 @@ import { createServer as createViteServer } from "vite";
 import {
   generateVacationItinerary,
   generateHometownItinerary,
+  reiterateItineraryPlan,
   swapActivitySpot,
   generateCandidateSpots,
+  fetchActivityDeepDetails,
+  chatWithActivityGuide,
 } from "./server/geminiService.js";
 import { geocodeSpot } from "./server/geocoder.js";
+import { getRealPhotosForSpot } from "./server/photoService.js";
 
 dotenv.config();
 
@@ -92,6 +96,101 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error swapping activity:", err);
       res.status(500).json({ error: err.message || "Failed to swap activity." });
+    }
+  });
+
+  // Reiterate / Refine Itinerary Starting from User's Edited Plan
+  app.post("/api/reiterate-plan", async (req, res) => {
+    try {
+      const {
+        plan,
+        instructions,
+        excludedPlaces,
+        permanentSkips,
+        tasteProfile,
+        userSpots,
+        transportModes,
+        arrivalHour,
+        departureHour,
+      } = req.body;
+      if (!plan || !plan.destinationOrTown || !plan.days) {
+        return res.status(400).json({ error: "Invalid plan provided for reiteration." });
+      }
+      const newPlan = await reiterateItineraryPlan(plan, instructions, {
+        excludedPlaces,
+        permanentSkips,
+        tasteProfile,
+        userSpots,
+        transportModes,
+        arrivalHour: arrivalHour || plan.arrivalHour,
+        departureHour: departureHour || plan.departureHour,
+      });
+      res.json(newPlan);
+    } catch (err: any) {
+      console.error("Error reiterating plan:", err);
+      res.status(500).json({ error: err.message || "Failed to reiterate itinerary." });
+    }
+  });
+
+  // Deep Activity Details, Historical Context, Anecdotes, & Sub-spots
+  app.post("/api/activity-details", async (req, res) => {
+    try {
+      const { spotName, destination, category, address, description, coordinates } = req.body;
+      if (!spotName || !destination) {
+        return res.status(400).json({ error: "spotName and destination are required" });
+      }
+      const details = await fetchActivityDeepDetails({
+        spotName,
+        destination,
+        category,
+        address,
+        description,
+        coordinates,
+      });
+      res.json(details);
+    } catch (err: any) {
+      console.error("Error fetching activity deep details:", err);
+      res.status(500).json({ error: err.message || "Failed to fetch activity details." });
+    }
+  });
+
+  // Dedicated Local Guide / Travel Agent AI Chatbot for a specific activity
+  app.post("/api/activity-chat", async (req, res) => {
+    try {
+      const { messages, spotContext } = req.body;
+      if (!messages || !spotContext || !spotContext.spotName) {
+        return res.status(400).json({ error: "messages and spotContext are required" });
+      }
+      const result = await chatWithActivityGuide({
+        messages,
+        spotContext,
+      });
+      res.json(result);
+    } catch (err: any) {
+      console.error("Error in activity chat:", err);
+      res.status(500).json({ error: err.message || "Failed to chat with local guide." });
+    }
+  });
+
+  // Real-world photo resolver using Wikimedia Commons & Wikipedia
+  app.get("/api/place-photos", async (req, res) => {
+    try {
+      const spotName = String(req.query.spotName || "").trim();
+      const destination = String(req.query.destination || "").trim();
+      const category = String(req.query.category || "").trim();
+      const lat = req.query.lat ? Number(req.query.lat) : undefined;
+      const lng = req.query.lng ? Number(req.query.lng) : undefined;
+
+      if (!spotName) {
+        return res.status(400).json({ error: "spotName is required" });
+      }
+
+      const coords = lat && lng && !isNaN(lat) && !isNaN(lng) ? { lat, lng } : undefined;
+      const photos = await getRealPhotosForSpot(spotName, destination, category, coords);
+      res.json({ photos });
+    } catch (err: any) {
+      console.error("Error resolving real place photos:", err);
+      res.status(500).json({ error: "Failed to resolve photos" });
     }
   });
 

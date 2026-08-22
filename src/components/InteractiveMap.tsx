@@ -98,10 +98,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
   // Sync center and zoom when destination changes
   useEffect(() => {
-    if (mapInstanceRef.current && plan.mapCenter) {
+    if (mapInstanceRef.current && plan.mapCenter && typeof plan.mapCenter.lat === "number" && typeof plan.mapCenter.lng === "number") {
       mapInstanceRef.current.setView([plan.mapCenter.lat, plan.mapCenter.lng], plan.mapZoom || 13);
     }
-  }, [plan.mapCenter, plan.mapZoom]);
+  }, [plan.mapCenter?.lat, plan.mapCenter?.lng, plan.mapZoom, plan.id, plan.destinationOrTown]);
 
   // Update Markers & Polylines whenever plan, activeDay, or selectedSpot changes
   useEffect(() => {
@@ -197,7 +197,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     // Fit map bounds to show all markers nicely — but ONLY when the plan or
     // the day filter actually changed. Re-fitting on every marker selection
     // would cancel the panTo() triggered by clicking a pin.
-    const fitKey = `${plan.id}|${activeDayNumber}`;
+    const fitKey = `${plan.id}|${plan.destinationOrTown}|${activeDayNumber}|${allLatLngs.length}`;
     if (allLatLngs.length > 0 && lastFitKeyRef.current !== fitKey) {
       lastFitKeyRef.current = fitKey;
       const bounds = L.latLngBounds(allLatLngs);

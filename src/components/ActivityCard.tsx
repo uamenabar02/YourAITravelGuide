@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ActivitySpot, ActivityCategory } from "../types";
 import {
   Clock,
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
 import { normalizeTimeSlot } from "../utils/time";
+import { getActivityHistory, recordActivityVisit, removeHistoryItem } from "../utils/storage";
 
 interface ActivityCardProps {
   activity: ActivitySpot;
@@ -35,6 +36,8 @@ interface ActivityCardProps {
   onMoveActivity: (dayNumber: number, fromIndex: number, toIndex: number) => void;
   onSelectAlternativeOption: (dayNumber: number, activityIndex: number, optionIndex: number) => void;
   onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
+  onOpenDetails?: (activity: ActivitySpot, dayNumber: number) => void;
+  onVisitedChanged?: (activity: ActivitySpot, isVisited: boolean) => void;
   destinationOrTown: string;
 }
 
@@ -64,13 +67,47 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   onMoveActivity,
   onSelectAlternativeOption,
   onSkipPermanently,
+  onOpenDetails,
+  onVisitedChanged,
   destinationOrTown,
 }) => {
   const [isSwapping, setIsSwapping] = useState(false);
-  const [isVisited, setIsVisited] = useState(false);
+  const [isVisited, setIsVisited] = useState(() => {
+    const history = getActivityHistory();
+    return history.some((h) => h.name.toLowerCase() === activity.name.toLowerCase());
+  });
   const [showOpinions, setShowOpinions] = useState(false);
 
+  useEffect(() => {
+    const history = getActivityHistory();
+    setIsVisited(history.some((h) => h.name.toLowerCase() === activity.name.toLowerCase()));
+  }, [activity.name]);
+
+  const handleToggleVisited = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isVisited) {
+      const history = getActivityHistory();
+      const matched = history.find((h) => h.name.toLowerCase() === activity.name.toLowerCase());
+      if (matched) {
+        removeHistoryItem(matched.id);
+      }
+      setIsVisited(false);
+      if (onVisitedChanged) onVisitedChanged(activity, false);
+    } else {
+      recordActivityVisit(activity, destinationOrTown);
+      setIsVisited(true);
+      if (onVisitedChanged) onVisitedChanged(activity, true);
+    }
+  };
+
   const categoryMeta = CATEGORY_META[activity.category] || CATEGORY_META.sightseeing;
+
+  const handleCardClick = () => {
+    onSelect(activity);
+    if (onOpenDetails) {
+      onOpenDetails(activity, dayNumber);
+    }
+  };
 
   const handleSwap = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -117,7 +154,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   return (
     <div
       id={`activity-card-${activity.id}`}
-      onClick={() => onSelect(activity)}
+      onClick={handleCardClick}
       className={`group relative bg-white rounded-2xl p-5 sm:p-6 border transition-all cursor-pointer ${
         isSelected
           ? "border-[#5A5A40] ring-1 ring-[#5A5A40] shadow-sm bg-[#ecece4]/20 border-l-4 border-l-[#5A5A40]"
@@ -306,7 +343,22 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 
       {/* Bottom Action Row */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#e5e5df] text-xs">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Deep Details & AI Guide Button */}
+          {onOpenDetails && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDetails(activity, dayNumber);
+              }}
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#ecece4] hover:bg-[#5A5A40] text-[#5A5A40] hover:text-white border border-[#d1d1ca] font-medium transition-all shadow-2xs group/detail"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] group-hover/detail:text-white transition-colors" />
+              <span>Details, Lore & Guide</span>
+            </button>
+          )}
+
           {/* Purchase Ticket / Booking Link (if available or paid activity) */}
           {resolvedTicketUrl && (
             <a
@@ -349,10 +401,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           {/* Mark Visited Toggle */}
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsVisited(!isVisited);
-            }}
+            onClick={handleToggleVisited}
             className={`flex items-center space-x-1 font-medium transition-colors ${
               isVisited ? "text-[#5A5A40] font-bold" : "text-[#8a8a7e] hover:text-[#2c2c24]"
             }`}

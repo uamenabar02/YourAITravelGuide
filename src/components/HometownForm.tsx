@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
-import { HometownPreferences, TimeAvailability, WeatherData } from "../types";
+import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle, Car, Bus, Bike } from "lucide-react";
+import { HometownPreferences, TimeAvailability, TransportMode, WeatherData } from "../types";
 import { fetchLiveWeather, reverseGeocode } from "../utils/weather";
 import { getRecentExcludedPlaces, getPermanentSkips, getPermanentSkipNames } from "../utils/storage";
 import { DestinationAdvisor } from "./DestinationAdvisor";
@@ -35,7 +35,18 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
   const [location, setLocation] = useState("Azpeitia, Spain");
   const [radiusKm, setRadiusKm] = useState<number>(10);
   const [timeAvailable, setTimeAvailable] = useState<TimeAvailability>("half-day");
+  const [transportModes, setTransportModes] = useState<TransportMode[]>(["public_transit"]);
   const [occasion, setOccasion] = useState("Solo Chill & Read");
+
+  const toggleTransportMode = (mode: TransportMode) => {
+    setTransportModes((prev) => {
+      if (prev.includes(mode)) {
+        if (prev.length === 1) return prev;
+        return prev.filter((m) => m !== mode);
+      }
+      return [...prev, mode];
+    });
+  };
   const [weatherCondition, setWeatherCondition] = useState("Sunny & Mild (22°C)");
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
@@ -95,6 +106,8 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
       location: location.trim(),
       radiusKm,
       timeAvailable,
+      transportMode: transportModes[0] || "public_transit",
+      transportModes,
       occasion,
       weatherCondition,
       currentTemp: liveWeatherData?.temperature,
