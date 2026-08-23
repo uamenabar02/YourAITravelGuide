@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Bookmark, History, MapPin, Plane, Share2, Utensils, ChefHat, Globe, CheckCircle, RefreshCw, WifiOff } from "lucide-react";
+import { Bookmark, History, MapPin, Plane, Share2, Utensils, ChefHat, Globe, CheckCircle, RefreshCw, WifiOff, User } from "lucide-react";
 import { AppMode } from "../types";
 import { useLanguage, Language } from "../context/LanguageContext";
 import { perfCache, SyncStatusState } from "../utils/performanceCache";
@@ -16,6 +16,7 @@ interface NavbarProps {
   onOpenTasteProfile?: () => void;
   hasTasteProfile?: boolean;
   onOpenExport?: () => void;
+  onOpenProfile?: () => void;
   hasActiveTrip: boolean;
 }
 
@@ -31,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenTasteProfile,
   hasTasteProfile = false,
   onOpenExport,
+  onOpenProfile,
   hasActiveTrip,
 }) => {
   const { language, setLanguage, t } = useLanguage();
@@ -45,16 +47,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#e5e5df] shadow-xs no-print">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-18">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-14 sm:h-18">
           {/* Logo and Brand */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-            <div className="w-9 h-9 rounded-xl bg-[#5A5A40] flex items-center justify-center text-white font-serif italic text-xl shadow-xs">
+          <div className="flex items-center space-x-2.5 sm:space-x-3 cursor-pointer w-full md:w-auto justify-center md:justify-start" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#5A5A40] flex items-center justify-center text-white font-serif italic text-lg sm:text-xl shadow-xs shrink-0">
               L
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-serif text-xl sm:text-2xl font-semibold tracking-tight italic text-[#2c2c24]">
+            <div className="min-w-0">
+              <div className="flex items-center space-x-2 justify-center md:justify-start">
+                <span className="font-serif text-lg sm:text-2xl font-semibold tracking-tight italic text-[#2c2c24] truncate">
                   {t("nav.brand", "LocalExplorer AI")}
                 </span>
                 {/* Sync status indicator badge */}
@@ -98,44 +100,46 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </span>
                 </div>
               </div>
-              <p className="text-[11px] text-[#8a8a7e] hidden sm:block font-medium uppercase tracking-wider">
+              <p className="text-[11px] text-[#8a8a7e] hidden lg:block font-medium uppercase tracking-wider">
                 {t("nav.subtitle", "Cultural Trip Planner & Hometown Guide")}
               </p>
             </div>
           </div>
 
-          {/* Mode Selector Center Switch */}
-          <div className="flex items-center bg-[#ecece4] p-1 rounded-full border border-[#d1d1ca]/50 shadow-inner shrink-0 h-9">
+          {/* Mode Selector Center Switch (Responsive) - Hidden on Mobile */}
+          <div className="hidden md:flex items-center bg-[#ecece4] p-0.5 sm:p-1 rounded-full border border-[#d1d1ca]/50 shadow-inner shrink-0 h-8 sm:h-9">
             <button
               id="nav-mode-vacation"
               onClick={() => onModeChange("vacation")}
-              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-1 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap h-7 sm:h-7.5 ${
+              className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-4 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap h-6.5 sm:h-7.5 ${
                 activeMode === "vacation"
                   ? "bg-white text-[#2c2c24] shadow-xs font-semibold"
                   : "text-[#5A5A40] hover:text-[#2c2c24]"
               }`}
             >
               <Plane className={`w-3.5 h-3.5 shrink-0 ${activeMode === "vacation" ? "text-[#5A5A40]" : ""}`} />
-              <span className="whitespace-nowrap">{t("nav.vacation", "Vacation Mode")}</span>
+              <span className="whitespace-nowrap hidden xs:inline sm:inline">{t("nav.vacation", "Vacation Mode")}</span>
+              <span className="whitespace-nowrap inline xs:hidden sm:hidden">{t("nav.vacationShort", "Vacation")}</span>
             </button>
             <button
               id="nav-mode-hometown"
               onClick={() => onModeChange("hometown")}
-              className={`flex items-center space-x-1.5 px-3 sm:px-4 py-1 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap h-7 sm:h-7.5 ${
+              className={`flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-4 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium transition-all duration-200 whitespace-nowrap h-6.5 sm:h-7.5 ${
                 activeMode === "hometown"
                   ? "bg-white text-[#2c2c24] shadow-xs font-semibold"
                   : "text-[#5A5A40] hover:text-[#2c2c24]"
               }`}
             >
               <MapPin className={`w-3.5 h-3.5 shrink-0 ${activeMode === "hometown" ? "text-[#5A5A40]" : ""}`} />
-              <span className="whitespace-nowrap">{t("nav.hometown", "Hometown Mode")}</span>
+              <span className="whitespace-nowrap hidden xs:inline sm:inline">{t("nav.hometown", "Hometown Mode")}</span>
+              <span className="whitespace-nowrap inline xs:hidden sm:hidden">{t("nav.hometownShort", "Hometown")}</span>
             </button>
           </div>
 
           {/* Right Action Icons & Language Toggle */}
-          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-            {/* Language Selector (EN | ES | EU) */}
-            <div className="flex items-center bg-[#f5f5f0] p-0.5 rounded-xl border border-[#d1d1ca] text-[11px] font-sans shrink-0">
+          <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
+            {/* Language Selector (EN | ES | EU) - Hidden on Mobile */}
+            <div className="hidden md:flex items-center bg-[#f5f5f0] p-0.5 rounded-xl border border-[#d1d1ca] text-[11px] font-sans shrink-0">
               {(["en", "es", "eu"] as Language[]).map((lang) => (
                 <button
                   key={lang}
@@ -159,13 +163,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               ))}
             </div>
 
-            {/* Taste Profile: how the user likes to eat & drink */}
+            {/* Desktop-only action triggers (handled by bottom bar on mobile) */}
             {onOpenTasteProfile && (
               <button
                 id="btn-taste-profile"
                 onClick={onOpenTasteProfile}
                 title={t("nav.tasteProfile", "Taste Profile")}
-                className="relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
+                className="hidden md:inline-flex relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
               >
                 <ChefHat className="w-4 h-4" />
                 {hasTasteProfile && (
@@ -180,7 +184,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 id="btn-my-spots"
                 onClick={onOpenMySpots}
                 title={t("nav.mySpots", "My Places")}
-                className="relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
+                className="hidden md:inline-flex relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
               >
                 <Utensils className="w-4 h-4" />
                 {mySpotsCount > 0 && (
@@ -196,7 +200,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="btn-history-modal"
               onClick={onOpenHistory}
               title={t("nav.history", "History")}
-              className="relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
+              className="hidden md:inline-flex relative p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/60 transition-colors shrink-0"
             >
               <History className="w-4 h-4" />
               {historyCount > 0 && (
@@ -211,16 +215,28 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="btn-saved-trips"
               onClick={onOpenSavedTrips}
               title={t("nav.savedTrips", "Saved Trips")}
-              className="relative flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[#2c2c24] hover:bg-[#ecece4] font-medium text-xs sm:text-sm transition-colors border border-[#d1d1ca] whitespace-nowrap shrink-0"
+              className="hidden md:flex relative items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-full text-[#2c2c24] hover:bg-[#ecece4] font-medium text-xs sm:text-sm transition-colors border border-[#d1d1ca] whitespace-nowrap shrink-0"
             >
               <Bookmark className="w-4 h-4 text-[#5A5A40] shrink-0" />
-              <span className="hidden md:inline font-sans">{t("nav.savedTrips", "Saved Trips")}</span>
+              <span className="font-sans">{t("nav.savedTrips", "Saved Trips")}</span>
               {savedTripsCount > 0 && (
                 <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#5A5A40] px-1 text-[10px] font-bold text-white">
                   {savedTripsCount}
                 </span>
               )}
             </button>
+
+            {/* User Profile Trigger - Hidden on mobile, accessed via bottom nav */}
+            {onOpenProfile && (
+              <button
+                id="btn-profile-nav"
+                onClick={onOpenProfile}
+                title={t("profile.title", "User Profile & Preferences")}
+                className="hidden md:flex relative p-1.5 sm:p-2 rounded-full text-[#5A5A40] hover:text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca]/80 transition-colors shrink-0 items-center justify-center"
+              >
+                <User className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Share / Export button if trip exists */}
             {hasActiveTrip && onOpenExport && (
@@ -239,4 +255,5 @@ export const Navbar: React.FC<NavbarProps> = ({
     </header>
   );
 };
+
 

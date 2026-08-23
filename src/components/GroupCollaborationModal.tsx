@@ -73,6 +73,7 @@ interface GroupCollaborationModalProps {
   isOpen: boolean;
   onClose: () => void;
   onShowToast?: (msg: string, type?: "success" | "info" | "error") => void;
+  isInline?: boolean;
 }
 
 const CATEGORY_ICONS: Record<ExpenseCategory, string> = {
@@ -89,6 +90,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
   isOpen,
   onClose,
   onShowToast,
+  isInline = false,
 }) => {
   const { t, formatCurrency } = useLanguage();
   const [collabState, setCollabState] = useState<GroupCollaborationState>(() =>
@@ -133,7 +135,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
   const [filterSearch, setFilterSearch] = useState("");
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen || isInline) {
       const state = getCollaborationState(plan.id, plan.destinationOrTown, plan.totalDays, plan.tags);
       setCollabState(state);
       const name = getCurrentUserName();
@@ -141,9 +143,9 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
       setExpPaidBy(name);
       setExpSplitBetween(state.members);
     }
-  }, [isOpen, plan.id, plan.destinationOrTown, plan.totalDays, plan.tags]);
+  }, [isOpen, isInline, plan.id, plan.destinationOrTown, plan.totalDays, plan.tags]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !isInline) return null;
 
   // --- Member management ---
   const handleSaveName = (e: React.FormEvent) => {
@@ -413,36 +415,35 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
     return true;
   });
 
-  return (
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in-20 select-none"
-      onClick={onClose}
+      className={`bg-white rounded-3xl w-full flex flex-col ${
+        isInline ? "" : "max-w-4xl max-h-[92vh] overflow-hidden shadow-2xl border border-[#e5e5df]"
+      }`}
+      onClick={(e) => e.stopPropagation()}
     >
-      <div
-        className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-hidden shadow-2xl border border-[#e5e5df] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Modal Header */}
-        <div className="p-5 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30]">
-          <div className="flex items-center space-x-3 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-[#5A5A40] flex items-center justify-center text-white shrink-0 shadow-xs">
-              <Users className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center space-x-2">
-                <h3 className="font-serif text-lg sm:text-xl font-bold italic text-white truncate">
-                  {t("collab.title", "Group Travel Hub & Collaboration")}
-                </h3>
-                <span className="text-[10px] font-sans font-semibold uppercase px-2.5 py-0.5 rounded-full bg-[#ecece4] text-[#2c2c24] shrink-0">
-                  {collabState.members.length} {t("collab.activeUser", "Travelers")}
-                </span>
-              </div>
-              <p className="text-xs text-[#d1d1ca] font-sans truncate">
-                {t("collab.subtitle", "Manage group access, day-by-day activity voting, luggage packing & Tricount expense splits")}
-              </p>
-            </div>
+      {/* Modal Header */}
+      <div className="p-5 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30] rounded-t-3xl">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-10 h-10 rounded-2xl bg-[#5A5A40] flex items-center justify-center text-white shrink-0 shadow-xs">
+            <Users className="w-5 h-5" />
           </div>
+          <div className="min-w-0">
+            <div className="flex items-center space-x-2">
+              <h3 className="font-serif text-lg sm:text-xl font-bold italic text-white truncate">
+                {t("collab.title", "Group Travel Hub & Collaboration")}
+              </h3>
+              <span className="text-[10px] font-sans font-semibold uppercase px-2.5 py-0.5 rounded-full bg-[#ecece4] text-[#2c2c24] shrink-0">
+                {collabState.members.length} {t("collab.activeUser", "Travelers")}
+              </span>
+            </div>
+            <p className="text-xs text-[#d1d1ca] font-sans truncate">
+              {t("collab.subtitle", "Manage group access, day-by-day activity voting, luggage packing & Tricount expense splits")}
+            </p>
+          </div>
+        </div>
 
+        {!isInline && (
           <button
             type="button"
             onClick={onClose}
@@ -450,7 +451,8 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        )}
+      </div>
 
         {/* Member Profile Quick-Bar & Share Link */}
         <div className="bg-[#f5f5f0] px-5 py-3 border-b border-[#e5e5df] flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -1621,19 +1623,33 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex items-center justify-between text-xs">
+        <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex items-center justify-between text-xs rounded-b-3xl">
           <span className="text-[#8a8a7e] font-sans">
             Group Data Auto-Saved for {plan.destinationOrTown}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-[#5A5A40] text-white font-serif italic hover:bg-[#4a4a35] transition-colors shadow-2xs"
-          >
-            Done
-          </button>
+          {!isInline && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2 rounded-xl bg-[#5A5A40] text-white font-serif italic hover:bg-[#4a4a35] transition-colors shadow-2xs"
+            >
+              Done
+            </button>
+          )}
         </div>
       </div>
+  );
+
+  if (isInline) {
+    return content;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in-20 select-none"
+      onClick={onClose}
+    >
+      {content}
     </div>
   );
 };

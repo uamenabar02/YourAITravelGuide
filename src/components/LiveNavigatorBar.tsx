@@ -56,7 +56,7 @@ export const LiveNavigatorBar: React.FC<LiveNavigatorBarProps> = ({
   };
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 no-print flex flex-col items-end">
+    <div className="hidden md:flex fixed bottom-5 right-5 z-40 no-print flex-col items-end">
       {/* Floating Toggle Button */}
       {!isOpen && (
         <button

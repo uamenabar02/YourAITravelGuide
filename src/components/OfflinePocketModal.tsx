@@ -29,6 +29,7 @@ interface OfflinePocketModalProps {
   isOpen: boolean;
   onClose: () => void;
   onShowToast?: (msg: string, type?: "success" | "info" | "error") => void;
+  isInline?: boolean;
 }
 
 export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
@@ -36,6 +37,7 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
   isOpen,
   onClose,
   onShowToast,
+  isInline = false,
 }) => {
   const { t } = useLanguage();
   const [isSaved, setIsSaved] = useState(false);
@@ -46,7 +48,7 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
   const [filterUnvisitedOnly, setFilterUnvisitedOnly] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen || isInline) {
       const saved = isPlanSavedOffline(plan.id);
       setIsSaved(saved);
       const offlineData = getOfflinePlanById(plan.id);
@@ -55,9 +57,9 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
         setCompletedIds(offlineData.completedActivityIds || []);
       }
     }
-  }, [isOpen, plan.id]);
+  }, [isOpen, isInline, plan.id]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !isInline) return null;
 
   const handleToggleSaveOffline = () => {
     if (isSaved) {
@@ -98,36 +100,35 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
     return !completedIds.includes(act.id);
   });
 
-  return (
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in-20 select-none"
-      onClick={onClose}
+      className={`bg-white rounded-3xl w-full flex flex-col ${
+        isInline ? "" : "max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl border border-[#e5e5df]"
+      }`}
+      onClick={(e) => e.stopPropagation()}
     >
-      <div
-        className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl border border-[#e5e5df] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-4 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30]">
-          <div className="flex items-center space-x-3 min-w-0">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#5A5A40] flex items-center justify-center text-white shrink-0 shadow-xs">
-              <Smartphone className="w-5 h-5" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center space-x-2">
-                <h3 className="font-serif text-base sm:text-xl font-bold italic text-white truncate">
-                  {t("pocket.title", "Offline Pocket Companion")}
-                </h3>
-                <span className="text-[10px] font-sans font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700 shrink-0 hidden sm:inline-block">
-                  {t("pocket.airplaneReady", "Airplane Mode Ready")}
-                </span>
-              </div>
-              <p className="text-xs text-[#d1d1ca] font-sans truncate">
-                {plan.destinationOrTown} • {plan.totalDays} {t("action.days", "Days")} • {t("pocket.zeroInternet", "Zero Internet Required")}
-              </p>
-            </div>
+      {/* Header */}
+      <div className="p-4 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30] rounded-t-3xl">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-[#5A5A40] flex items-center justify-center text-white shrink-0 shadow-xs">
+            <Smartphone className="w-5 h-5" />
           </div>
+          <div className="min-w-0">
+            <div className="flex items-center space-x-2">
+              <h3 className="font-serif text-base sm:text-xl font-bold italic text-white truncate">
+                {t("pocket.title", "Offline Pocket Companion")}
+              </h3>
+              <span className="text-[10px] font-sans font-semibold uppercase px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700 shrink-0 hidden sm:inline-block">
+                {t("pocket.airplaneReady", "Airplane Mode Ready")}
+              </span>
+            </div>
+            <p className="text-xs text-[#d1d1ca] font-sans truncate">
+              {plan.destinationOrTown} • {plan.totalDays} {t("action.days", "Days")} • {t("pocket.zeroInternet", "Zero Internet Required")}
+            </p>
+          </div>
+        </div>
 
+        {!isInline && (
           <button
             type="button"
             onClick={onClose}
@@ -135,7 +136,8 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        )}
+      </div>
 
         {/* Offline Cache Status Bar */}
         <div className="bg-[#f5f5f0] px-4 sm:px-5 py-3 border-b border-[#e5e5df] flex flex-wrap items-center justify-between gap-2.5 text-xs">
@@ -391,19 +393,33 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 sm:p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex items-center justify-between text-xs">
+        <div className="p-3 sm:p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex items-center justify-between text-xs rounded-b-3xl">
           <span className="text-[#8a8a7e] font-sans truncate">
             {t("pocket.readyOffline", { dest: plan.destinationOrTown })}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-[#5A5A40] text-white font-serif italic hover:bg-[#4a4a35] transition-colors shadow-2xs shrink-0 ml-2"
-          >
-            {t("action.done", "Done")}
-          </button>
+          {!isInline && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-[#5A5A40] text-white font-serif italic hover:bg-[#4a4a35] transition-colors shadow-2xs shrink-0 ml-2"
+            >
+              {t("action.done", "Done")}
+            </button>
+          )}
         </div>
       </div>
+  );
+
+  if (isInline) {
+    return content;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-in fade-in-20 select-none"
+      onClick={onClose}
+    >
+      {content}
     </div>
   );
 };

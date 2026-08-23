@@ -25,6 +25,7 @@ import {
   Users,
   Clock,
   CheckCircle2,
+  Compass,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { parseTimeToHours } from "../utils/time";
@@ -66,6 +67,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   const { t, formatCurrency, language } = useLanguage();
   const [activeDayNumber, setActiveDayNumber] = useState<number | "all">("all");
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
+  const [itinerarySubTab, setItinerarySubTab] = useState<"itinerary" | "group" | "offline">("itinerary");
 
   // Modals state
   const [editingActivity, setEditingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
@@ -326,8 +328,51 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
     <div className="space-y-6">
       {/* SCREEN-ONLY WRAPPER */}
       <div className="print:hidden space-y-6">
-        {/* Header Banner Card */}
-      <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#e5e5df] shadow-sm relative overflow-hidden space-y-6">
+        {/* Additional Segmented Sub-Navigation Menu for Itinerary (Sticky at top below navbar) */}
+        <div className="sticky top-14 sm:top-18 z-20 bg-[#f5f5f0]/95 backdrop-blur-md py-3 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 no-print border-b border-[#e5e5df]/50 transition-all">
+          <div className="bg-white p-1 rounded-2xl border border-[#e5e5df] max-w-lg mx-auto w-full flex shadow-2xs">
+            <button
+              onClick={() => setItinerarySubTab("itinerary")}
+              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+                itinerarySubTab === "itinerary"
+                  ? "bg-[#5A5A40] text-white shadow-xs font-bold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
+              }`}
+            >
+              <Compass className="w-4 h-4" />
+              <span>{t("nav.dailyPlan", "Daily Plan")}</span>
+            </button>
+            <button
+              id="nav-sub-group"
+              onClick={() => setItinerarySubTab("group")}
+              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+                itinerarySubTab === "group"
+                  ? "bg-[#5A5A40] text-white shadow-xs font-bold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>{t("action.groupHub", "Group Hub")}</span>
+            </button>
+            <button
+              id="nav-sub-offline"
+              onClick={() => setItinerarySubTab("offline")}
+              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+                itinerarySubTab === "offline"
+                  ? "bg-[#5A5A40] text-white shadow-xs font-bold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
+              }`}
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>{t("action.pocketGuide", "Offline Pocket")}</span>
+            </button>
+          </div>
+        </div>
+
+        {itinerarySubTab === "itinerary" && (
+          <>
+            {/* Header Banner Card */}
+            <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#e5e5df] shadow-sm relative overflow-hidden space-y-6">
         {/* Top Badges & Clean Visual Toolbar Row */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-5 border-b border-[#e5e5df]">
           {/* Metadata Badges */}
@@ -416,7 +461,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
             {/* Group Collaboration Hub */}
             <button
               id="btn-group-hub"
-              onClick={() => setShowCollabModal(true)}
+              onClick={() => setItinerarySubTab("group")}
               className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
               title="Group Hub: Manage travelers, day votes, personal packing & Tricount splits"
             >
@@ -441,7 +486,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
             {/* Offline Pocket Companion */}
             <button
               id="btn-offline-pocket"
-              onClick={() => setShowOfflineModal(true)}
+              onClick={() => setItinerarySubTab("offline")}
               className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
               title="Open Offline Pocket Companion & Standalone Guide"
             >
@@ -689,7 +734,33 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
           <span>Extend Trip (+ Add Day {plan.days.length + 1})</span>
         </button>
       </div>
-    </div> {/* END OF print:hidden SCREEN-ONLY WRAPPER */}
+          </>
+        )}
+
+        {itinerarySubTab === "group" && (
+          <div className="animate-in fade-in-20 duration-200">
+            <GroupCollaborationModal
+              plan={plan}
+              isOpen={false}
+              isInline={true}
+              onClose={() => setItinerarySubTab("itinerary")}
+              onShowToast={showToast}
+            />
+          </div>
+        )}
+
+        {itinerarySubTab === "offline" && (
+          <div className="animate-in fade-in-20 duration-200">
+            <OfflinePocketModal
+              plan={plan}
+              isOpen={false}
+              isInline={true}
+              onClose={() => setItinerarySubTab("itinerary")}
+              onShowToast={showToast}
+            />
+          </div>
+        )}
+      </div> {/* END OF print:hidden SCREEN-ONLY WRAPPER */}
 
     {/* -------------------- PROFESSIONAL TRAVEL ITINERARY REPORT (PRINT-ONLY) -------------------- */}
     <div className="print-only space-y-10 bg-white text-[#111111] p-1 select-none leading-relaxed">

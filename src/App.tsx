@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Navbar } from "./components/Navbar";
+import { BottomNav } from "./components/BottomNav";
 import { VacationForm } from "./components/VacationForm";
 import { HometownForm } from "./components/HometownForm";
 import { ItineraryDisplay } from "./components/ItineraryDisplay";
@@ -9,6 +10,7 @@ import { ExportModal } from "./components/ExportModal";
 import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
 import { MySpotsModal } from "./components/MySpotsModal";
 import { TasteProfileModal } from "./components/TasteProfileModal";
+import { UserProfileModal } from "./components/UserProfileModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
@@ -48,6 +50,7 @@ function AppContent() {
     return "vacation";
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [activeMobileTab, setActiveMobileTab] = useState<"form" | "itinerary">("form");
 
   // Modals and Drawers
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
@@ -57,6 +60,7 @@ function AppContent() {
   const [mySpotsCount, setMySpotsCount] = useState(0);
   const [isTasteProfileOpen, setIsTasteProfileOpen] = useState(false);
   const [hasTasteProfile, setHasTasteProfile] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   // Swiper Modal State
   const [isSwiperOpen, setIsSwiperOpen] = useState(false);
@@ -82,11 +86,13 @@ function AppContent() {
       setActiveMode(shared.mode);
       saveCurrentSessionPlan(shared);
       addToast("success", `Loaded shared itinerary for ${shared.destinationOrTown}!`);
+      setActiveMobileTab("itinerary");
     } else {
       const activeSession = getCurrentSessionPlan();
       if (activeSession) {
         setCurrentPlan(activeSession);
         setActiveMode(activeSession.mode);
+        setActiveMobileTab("itinerary");
       }
     }
   }, []);
@@ -223,6 +229,7 @@ function AppContent() {
         accommodation: newPlan.accommodation || finalPrefs.accommodation,
       };
       setCurrentPlan(planWithAccommodation);
+      setActiveMobileTab("itinerary");
       addToast("success", `Generated ${newPlan.totalDays}-day itinerary for ${newPlan.destinationOrTown}!`);
 
       // Smooth scroll to display
@@ -240,6 +247,7 @@ function AppContent() {
         title: `${prefs.duration}-Day ${prefs.destination} Travel Itinerary`,
         accommodation: prefs.accommodation,
       });
+      setActiveMobileTab("itinerary");
     } finally {
       setIsLoading(false);
     }
@@ -272,6 +280,7 @@ function AppContent() {
         accommodation: newPlan.accommodation || prefs.accommodation,
       };
       setCurrentPlan(planWithAccommodation);
+      setActiveMobileTab("itinerary");
       addToast("success", `Found local ${prefs.occasion} spots within ${prefs.radiusKm}km of ${prefs.location}!`);
 
       setTimeout(() => {
@@ -287,6 +296,7 @@ function AppContent() {
         title: `Local Explorer: ${prefs.occasion} in ${prefs.location}`,
         accommodation: prefs.accommodation,
       });
+      setActiveMobileTab("itinerary");
     } finally {
       setIsLoading(false);
     }
@@ -409,6 +419,7 @@ function AppContent() {
   const handleSelectSavedTrip = (trip: ItineraryPlan) => {
     setCurrentPlan(trip);
     setActiveMode(trip.mode);
+    setActiveMobileTab("itinerary");
     addToast("info", `Opened saved itinerary: "${trip.title}"`);
   };
 
@@ -464,8 +475,18 @@ function AppContent() {
 
   const isCurrentSaved = isTripSaved(currentPlan.id);
 
+  const handleScrollToForm = () => {
+    setActiveMobileTab("form");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleScrollToItinerary = () => {
+    setActiveMobileTab("itinerary");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
-    <div className="min-h-screen bg-[#f5f5f0] flex flex-col selection:bg-[#5A5A40] selection:text-white font-sans text-[#2c2c24]">
+    <div className="min-h-screen bg-[#f5f5f0] flex flex-col selection:bg-[#5A5A40] selection:text-white font-sans text-[#2c2c24] pb-16 md:pb-0">
       {/* Top Sticky Navigation */}
       <Navbar
         activeMode={activeMode}
@@ -486,13 +507,14 @@ function AppContent() {
         onOpenTasteProfile={() => setIsTasteProfileOpen(true)}
         hasTasteProfile={hasTasteProfile}
         onOpenExport={() => setIsExportModalOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
         hasActiveTrip={!!currentPlan}
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-6 sm:space-y-8">
         {/* Top Preference Form Section */}
-        <section className="no-print">
+        <section id="generator-form-section" className={`no-print scroll-mt-18 ${activeMobileTab === "form" ? "block" : "hidden md:block"}`}>
           {activeMode === "vacation" ? (
             <VacationForm onSubmit={handleVacationSubmit} isLoading={isLoading} />
           ) : (
@@ -505,7 +527,7 @@ function AppContent() {
         </section>
 
         {/* Results / Active Itinerary Section */}
-        <section id="itinerary-results-section" className="scroll-mt-20">
+        <section id="itinerary-results-section" className={`scroll-mt-18 ${activeMobileTab === "itinerary" ? "block" : "hidden md:block"}`}>
           <ItineraryDisplay
             plan={currentPlan}
             isSaved={isCurrentSaved}
@@ -521,7 +543,7 @@ function AppContent() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-[#e5e5df] py-8 text-center text-xs text-[#8a8a7e] no-print mt-14">
+      <footer className="bg-white border-t border-[#e5e5df] py-8 text-center text-xs text-[#8a8a7e] no-print mt-14 mb-12 md:mb-0">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-2.5">
             <Compass className="w-4 h-4 text-[#5A5A40]" />
@@ -538,9 +560,37 @@ function AppContent() {
             <button onClick={() => setIsSavedDrawerOpen(true)} className="hover:text-[#2c2c24] underline transition-colors">
               Saved Journeys ({savedTrips.length})
             </button>
+            <span>•</span>
+            <button onClick={() => setIsProfileOpen(true)} className="hover:text-[#2c2c24] underline transition-colors">
+              Profile & Settings
+            </button>
           </div>
         </div>
       </footer>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <BottomNav
+        activeMobileTab={activeMobileTab}
+        activeMode={activeMode}
+        onModeChange={(mode) => {
+          setActiveMode(mode);
+          setActiveMobileTab("form");
+          if (mode === "vacation" && currentPlan.mode !== "vacation") {
+            setCurrentPlan(SAMPLE_VACATION_PLAN);
+          } else if (mode === "hometown" && currentPlan.mode !== "hometown") {
+            setCurrentPlan(SAMPLE_HOMETOWN_PLAN);
+          }
+        }}
+        onScrollToForm={handleScrollToForm}
+        onScrollToItinerary={handleScrollToItinerary}
+        hasActiveTrip={!!currentPlan}
+        savedTripsCount={savedTrips.length}
+        onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
+        mySpotsCount={mySpotsCount}
+        onOpenMySpots={() => setIsMySpotsOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
+        hasTasteProfile={hasTasteProfile}
+      />
 
       {/* Drawers & Modals */}
       <SavedTripsDrawer
@@ -580,6 +630,32 @@ function AppContent() {
         onSaved={() => setHasTasteProfile(getTasteProfile() !== null)}
       />
 
+      {/* User Profile & Preferences Center */}
+      <UserProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        onOpenTasteProfile={() => setIsTasteProfileOpen(true)}
+        onOpenMySpots={() => setIsMySpotsOpen(true)}
+        onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
+        onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onDataChanged={() => {
+          setSavedTrips(getSavedTrips());
+          setHistoryCount(getActivityHistory().length);
+          setMySpotsCount(getMySpots().length);
+          setHasTasteProfile(getTasteProfile() !== null);
+        }}
+        activeMode={activeMode}
+        onModeChange={(mode) => {
+          setActiveMode(mode);
+          setActiveMobileTab("form");
+          if (mode === "vacation" && currentPlan.mode !== "vacation") {
+            setCurrentPlan(SAMPLE_VACATION_PLAN);
+          } else if (mode === "hometown" && currentPlan.mode !== "hometown") {
+            setCurrentPlan(SAMPLE_HOMETOWN_PLAN);
+          }
+        }}
+      />
+
       {/* Activity Discovery Swiper Modal */}
       {isSwiperOpen && (
         <ActivitySwiperModal
@@ -594,6 +670,7 @@ function AppContent() {
           onFinishSwiping={handleFinishSwiping}
         />
       )}
+
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>

@@ -593,8 +593,8 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
             </div>
           </div>
 
-          {/* Quick Party Size Presets */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {/* Quick Party Size Presets - Hidden on smartphone viewports */}
+          <div className="hidden sm:grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
               { size: 1, key: "vacation.solo", label: "Solo Traveler", icon: "👤" },
               { size: 2, key: "vacation.couple", label: "Couple (2)", icon: "👫" },
@@ -626,10 +626,13 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                 <Hotel className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <h4 className="text-xs font-semibold text-[#2c2c24] font-serif italic">
+                <h4 className="text-xs font-semibold text-[#2c2c24] font-serif italic block sm:hidden">
+                  Accomodation
+                </h4>
+                <h4 className="text-xs font-semibold text-[#2c2c24] font-serif italic hidden sm:block">
                   {t("vacation.accommodationTitle", "Booked Accommodation & Stay Context")}
                 </h4>
-                <p className="text-[11px] text-[#6b6b5e] font-sans truncate">
+                <p className="text-[11px] text-[#6b6b5e] font-sans truncate hidden sm:block">
                   {t("vacation.accommodationSubtitle", "Specify hotels, check-in and check-out days & times for single or multi-destination stays")}
                 </p>
               </div>
@@ -642,40 +645,50 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                   handleAddAccommodation();
                 }
               }}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-white text-[#5A5A40] hover:text-[#2c2c24] border border-[#d1d1ca] hover:border-[#5A5A40] rounded-xl text-xs font-medium font-serif italic shadow-2xs transition-colors shrink-0 whitespace-nowrap"
+              className="flex items-center justify-center p-2 sm:px-3.5 sm:py-2 bg-white text-[#5A5A40] hover:text-[#2c2c24] border border-[#d1d1ca] hover:border-[#5A5A40] rounded-xl text-xs font-medium font-serif italic shadow-2xs transition-colors shrink-0 whitespace-nowrap"
+              title={t("vacation.showAccommodation", "Show Accommodation Card")}
             >
-              <Eye className="w-3.5 h-3.5" />
-              <span>{t("vacation.showAccommodation", "Show Accommodation Card")}</span>
+              <span className="sm:hidden text-base">👁️</span>
+              <span className="hidden sm:inline-flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5" />
+                <span>{t("vacation.showAccommodation", "Show Accommodation Card")}</span>
+              </span>
             </button>
           </div>
         ) : (
           <div className="bg-[#f5f5f0] p-4 sm:p-5 rounded-2xl border border-[#e5e5df] space-y-4">
             <div className="flex items-center justify-between border-b border-[#e5e5df] pb-3">
-              <div>
+              <div className="min-w-0">
                 <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
-                  <Hotel className="w-4 h-4 text-[#5A5A40]" />
-                  {t("vacation.accommodationHeading", "Booked Accommodations & Stay Context")}
+                  <Hotel className="w-4 h-4 text-[#5A5A40] shrink-0" />
+                  <span className="block sm:hidden truncate">Accomodation</span>
+                  <span className="hidden sm:block truncate">{t("vacation.accommodationHeading", "Booked Accommodations & Stay Context")}</span>
                 </label>
-                <p className="text-xs text-[#6b6b5e] mt-0.5 font-sans">
+                <p className="text-xs text-[#6b6b5e] mt-0.5 font-sans hidden sm:block">
                   {t("vacation.accommodationSub", "Define daily start/end locations, check-in and check-out days & times")}
                 </p>
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => setHasAccommodation(false)}
-                  className="flex items-center space-x-1 text-[11px] text-[#6b6b5e] hover:text-[#2c2c24] font-serif italic px-2.5 py-1 rounded-lg border border-[#d1d1ca] bg-white transition-colors whitespace-nowrap"
+                  className="flex items-center justify-center p-2 sm:px-2.5 sm:py-1 rounded-lg border border-[#d1d1ca] bg-white text-[#6b6b5e] hover:text-[#2c2c24] font-serif italic transition-colors whitespace-nowrap"
+                  title={t("vacation.hideAccommodation", "Hide Accommodation Card")}
                 >
-                  <EyeOff className="w-3 h-3" />
-                  <span>{t("vacation.hideAccommodation", "Hide Accommodation Card")}</span>
+                  <span className="sm:hidden text-base">🙈</span>
+                  <span className="hidden sm:inline-flex items-center gap-1">
+                    <EyeOff className="w-3 h-3" />
+                    <span>{t("vacation.hideAccommodation", "Hide Accommodation Card")}</span>
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={handleAddAccommodation}
-                  className="flex items-center space-x-1 text-[11px] bg-[#5A5A40] text-white px-3 py-1 rounded-xl font-serif italic hover:bg-[#2c2c24] transition-colors whitespace-nowrap"
+                  className="flex items-center space-x-1 text-[11px] bg-[#5A5A40] text-white px-2.5 py-2 sm:px-3 sm:py-1 rounded-xl font-serif italic hover:bg-[#2c2c24] transition-colors whitespace-nowrap"
                 >
                   <Plus className="w-3 h-3" />
-                  <span>{t("vacation.addStay", "Add Another Stay")}</span>
+                  <span className="hidden sm:inline">{t("vacation.addStay", "Add Another Stay")}</span>
+                  <span className="sm:hidden">Stay</span>
                 </button>
               </div>
             </div>
@@ -868,7 +881,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
           <p className="text-xs text-[#6b6b5e] mb-3 font-sans">
             {t("vacation.transportDesc", "Select all transportation options available during your trip:")}
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
               {
                 mode: "public_transit" as TransportMode,
@@ -909,7 +922,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                   key={tItem.mode}
                   type="button"
                   onClick={() => toggleTransportMode(tItem.mode)}
-                  className={`p-3 rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                  className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
                     isSelected
                       ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xs"
                       : "bg-white text-[#2c2c24] border-[#d1d1ca] hover:border-[#5A5A40]"
@@ -920,7 +933,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                       {tItem.icon}
                     </span>
                     {isSelected && (
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse" />
                     )}
                   </div>
                   <div>
@@ -928,7 +941,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                       {t(tItem.keyLabel, tItem.label)}
                     </div>
                     <div
-                      className={`text-[10px] mt-0.5 font-sans ${
+                      className={`hidden sm:block text-[10px] mt-0.5 font-sans ${
                         isSelected ? "text-white/80" : "text-[#8a8a7e]"
                       }`}
                     >
@@ -1048,7 +1061,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                   {t("vacation.swiperInteractive", "Interactive")}
                 </span>
               </span>
-              <p className="text-xs text-[#6b6b5e] mt-0.5 font-sans">
+              <p className="hidden sm:block text-xs text-[#6b6b5e] mt-0.5 font-sans">
                 {t("vacation.swiperDesc", "Review & swipe right on candidate spots (with photos, Google Maps opinions & links) before building the final itinerary.")}
               </p>
             </div>
@@ -1098,7 +1111,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
 
           {/* Conditional Rendering: Tier vs Exact */}
           {budgetType === "tier" ? (
-            <div className="grid grid-cols-3 gap-2.5 pt-1">
+            <div className="grid grid-cols-3 gap-2 sm:gap-2.5 pt-1">
               {[
                 { id: "budget", key: "vacation.budgetSavvy", label: "Budget-Savvy", keyDesc: "vacation.budgetSavvyDesc", desc: "Street food & free vistas" },
                 { id: "mid-range", key: "vacation.budgetMid", label: "Balanced", keyDesc: "vacation.budgetMidDesc", desc: "Cozy bistros & iconic spots" },
@@ -1108,14 +1121,14 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
                   key={tier.id}
                   type="button"
                   onClick={() => setBudgetTier(tier.id as BudgetTier)}
-                  className={`p-3 rounded-xl border text-left transition-all ${
+                  className={`p-2.5 sm:p-3 rounded-xl border text-left transition-all ${
                     budgetTier === tier.id
                       ? "bg-[#ecece4] text-[#2c2c24] border-[#5A5A40] font-medium shadow-xs"
                       : "bg-white text-[#6b6b5e] border-[#d1d1ca] hover:border-[#8a8a7e]"
                   }`}
                 >
                   <div className="font-serif italic text-xs text-[#2c2c24]">{t(tier.key, tier.label)}</div>
-                  <div className="text-[10px] text-[#8a8a7e] mt-0.5 line-clamp-1">{t(tier.keyDesc, tier.desc)}</div>
+                  <div className="hidden sm:block text-[10px] text-[#8a8a7e] mt-0.5 line-clamp-1">{t(tier.keyDesc, tier.desc)}</div>
                 </button>
               ))}
             </div>
