@@ -33,6 +33,7 @@ import {
   Clock,
   Layers,
   PieChart,
+  Luggage,
   Shield,
   Key,
   Copy,
@@ -415,6 +416,45 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
     return true;
   });
 
+  // Mobile tab definitions: short labels + at-a-glance counts so every
+  // sub-section is visible at once on small screens (no horizontal scroll).
+  const collabTabDefs: {
+    id: "votes" | "packing" | "expenses" | "members";
+    icon: React.ComponentType<{ className?: string }>;
+    shortKey: string;
+    shortLabel: string;
+    badge: string | null;
+  }[] = [
+    {
+      id: "votes",
+      icon: ThumbsUp,
+      shortKey: "collab.tabShort.votes",
+      shortLabel: "Votes",
+      badge: String(plan.totalDays),
+    },
+    {
+      id: "packing",
+      icon: Luggage,
+      shortKey: "collab.tabShort.packing",
+      shortLabel: "Packing",
+      badge: totalPackingCount > 0 ? `${userPackedCount}/${totalPackingCount}` : null,
+    },
+    {
+      id: "expenses",
+      icon: Receipt,
+      shortKey: "collab.tabShort.expenses",
+      shortLabel: "Expenses",
+      badge: collabState.expenses.length > 0 ? String(collabState.expenses.length) : null,
+    },
+    {
+      id: "members",
+      icon: Shield,
+      shortKey: "collab.tabShort.members",
+      shortLabel: "Members",
+      badge: String(collabState.members.length),
+    },
+  ];
+
   const content = (
     <div
       className={`bg-white rounded-3xl w-full flex flex-col ${
@@ -423,7 +463,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
       onClick={(e) => e.stopPropagation()}
     >
       {/* Modal Header */}
-      <div className="p-5 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30] rounded-t-3xl">
+      <div className="p-4 sm:p-6 bg-[#2c2c24] text-white flex items-center justify-between border-b border-[#3a3a30] rounded-t-3xl">
         <div className="flex items-center space-x-3 min-w-0">
           <div className="w-10 h-10 rounded-2xl bg-[#5A5A40] flex items-center justify-center text-white shrink-0 shadow-xs">
             <Users className="w-5 h-5" />
@@ -437,7 +477,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
                 {collabState.members.length} {t("collab.activeUser", "Travelers")}
               </span>
             </div>
-            <p className="text-xs text-[#d1d1ca] font-sans truncate">
+            <p className="text-xs text-[#d1d1ca] font-sans truncate hidden sm:block">
               {t("collab.subtitle", "Manage group access, day-by-day activity voting, luggage packing & Tricount expense splits")}
             </p>
           </div>
@@ -493,8 +533,8 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
               )}
             </div>
 
-            {/* Quick Add Friend to Group */}
-            <form onSubmit={handleAddMember} className="flex items-center space-x-1.5">
+            {/* Quick Add Friend to Group (desktop only; mobile uses the icon action below → Members tab) */}
+            <form onSubmit={handleAddMember} className="hidden sm:flex items-center space-x-1.5">
               <input
                 type="text"
                 placeholder={t("collab.addMember", "+ Add traveler...")}
@@ -513,10 +553,30 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
           </div>
 
           <div className="flex items-center space-x-2">
+            {/* Mobile-only compact actions: jump to Members tab (full add-traveler form) & copy invite link */}
+            <button
+              type="button"
+              onClick={() => setActiveTab("members")}
+              title={t("collab.addMember", "Add Traveler")}
+              aria-label={t("collab.addMember", "Add Traveler")}
+              className="sm:hidden flex items-center px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] transition-colors shadow-2xs"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+            </button>
             <button
               type="button"
               onClick={handleCopyShareLink}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca] font-serif italic text-xs transition-colors shadow-2xs"
+              title={t("action.copyLink", "Copy Invite Link")}
+              aria-label={t("action.copyLink", "Copy Invite Link")}
+              className="sm:hidden flex items-center px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] transition-colors shadow-2xs"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+            </button>
+            {/* Desktop: full text button */}
+            <button
+              type="button"
+              onClick={handleCopyShareLink}
+              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca] font-serif italic text-xs transition-colors shadow-2xs"
             >
               <Share2 className="w-3.5 h-3.5 text-[#5A5A40]" />
               <span>{t("action.copyLink", "Copy Invite Link")}</span>
@@ -524,8 +584,49 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex items-center px-5 pt-3 border-b border-[#e5e5df] space-x-4 text-xs font-serif italic overflow-x-auto">
+        {/* Tab Navigation — Mobile: all 4 tabs visible at once as an icon grid (BottomNav idiom, no horizontal scroll) */}
+        <div className="sm:hidden grid grid-cols-4 gap-1 px-3 pt-3 pb-2">
+          {collabTabDefs.map((tab) => {
+            const TabIcon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={isActive}
+                className={`relative flex flex-col items-center justify-center rounded-xl border px-1 py-2 min-h-[54px] transition-all active:scale-95 ${
+                  isActive
+                    ? "bg-white border-[#5A5A40] shadow-2xs"
+                    : "bg-[#f5f5f0] border-[#e5e5df]"
+                }`}
+              >
+                <span
+                  className={`relative p-1.5 rounded-lg border ${
+                    isActive ? "bg-[#5A5A40] border-[#5A5A40]" : "bg-white border-[#e5e5df]"
+                  }`}
+                >
+                  <TabIcon className={`w-4 h-4 ${isActive ? "text-white" : "text-[#5A5A40]"}`} />
+                  {tab.badge !== null && (
+                    <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[#5A5A40] px-0.5 text-[9px] font-bold text-white">
+                      {tab.badge}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`text-[10px] font-semibold tracking-tight mt-1 truncate max-w-full ${
+                    isActive ? "text-[#2c2c24]" : "text-[#6b6b5e]"
+                  }`}
+                >
+                  {t(tab.shortKey, tab.shortLabel)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Tab Navigation — Desktop (unchanged) */}
+        <div className="hidden sm:flex items-center px-5 pt-3 border-b border-[#e5e5df] space-x-4 text-xs font-serif italic overflow-x-auto">
           <button
             onClick={() => setActiveTab("votes")}
             className={`pb-2.5 border-b-2 font-medium transition-all shrink-0 ${
@@ -636,7 +737,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
                         return (
                           <div
                             key={act.id || actIdx}
-                            className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#fafaf7] transition-colors"
+                            className="p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#fafaf7] transition-colors"
                           >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center space-x-2">
@@ -695,7 +796,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
                               <button
                                 type="button"
                                 onClick={() => handleVoteInModal(act.id, "heart")}
-                                className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
+                                className={`flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
                                   hasHearted
                                     ? "bg-rose-50 border-rose-300 text-rose-700 font-bold shadow-2xs"
                                     : "bg-white border-[#d1d1ca] text-[#6b6b5e] hover:border-rose-300 hover:text-rose-600"
@@ -713,7 +814,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
                               <button
                                 type="button"
                                 onClick={() => handleVoteInModal(act.id, "up")}
-                                className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
+                                className={`flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
                                   hasLiked
                                     ? "bg-emerald-50 border-emerald-300 text-emerald-700 font-bold shadow-2xs"
                                     : "bg-white border-[#d1d1ca] text-[#6b6b5e] hover:border-emerald-300 hover:text-emerald-600"
@@ -731,7 +832,7 @@ export const GroupCollaborationModal: React.FC<GroupCollaborationModalProps> = (
                               <button
                                 type="button"
                                 onClick={() => handleVoteInModal(act.id, "down")}
-                                className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
+                                className={`flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-serif italic border transition-all ${
                                   hasDisliked
                                     ? "bg-amber-50 border-amber-300 text-amber-800 font-bold shadow-2xs"
                                     : "bg-white border-[#d1d1ca] text-[#6b6b5e] hover:border-amber-300 hover:text-amber-700"

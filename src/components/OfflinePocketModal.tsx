@@ -12,6 +12,9 @@ import {
   FileText,
   AlertTriangle,
   Sparkles,
+  ListChecks,
+  StickyNote,
+  Siren,
 } from "lucide-react";
 import {
   isPlanSavedOffline,
@@ -100,6 +103,34 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
     return !completedIds.includes(act.id);
   });
 
+  // Mobile tab definitions: short labels so all 3 tabs are visible at once
+  // on small screens (no horizontal scroll to discover them).
+  const pocketTabDefs: {
+    id: "viewer" | "notes" | "emergency";
+    icon: React.ComponentType<{ className?: string }>;
+    shortKey: string;
+    shortLabel: string;
+  }[] = [
+    {
+      id: "viewer",
+      icon: ListChecks,
+      shortKey: "pocket.tabShort.checklist",
+      shortLabel: "Checklist",
+    },
+    {
+      id: "notes",
+      icon: StickyNote,
+      shortKey: "pocket.tabShort.notes",
+      shortLabel: "Notes",
+    },
+    {
+      id: "emergency",
+      icon: Siren,
+      shortKey: "pocket.tabShort.emergency",
+      shortLabel: "Emergency",
+    },
+  ];
+
   const content = (
     <div
       className={`bg-white rounded-3xl w-full flex flex-col ${
@@ -140,7 +171,7 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
       </div>
 
         {/* Offline Cache Status Bar */}
-        <div className="bg-[#f5f5f0] px-4 sm:px-5 py-3 border-b border-[#e5e5df] flex flex-wrap items-center justify-between gap-2.5 text-xs">
+        <div className="bg-[#f5f5f0] px-4 sm:px-5 py-3 border-b border-[#e5e5df] flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2.5 text-xs">
           <div className="flex items-center space-x-2 min-w-0">
             <span
               className={`w-2.5 h-2.5 rounded-full shrink-0 ${
@@ -155,7 +186,38 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-2 ml-auto shrink-0">
+          {/* Mobile: visited progress line + the two key actions side by side (always visible, no ragged wrap) */}
+          <div className="sm:hidden flex flex-col gap-2 w-full">
+            <span className="text-[#8a8a7e] text-[11px]">
+              {t("pocket.visitedCount", { count: completedCount, total: totalActivities, percent: progressPercent })}
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleToggleSaveOffline}
+                className={`flex items-center justify-center px-2 py-2 rounded-xl text-xs font-serif italic border transition-all ${
+                  isSaved
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100"
+                    : "bg-[#5A5A40] text-white border-[#5A5A40] hover:bg-[#4a4a35]"
+                }`}
+              >
+                {isSaved ? t("pocket.cachedBtn", "✓ Cached Offline") : t("pocket.cacheBtnShort", "💾 Cache Trip")}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadOfflineHTML}
+                title="Download a self-contained offline HTML file that opens anywhere"
+                className="flex items-center justify-center space-x-1.5 px-2 py-2 rounded-xl bg-white text-[#2c2c24] hover:bg-[#ecece4] border border-[#d1d1ca] font-serif italic text-xs transition-colors shadow-2xs"
+              >
+                <Download className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
+                <span>{t("pocket.downloadShort", "Download HTML")}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Desktop: unchanged action row */}
+          <div className="hidden sm:flex items-center space-x-2 ml-auto shrink-0">
             <button
               type="button"
               onClick={handleToggleSaveOffline}
@@ -180,8 +242,44 @@ export const OfflinePocketModal: React.FC<OfflinePocketModalProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex items-center px-4 sm:px-5 pt-3 border-b border-[#e5e5df] space-x-3 sm:space-x-4 text-xs font-serif italic overflow-x-auto pb-1 sm:pb-0">
+        {/* Navigation Tabs — Mobile: all 3 tabs visible at once as an icon row (BottomNav idiom, no horizontal scroll) */}
+        <div className="sm:hidden grid grid-cols-3 gap-1 px-3 pt-3 pb-2">
+          {pocketTabDefs.map((tab) => {
+            const TabIcon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={isActive}
+                className={`relative flex flex-col items-center justify-center rounded-xl border px-1 py-2 min-h-[54px] transition-all active:scale-95 ${
+                  isActive
+                    ? "bg-white border-[#5A5A40] shadow-2xs"
+                    : "bg-[#f5f5f0] border-[#e5e5df]"
+                }`}
+              >
+                <span
+                  className={`p-1.5 rounded-lg border ${
+                    isActive ? "bg-[#5A5A40] border-[#5A5A40]" : "bg-white border-[#e5e5df]"
+                  }`}
+                >
+                  <TabIcon className={`w-4 h-4 ${isActive ? "text-white" : "text-[#5A5A40]"}`} />
+                </span>
+                <span
+                  className={`text-[10px] font-semibold tracking-tight mt-1 truncate max-w-full ${
+                    isActive ? "text-[#2c2c24]" : "text-[#6b6b5e]"
+                  }`}
+                >
+                  {t(tab.shortKey, tab.shortLabel)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Navigation Tabs — Desktop (unchanged) */}
+        <div className="hidden sm:flex items-center px-4 sm:px-5 pt-3 border-b border-[#e5e5df] space-x-3 sm:space-x-4 text-xs font-serif italic overflow-x-auto">
           <button
             onClick={() => setActiveTab("viewer")}
             className={`pb-2.5 border-b-2 font-medium transition-all shrink-0 whitespace-nowrap ${
