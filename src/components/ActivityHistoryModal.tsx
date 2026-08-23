@@ -8,6 +8,7 @@ import {
 } from "../utils/storage";
 import { ActivityHistoryItem, PermanentSkip } from "../types";
 import { X, History, Trash2, ShieldCheck, MapPin, Clock, Ban } from "lucide-react";
+import { useLanguage } from "../context/LanguageContext";
 
 interface ActivityHistoryModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
   onClose,
   onHistoryUpdated,
 }) => {
+  const { t } = useLanguage();
   const [items, setItems] = useState<ActivityHistoryItem[]>([]);
   const [skips, setSkips] = useState<PermanentSkip[]>([]);
   const [activeTab, setActiveTab] = useState<"recent" | "permanent">("recent");
@@ -45,7 +47,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
   };
 
   const handleClearAll = () => {
-    if (window.confirm("Clear all 30-day activity history? The app will reset the anti-repeat memory filter.")) {
+    if (window.confirm(t("history.clearConfirm", "Clear all 30-day activity history? The app will reset the anti-repeat memory filter."))) {
       clearActivityHistory();
       setItems([]);
       onHistoryUpdated();
@@ -63,10 +65,10 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             </div>
             <div>
               <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">
-                Memory & Exclusions
+                {t("history.title", "Memory & Exclusions")}
               </h3>
               <p className="text-xs text-[#8a8a7e] font-sans">
-                What LocalExplorer AI remembers — and what it must never suggest again
+                {t("history.subtitle", "What LocalExplorer AI remembers — and what it must never suggest again")}
               </p>
             </div>
           </div>
@@ -91,7 +93,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              <span>30-Day Memory ({items.length})</span>
+              <span>{t("history.tabMemory", "30-Day Memory ({count})").replace("{count}", items.length.toString())}</span>
             </button>
             <button
               type="button"
@@ -103,7 +105,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
               }`}
             >
               <Ban className="w-3.5 h-3.5" />
-              <span>Permanent Skips ({skips.length})</span>
+              <span>{t("history.tabSkips", "Permanent Skips ({count})").replace("{count}", skips.length.toString())}</span>
             </button>
           </div>
         </div>
@@ -115,7 +117,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-4 border border-[#d1d1ca] rounded-2xl flex items-start space-x-2.5 text-xs text-[#2c2c24]">
               <ShieldCheck className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                To keep your adventures fresh, LocalExplorer AI remembers suggested spots and hides them for 30 days. Remove individual spots below if you'd like them re-suggested sooner.
+                {t("history.memoryDesc", "To keep your adventures fresh, LocalExplorer AI remembers suggested spots and hides them for 30 days. Remove individual spots below if you'd like them re-suggested sooner.")}
               </div>
             </div>
 
@@ -124,9 +126,9 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
               {items.length === 0 ? (
                 <div className="text-center py-12">
                   <History className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
-                  <p className="font-serif text-base italic text-[#2c2c24]">No activity history yet</p>
+                  <p className="font-serif text-base italic text-[#2c2c24]">{t("history.noHistory", "No activity history yet")}</p>
                   <p className="text-xs text-[#8a8a7e] mt-0.5">
-                    As you explore local itineraries, suggested spots are logged here.
+                    {t("history.noHistorySub", "As you explore local itineraries, suggested spots are logged here.")}
                   </p>
                 </div>
               ) : (
@@ -151,7 +153,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
                           <span>•</span>
                           <span className="flex items-center gap-0.5">
                             <Clock className="w-3 h-3 text-[#8a8a7e]" />
-                            {daysAgo === 0 ? "Today" : `${daysAgo}d ago`}
+                            {daysAgo === 0 ? t("history.today", "Today") : t("history.daysAgo", "{days}d ago").replace("{days}", daysAgo.toString())}
                           </span>
                         </div>
                       </div>
@@ -172,12 +174,12 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             {/* Footer */}
             {items.length > 0 && (
               <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
-                <span className="text-[#8a8a7e] font-serif italic">{items.length} spots tracked</span>
+                <span className="text-[#8a8a7e] font-serif italic">{t("history.spotsTracked", "{count} spots tracked").replace("{count}", items.length.toString())}</span>
                 <button
                   onClick={handleClearAll}
                   className="text-rose-700 hover:text-rose-900 font-medium px-3 py-1 rounded-full hover:bg-rose-50 transition-colors"
                 >
-                  Reset Memory (Clear All)
+                  {t("history.resetMemory", "Reset Memory (Clear All)")}
                 </button>
               </div>
             )}
@@ -191,7 +193,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-4 border border-[#d1d1ca] rounded-2xl flex items-start space-x-2.5 text-xs text-[#2c2c24]">
               <Ban className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                Places you never want suggested again — anywhere, ever. Add to this list with the <Ban className="w-3 h-3 inline text-[#5A5A40]" /> button on any activity, or remove entries below to allow them back.
+                {t("history.skipsDesc", "Places you never want suggested again — anywhere, ever. Add to this list with the Ban button on any activity, or remove entries below to allow them back.")}
               </div>
             </div>
 
@@ -200,9 +202,9 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
               {skips.length === 0 ? (
                 <div className="text-center py-12">
                   <Ban className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
-                  <p className="font-serif text-base italic text-[#2c2c24]">No permanent exclusions</p>
+                  <p className="font-serif text-base italic text-[#2c2c24]">{t("history.noSkips", "No permanent exclusions")}</p>
                   <p className="text-xs text-[#8a8a7e] mt-0.5 max-w-xs mx-auto">
-                    Use the Ban button on any activity card ("never suggest again") and it will be excluded from every future plan.
+                    {t("history.noSkipsSub", "Use the Ban button on any activity card (\"never suggest again\") and it will be excluded from every future plan.")}
                   </p>
                 </div>
               ) : (
@@ -216,12 +218,12 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
                       <div className="flex items-center space-x-2 text-[11px] text-[#8a8a7e] mt-0.5">
                         <span className="flex items-center gap-0.5">
                           <Ban className="w-3 h-3 text-rose-400" />
-                          <span>Excluded forever</span>
+                          <span>{t("history.excluded", "Excluded forever")}</span>
                         </span>
                         <span>•</span>
                         <span className="flex items-center gap-0.5">
                           <Clock className="w-3 h-3 text-[#8a8a7e]" />
-                          added {new Date(skip.addedAt).toLocaleDateString()}
+                          {t("history.addedOn", "added {date}").replace("{date}", new Date(skip.addedAt).toLocaleDateString())}
                         </span>
                       </div>
                     </div>
@@ -242,7 +244,7 @@ export const ActivityHistoryModal: React.FC<ActivityHistoryModalProps> = ({
             {skips.length > 0 && (
               <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
                 <span className="text-[#8a8a7e] font-serif italic">
-                  {skips.length} places permanently excluded
+                  {t("history.skipsCount", "{count} places permanently excluded").replace("{count}", skips.length.toString())}
                 </span>
               </div>
             )}

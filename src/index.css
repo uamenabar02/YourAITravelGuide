@@ -126,23 +126,74 @@
 }
 
 /* Print styling for PDF export */
+.print-only {
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+  width: 800px !important;
+  height: auto !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.print-map-container {
+  position: relative !important;
+  width: 100% !important;
+  height: 180px !important;
+  display: block !important;
+  margin-top: 8px !important;
+  margin-bottom: 12px !important;
+  border: 1px solid #d1d1ca !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  background-color: #f5f5f0 !important;
+}
+
 @media print {
+  @page {
+    size: portrait;
+    margin: 1.5cm;
+  }
+
   body {
     background-color: #ffffff !important;
-    color: #2c2c24 !important;
-    font-size: 12pt;
+    background: #ffffff !important;
+    color: #111111 !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
   }
+
+  .print-map-container {
+    position: relative !important;
+    width: 100% !important;
+    height: 180px !important;
+    display: block !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: hidden !important;
+  }
+
   .print-page-break {
-    page-break-inside: avoid;
-    break-inside: avoid;
-    margin-bottom: 24px;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
+
   .itinerary-card {
     box-shadow: none !important;
     border: 1px solid #d1d1ca !important;

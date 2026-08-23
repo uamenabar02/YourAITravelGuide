@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { X, Plus, Trash2, MapPin, Utensils, Coffee, Wine, Star, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { UserSpot } from "../types";
 import { getMySpots, addMySpot, removeMySpot } from "../utils/storage";
+import { useLanguage } from "../context/LanguageContext";
 
 interface MySpotsModalProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ const CATEGORY_META: Record<UserSpot["category"], { label: string; Icon: any }> 
 };
 
 export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, defaultTown = "" }) => {
+  const { t } = useLanguage();
   const [spots, setSpots] = useState<UserSpot[]>([]);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<UserSpot["category"]>("cafe");
@@ -74,18 +76,22 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
     setIsSaving(false);
     setStatus(
       geocoded
-        ? { type: "ok", message: "Added and located on the map." }
+        ? { type: "ok", message: t("spots.addSuccess", "Added and located on the map.") }
         : {
             type: "warn",
-            message:
-              "Added, but could not locate it right now. It will be geocoded again when it gets recommended.",
+            message: t(
+              "spots.addWarn",
+              "Added, but could not locate it right now. It will be geocoded again when it gets recommended."
+            ),
           }
     );
   };
 
   const handleRemove = (id: string) => {
-    removeMySpot(id);
-    setSpots(getMySpots());
+    if (window.confirm(t("spots.deleteConfirm", "Delete this place?"))) {
+      removeMySpot(id);
+      setSpots(getMySpots());
+    }
   };
 
   return (
@@ -98,9 +104,9 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
               <Utensils className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">My Places</h3>
+              <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">{t("spots.title", "My Places")}</h3>
               <p className="text-xs text-[#8a8a7e] font-sans">
-                Your own bars, cafés & restaurants — the only source for dining recommendations
+                {t("spots.subtitle", "Your own bars, cafés & restaurants — the only source for dining recommendations")}
               </p>
             </div>
           </div>
@@ -114,9 +120,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
 
         {/* Why this exists */}
         <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-3.5 border border-[#d1d1ca] rounded-2xl text-xs text-[#2c2c24] leading-relaxed">
-          LocalExplorer never invents bars, cafés or restaurants from a built-in list. Dining
-          suggestions come from <strong>places you add here</strong> or from live AI search —
-          everything is located dynamically on the map.
+          {t("spots.explanation", "LocalExplorer never invents bars, cafés or restaurants from a built-in list. Dining suggestions come from places you add here or from live AI search — everything is located dynamically on the map.")}
         </div>
 
         {/* Add form */}
@@ -124,30 +128,30 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 sm:col-span-1">
               <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-1.5">
-                Place name *
+                {t("spots.formName", "Place name *")}
               </label>
               <input
                 type="text"
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Bar Iruña, Kafé Bergara…"
+                placeholder={t("spots.placeholderName", "e.g. Bar Iruña, Kafé Bergara…")}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#d1d1ca] bg-white text-sm text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
               />
             </div>
             <div className="col-span-2 sm:col-span-1">
               <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-1.5">
-                Type
+                {t("spots.formType", "Type")}
               </label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as UserSpot["category"])}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#d1d1ca] bg-white text-sm text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
               >
-                <option value="cafe">Café</option>
-                <option value="bar">Bar</option>
-                <option value="restaurant">Restaurant</option>
-                <option value="other">Other favorite</option>
+                <option value="cafe">{t("spots.category.cafe", "Café")}</option>
+                <option value="bar">{t("spots.category.bar", "Bar")}</option>
+                <option value="restaurant">{t("spots.category.restaurant", "Restaurant")}</option>
+                <option value="other">{t("spots.category.other", "Other favorite")}</option>
               </select>
             </div>
           </div>
@@ -155,25 +159,25 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-1.5">
-                Town / Area
+                {t("spots.formTown", "Town / Area")}
               </label>
               <input
                 type="text"
                 value={town}
                 onChange={(e) => setTown(e.target.value)}
-                placeholder="e.g. Bilbao, Spain"
+                placeholder={t("spots.placeholderTown", "e.g. Bilbao, Spain")}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#d1d1ca] bg-white text-sm text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
               />
             </div>
             <div>
               <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-1.5">
-                Note (optional)
+                {t("spots.formNote", "Note (optional)")}
               </label>
               <input
                 type="text"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. best tortilla on Fridays"
+                placeholder={t("spots.placeholderNote", "e.g. best tortilla on Fridays")}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#d1d1ca] bg-white text-sm text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
               />
             </div>
@@ -206,7 +210,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
               className="px-4 py-2.5 rounded-xl bg-[#5A5A40] text-white text-xs font-serif italic flex items-center space-x-1.5 hover:bg-[#4a4a35] transition-colors disabled:opacity-50 shrink-0"
             >
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-              <span>{isSaving ? "Locating…" : "Add Place"}</span>
+              <span>{isSaving ? t("spots.btnSaving", "Locating…") : t("spots.btnAdd", "Add Place")}</span>
             </button>
           </div>
         </form>
@@ -216,14 +220,15 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
           {spots.length === 0 ? (
             <div className="text-center py-10">
               <Coffee className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
-              <p className="font-serif text-base italic text-[#2c2c24]">No places saved yet</p>
+              <p className="font-serif text-base italic text-[#2c2c24]">{t("spots.empty", "No places saved yet")}</p>
               <p className="text-xs text-[#8a8a7e] mt-0.5 max-w-xs mx-auto">
-                Add your favorite café, bar or restaurant above and plans will be built around them.
+                {t("spots.emptyDesc", "Add your favorite café, bar or restaurant above and plans will be built around them.")}
               </p>
             </div>
           ) : (
             spots.map((spot) => {
               const meta = CATEGORY_META[spot.category] || CATEGORY_META.other;
+              const categoryLabel = t(`spots.category.${spot.category}`, meta.label);
               return (
                 <div
                   key={spot.id}
@@ -239,7 +244,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
                       </div>
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[#8a8a7e] mt-0.5">
                         <span className="capitalize font-medium text-[#5A5A40] bg-[#ecece4] px-2 py-0.5 rounded-full border border-[#d1d1ca]">
-                          {meta.label}
+                          {categoryLabel}
                         </span>
                         {spot.town && (
                           <span className="flex items-center gap-0.5">
@@ -248,9 +253,9 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
                           </span>
                         )}
                         {spot.coordinates ? (
-                          <span className="text-emerald-700">located</span>
+                          <span className="text-emerald-700">{t("spots.located", "located")}</span>
                         ) : (
-                          <span className="text-amber-700">pending location</span>
+                          <span className="text-amber-700">{t("spots.pending", "pending location")}</span>
                         )}
                         {spot.notes && <span className="italic text-[#6b6b5e]">“{spot.notes}”</span>}
                       </div>
@@ -258,7 +263,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
                   </div>
                   <button
                     onClick={() => handleRemove(spot.id)}
-                    title="Remove this place"
+                    title={t("spots.deleteConfirm", "Delete this place?")}
                     className="p-1.5 text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -272,13 +277,13 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
         {/* Footer */}
         <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
           <span className="text-[#8a8a7e] font-serif italic">
-            {spots.length} places saved — they power your dining recommendations
+            {t("spots.footer", "{count} places saved — they power your dining recommendations").replace("{count}", spots.length.toString())}
           </span>
           <button
             onClick={onClose}
             className="px-4 py-2 bg-[#5A5A40] hover:bg-[#4a4a35] text-white text-xs font-serif italic rounded-full transition-colors"
           >
-            Done
+            {t("spots.done", "Done")}
           </button>
         </div>
       </div>

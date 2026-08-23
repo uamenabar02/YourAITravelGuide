@@ -97,6 +97,17 @@ export interface DestinationStop {
   coordinates?: Coordinates;
 }
 
+export interface AccommodationDetails {
+  id?: string;
+  name: string;
+  location: string;
+  description?: string;
+  checkInDay?: number; // e.g. Day 1
+  checkInHour?: string; // e.g. "15:00"
+  checkOutDay?: number; // e.g. Day 3
+  checkOutHour?: string; // e.g. "11:00"
+}
+
 export interface ItineraryPlan {
   id: string;
   mode: AppMode;
@@ -122,6 +133,8 @@ export interface ItineraryPlan {
   departureHour?: string;
   transportMode?: TransportMode;
   transportModes?: TransportMode[];
+  accommodation?: AccommodationDetails;
+  accommodations?: AccommodationDetails[];
 }
 
 export interface VacationPreferences {
@@ -144,6 +157,8 @@ export interface VacationPreferences {
   destinations?: DestinationStop[];
   arrivalHour?: string; // e.g. "14:00"
   departureHour?: string; // e.g. "11:00"
+  accommodation?: AccommodationDetails;
+  accommodations?: AccommodationDetails[];
   enableSwiper?: boolean;
   likedSpots?: ActivitySpot[];
   skippedSpots?: ActivitySpot[];
@@ -163,6 +178,8 @@ export interface HometownPreferences {
   userSpots?: UserSpot[]; // The resident's own places — primary source for dining suggestions
   tasteProfile?: TasteProfile; // How the user likes to eat & drink (personalizes dining suggestions)
   customNotes?: string;
+  accommodation?: AccommodationDetails;
+  accommodations?: AccommodationDetails[];
   enableSwiper?: boolean;
   likedSpots?: ActivitySpot[];
   skippedSpots?: ActivitySpot[];
@@ -221,6 +238,8 @@ export interface SwapActivityRequest {
   tripVibes?: string[];
   tasteProfile?: TasteProfile;
   userSpots?: UserSpot[];
+  isIndoorOnly?: boolean;
+  customRequirement?: string;
 }
 
 /**
@@ -293,6 +312,122 @@ export interface ActivityChatMessage {
   sender: "user" | "guide";
   text: string;
   timestamp: number;
+}
+
+// --- Feature 1: Offline Pocket Companion Types ---
+export interface OfflineSavedPlan {
+  planId: string;
+  savedAt: number;
+  title: string;
+  destination: string;
+  totalDays: number;
+  planData: ItineraryPlan;
+  offlineNotes?: string;
+  completedActivityIds: string[];
+}
+
+// --- Feature 2: Group Collaboration Types ---
+export interface ActivityVote {
+  upvotes: string[]; // List of member names
+  downvotes: string[];
+  hearts: string[];
+}
+
+export interface ActivityComment {
+  id: string;
+  activityId: string;
+  author: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface GroupPackingItem {
+  id: string;
+  category: "essentials" | "clothes" | "electronics" | "documents" | "health" | "custom";
+  item: string;
+  assignedTo?: string;
+  checkedBy: string[]; // User names who have checked this item for their own packing
+  isChecked?: boolean; // Backwards-compatible fallback
+}
+
+export type ExpenseCategory = "food" | "transport" | "accommodation" | "activities" | "shopping" | "general";
+export type SplitMode = "equal" | "exact" | "shares";
+
+export interface GroupExpenseItem {
+  id: string;
+  title: string;
+  amount: number;
+  paidBy: string;
+  currency: string;
+  category: ExpenseCategory;
+  date: string; // YYYY-MM-DD
+  splitMode: SplitMode;
+  splitBetween: string[]; // member names involved
+  allocations?: Record<string, number>; // exact amount or shares per member
+  notes?: string;
+  createdAt: number;
+}
+
+export interface DebtTransfer {
+  from: string;
+  to: string;
+  amount: number;
+}
+
+export interface BalanceSheet {
+  member: string;
+  totalPaid: number;
+  totalOwed: number;
+  netBalance: number; // positive = gets back money, negative = owes money
+}
+
+export type MemberRole = "organizer" | "editor" | "viewer";
+
+export interface GroupMemberProfile {
+  id: string;
+  name: string;
+  role: MemberRole;
+  avatarColor?: string;
+  joinedAt?: number;
+}
+
+export type GroupAccessLevel = "open_collab" | "invite_only" | "view_only";
+
+export interface GroupAccessSettings {
+  accessLevel: GroupAccessLevel;
+  inviteCode: string;
+  allowGuestsToLogExpenses: boolean;
+  allowGuestsToVote: boolean;
+}
+
+export interface GroupCollaborationState {
+  tripId: string;
+  members: string[];
+  currentUser: string;
+  memberProfiles?: GroupMemberProfile[];
+  accessSettings?: GroupAccessSettings;
+  votes: Record<string, ActivityVote>; // activityId -> ActivityVote
+  comments: Record<string, ActivityComment[]>; // activityId -> comments
+  packingList: GroupPackingItem[];
+  expenses: GroupExpenseItem[];
+  lastUpdated: number;
+}
+
+// --- Feature 3: Schedule Adjuster Types ---
+export interface ScheduleShiftOptions {
+  startActivityId?: string;
+  startActivityIndex?: number;
+  compressDurations?: boolean;
+  destination?: string;
+}
+
+export interface ScheduleShiftResult {
+  updatedDay: DailyPlan;
+  originalDay: DailyPlan;
+  delayMinutes: number;
+  startActivityIndex: number;
+  warnings: string[];
+  shiftedActivitiesCount: number;
 }
 
 

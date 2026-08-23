@@ -18,10 +18,22 @@ import {
   MessageSquare,
   Ticket,
   Ban,
+  ThumbsUp,
+  ThumbsDown,
+  Heart,
+  Send,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
 import { normalizeTimeSlot } from "../utils/time";
 import { getActivityHistory, recordActivityVisit, removeHistoryItem } from "../utils/storage";
+import {
+  getCollaborationState,
+  toggleActivityVote,
+  addActivityComment,
+  getCurrentUserName,
+} from "../utils/collaboration";
+import { useLanguage } from "../context/LanguageContext";
+import { TranslatedText } from "./TranslatedText";
 
 interface ActivityCardProps {
   activity: ActivitySpot;
@@ -71,12 +83,35 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   onVisitedChanged,
   destinationOrTown,
 }) => {
+  const { t } = useLanguage();
   const [isSwapping, setIsSwapping] = useState(false);
   const [isVisited, setIsVisited] = useState(() => {
     const history = getActivityHistory();
     return history.some((h) => h.name.toLowerCase() === activity.name.toLowerCase());
   });
   const [showOpinions, setShowOpinions] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [newCommentText, setNewCommentText] = useState("");
+
+  const [collab, setCollab] = useState(() => getCollaborationState("current_trip"));
+  const currentUser = getCurrentUserName();
+  const currentVotes = collab.votes[activity.id] || { upvotes: [], downvotes: [], hearts: [] };
+  const currentComments = collab.comments[activity.id] || [];
+
+  const handleVote = (e: React.MouseEvent, type: "up" | "down" | "heart") => {
+    e.stopPropagation();
+    const updated = toggleActivityVote("current_trip", activity.id, type, currentUser);
+    setCollab(updated);
+  };
+
+  const handleAddComment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCommentText.trim()) return;
+    addActivityComment("current_trip", activity.id, newCommentText.trim(), currentUser);
+    const updated = getCollaborationState("current_trip");
+    setCollab(updated);
+    setNewCommentText("");
+  };
 
   useEffect(() => {
     const history = getActivityHistory();
@@ -181,13 +216,13 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-sans border ${categoryMeta.badgeClass}`}
           >
             <span>{categoryMeta.icon}</span>
-            <span>{categoryMeta.label}</span>
+            <span>{t(`category.${activity.category}`, categoryMeta.label)}</span>
           </span>
 
           {activity.isLiveEvent && (
             <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-300 shadow-xs">
               <Sparkles className="w-3 h-3 text-amber-600 animate-pulse" />
-              <span>Live Happening 🔥</span>
+              <span>{t("act.liveHappening", "Live Happening 🔥")}</span>
             </span>
           )}
         </div>
@@ -243,9 +278,9 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           <div className="flex items-center justify-between text-[10px] uppercase font-bold tracking-widest text-[#8a8a7e]">
             <span className="flex items-center gap-1">
               <Layers className="w-3 h-3 text-[#5A5A40]" />
-              Multiple Choice Options (Click to switch)
+              {t("act.multipleChoice", "Multiple Choice Options (Click to switch)")}
             </span>
-            <span className="text-[#5A5A40] font-semibold">{allOptionsList.length} Available</span>
+            <span className="text-[#5A5A40] font-semibold">{t("act.available", "{count} Available").replace("{count}", allOptionsList.length.toString())}</span>
           </div>
 
           <div className="flex flex-wrap gap-1.5">
@@ -276,17 +311,17 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
       <div className="mb-3.5">
         <div className="flex items-center justify-between">
           <h4 className="font-serif text-lg sm:text-xl font-normal italic text-[#2c2c24] leading-snug group-hover:text-[#5A5A40] transition-colors">
-            {activity.name}
+            <TranslatedText text={activity.name} />
           </h4>
           {activity.isSwapped && (
             <span className="text-[10px] font-medium text-[#5A5A40] bg-[#ecece4] border border-[#d1d1ca] px-2 py-0.5 rounded-full ml-2 shrink-0">
-              Fresh Choice 🔄
+              {t("act.freshChoice", "Fresh Choice 🔄")}
             </span>
           )}
         </div>
-        <p className="text-sm text-[#2c2c24]/90 mt-1.5 leading-relaxed font-sans">
-          {activity.description}
-        </p>
+        <div className="text-sm text-[#2c2c24]/90 mt-1.5 leading-relaxed font-sans">
+          <TranslatedText text={activity.description} />
+        </div>
       </div>
 
       {/* Live Event Callout Box */}
@@ -295,7 +330,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           <Ticket className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
           <div>
             <div className="font-serif italic font-bold text-amber-900 flex flex-wrap items-center gap-2">
-              <span>{activity.eventDetails.eventType || "Active Local Event"}</span>
+              <span>{activity.eventDetails.eventType || t("act.activeEvent", "Active Local Event")}</span>
               {activity.eventDetails.dates && (
                 <span className="font-sans text-[11px] font-normal bg-amber-200/70 px-2 py-0.5 rounded-full text-amber-950">
                   📅 {activity.eventDetails.dates}
@@ -304,7 +339,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             </div>
             {activity.eventDetails.venue && (
               <p className="text-amber-800 font-sans mt-1">
-                📍 Venue: {activity.eventDetails.venue}
+                📍 {t("act.venue", "Venue: {venue}").replace("{venue}", activity.eventDetails.venue)}
               </p>
             )}
           </div>
@@ -316,8 +351,10 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
         <div className="bg-[#ecece4] border border-[#d1d1ca] rounded-2xl p-3 sm:p-3.5 mb-3.5 text-xs text-[#2c2c24] leading-relaxed flex items-start space-x-2.5">
           <Lightbulb className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
           <div>
-            <span className="font-serif italic font-semibold mr-1">Insider Note:</span>
-            <span className="text-[#6b6b5e] font-sans">{activity.insiderTip}</span>
+            <span className="font-serif italic font-semibold mr-1">{t("act.insiderTip", "Insider Note:")}</span>
+            <span className="text-[#6b6b5e] font-sans">
+              <TranslatedText text={activity.insiderTip} />
+            </span>
           </div>
         </div>
       )}
@@ -326,7 +363,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
       {showOpinions && activity.reviews && activity.reviews.length > 0 && (
         <div className="bg-[#f5f5f0] border border-[#e5e5df] rounded-2xl p-3 mb-3.5 text-xs space-y-2 animate-in fade-in-20">
           <div className="flex items-center justify-between font-serif italic text-[#5A5A40]">
-            <span>Google Maps Visitor Reviews</span>
+            <span>{t("act.reviews", "Reviews")}</span>
             <span className="text-[11px] font-sans text-[#8a8a7e]">{activity.reviews.length} reviews</span>
           </div>
           {activity.reviews.map((rev, i) => (
@@ -335,15 +372,70 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                 <span className="font-semibold text-[#2c2c24]">{rev.author}</span>
                 <span>⭐ {rev.rating}</span>
               </div>
-              <p className="text-[#6b6b5e] mt-0.5 italic">"{rev.text}"</p>
+              <p className="text-[#6b6b5e] mt-0.5 italic flex items-start gap-0.5">
+                <span>"</span>
+                <TranslatedText text={rev.text} />
+                <span>"</span>
+              </p>
             </div>
           ))}
         </div>
       )}
 
+      {/* Group Travel Comments & Memos (Expandable) */}
+      {showComments && (
+        <div
+          className="bg-[#f5f5f0] border border-[#d1d1ca] rounded-2xl p-3.5 mb-3.5 text-xs space-y-2.5 no-print animate-in fade-in-20"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between font-serif italic text-[#2c2c24] font-semibold">
+            <span>{t("act.groupNotesTitle", "Group Travel Notes & Tips")}</span>
+            <span className="text-[10px] font-sans text-[#8a8a7e]">
+              {currentComments.length} {currentComments.length === 1 ? t("act.note", "note") : t("act.notes", "notes")}
+            </span>
+          </div>
+
+          <div className="space-y-1.5 max-h-36 overflow-y-auto">
+            {currentComments.length === 0 ? (
+              <p className="text-[11px] text-[#8a8a7e] italic">
+                {t("act.noNotes", "No group notes left for this spot yet. Add a reservation confirmation, meeting point, or thought below!")}
+              </p>
+            ) : (
+              currentComments.map((c) => (
+                <div key={c.id} className="bg-white p-2 rounded-xl border border-[#e5e5df] text-[11px]">
+                  <div className="flex items-center justify-between text-[#8a8a7e] text-[10px]">
+                    <span className="font-bold text-[#2c2c24]">👤 {c.author}</span>
+                    <span>{new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  <p className="text-[#2c2c24] mt-0.5">{c.text}</p>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Add Comment Field */}
+          <form onSubmit={handleAddComment} className="flex items-center gap-1.5 pt-1">
+            <input
+              type="text"
+              placeholder={t("act.addNotePlaceholder", { user: currentUser })}
+              value={newCommentText}
+              onChange={(e) => setNewCommentText(e.target.value)}
+              className="flex-1 px-2.5 py-1 text-xs border border-[#d1d1ca] rounded-xl bg-white focus:outline-none focus:border-[#5A5A40]"
+            />
+            <button
+              type="submit"
+              disabled={!newCommentText.trim()}
+              className="p-1.5 bg-[#5A5A40] text-white rounded-xl disabled:opacity-40 hover:bg-[#4a4a35] transition-colors shrink-0"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* Bottom Action Row */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#e5e5df] text-xs">
-        <div className="flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-[#e5e5df] text-xs">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Deep Details & AI Guide Button */}
           {onOpenDetails && (
             <button
@@ -352,10 +444,10 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                 e.stopPropagation();
                 onOpenDetails(activity, dayNumber);
               }}
-              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#ecece4] hover:bg-[#5A5A40] text-[#5A5A40] hover:text-white border border-[#d1d1ca] font-medium transition-all shadow-2xs group/detail"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#ecece4] hover:bg-[#5A5A40] text-[#5A5A40] hover:text-white border border-[#d1d1ca] font-medium transition-all shadow-2xs group/detail shrink-0 whitespace-nowrap"
             >
               <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] group-hover/detail:text-white transition-colors" />
-              <span>Details, Lore & Guide</span>
+              <span>{t("act.details", "Details & Guide")}</span>
             </button>
           )}
 
@@ -366,10 +458,10 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#5A5A40] text-white text-xs font-serif italic hover:bg-[#4a4a35] transition-all shadow-xs"
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#5A5A40] text-white text-xs font-serif italic hover:bg-[#4a4a35] transition-all shadow-xs shrink-0 whitespace-nowrap"
             >
               <Ticket className="w-3.5 h-3.5" />
-              <span>Buy Tickets / Booking</span>
+              <span>{t("act.tickets", "Tickets / Booking")}</span>
             </a>
           )}
 
@@ -377,10 +469,74 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           <button
             type="button"
             onClick={openInMaps}
-            className="flex items-center space-x-1 text-[#8a8a7e] hover:text-[#2c2c24] font-medium transition-colors"
+            className="flex items-center space-x-1 text-[#8a8a7e] hover:text-[#2c2c24] font-medium transition-colors shrink-0 whitespace-nowrap"
           >
             <ExternalLink className="w-3.5 h-3.5 text-[#8a8a7e]" />
-            <span>Map & Reviews</span>
+            <span>{t("act.mapsReviews", "Map & Reviews")}</span>
+          </button>
+
+          {/* Group Reactions (Thumbs Up, Heart, Thumbs Down) */}
+          <div className="flex items-center space-x-1 no-print bg-[#f5f5f0] p-0.5 rounded-full border border-[#d1d1ca] shrink-0">
+            <button
+              type="button"
+              onClick={(e) => handleVote(e, "heart")}
+              title="Love this spot"
+              className={`p-1 rounded-full transition-all ${
+                currentVotes.hearts.includes(currentUser)
+                  ? "bg-rose-100 text-rose-600 font-bold"
+                  : "text-[#8a8a7e] hover:text-rose-600 hover:bg-white"
+              }`}
+            >
+              <Heart className={`w-3.5 h-3.5 ${currentVotes.hearts.includes(currentUser) ? "fill-current" : ""}`} />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => handleVote(e, "up")}
+              title="Like this spot"
+              className={`p-1 rounded-full transition-all ${
+                currentVotes.upvotes.includes(currentUser)
+                  ? "bg-emerald-100 text-emerald-700 font-bold"
+                  : "text-[#8a8a7e] hover:text-emerald-700 hover:bg-white"
+              }`}
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => handleVote(e, "down")}
+              title="Pass on this spot"
+              className={`p-1 rounded-full transition-all ${
+                currentVotes.downvotes.includes(currentUser)
+                  ? "bg-amber-100 text-amber-800 font-bold"
+                  : "text-[#8a8a7e] hover:text-amber-800 hover:bg-white"
+              }`}
+            >
+              <ThumbsDown className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Reaction counts if any */}
+            {(currentVotes.hearts.length > 0 || currentVotes.upvotes.length > 0) && (
+              <span className="text-[10px] font-sans font-semibold text-[#5A5A40] px-1.5">
+                {currentVotes.hearts.length + currentVotes.upvotes.length}
+              </span>
+            )}
+          </div>
+
+          {/* Toggle Group Comments */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowComments(!showComments);
+            }}
+            className={`flex items-center space-x-1 no-print font-medium transition-colors shrink-0 whitespace-nowrap ${
+              currentComments.length > 0 ? "text-[#5A5A40] font-semibold" : "text-[#8a8a7e] hover:text-[#2c2c24]"
+            }`}
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>{currentComments.length > 0 ? `${t("act.notes", "Notes")} (${currentComments.length})` : t("act.note", "Note")}</span>
           </button>
 
           {/* Toggle Opinions */}
@@ -391,10 +547,10 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                 e.stopPropagation();
                 setShowOpinions(!showOpinions);
               }}
-              className="flex items-center space-x-1 text-[#8a8a7e] hover:text-[#2c2c24] font-medium transition-colors"
+              className="flex items-center space-x-1 text-[#8a8a7e] hover:text-[#2c2c24] font-medium transition-colors shrink-0 whitespace-nowrap"
             >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>{showOpinions ? "Hide Reviews" : "Opinions"}</span>
+              <Star className="w-3.5 h-3.5 text-amber-500" />
+              <span>{showOpinions ? t("act.hideReviews", "Hide Reviews") : t("act.reviews", "Reviews")}</span>
             </button>
           )}
 
@@ -402,17 +558,17 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           <button
             type="button"
             onClick={handleToggleVisited}
-            className={`flex items-center space-x-1 font-medium transition-colors ${
+            className={`flex items-center space-x-1 font-medium transition-colors shrink-0 whitespace-nowrap ${
               isVisited ? "text-[#5A5A40] font-bold" : "text-[#8a8a7e] hover:text-[#2c2c24]"
             }`}
           >
             <CheckCircle2 className={`w-3.5 h-3.5 ${isVisited ? "text-[#5A5A40]" : ""}`} />
-            <span>{isVisited ? "Visited" : "Mark Visited"}</span>
+            <span>{isVisited ? t("act.visited", "Visited") : t("act.markVisited", "Mark Visited")}</span>
           </button>
         </div>
 
         {/* Action Controls: Edit, Swap, Delete */}
-        <div className="flex items-center space-x-2 no-print ml-auto">
+        <div className="flex items-center space-x-2 no-print ml-auto shrink-0">
           {/* Edit Activity Button */}
           <button
             type="button"
@@ -421,7 +577,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
               onEditActivity(activity, dayNumber);
             }}
             title="Edit activity details"
-            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors"
+            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors shrink-0"
           >
             <Edit2 className="w-3.5 h-3.5" />
           </button>
@@ -431,12 +587,12 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (confirm(`Remove "${activity.name}" from Day ${dayNumber}?`)) {
+              if (confirm(t("act.deleteConfirm", "Remove \"{name}\" from Day {day}?").replace("{name}", activity.name).replace("{day}", dayNumber.toString()))) {
                 onDeleteActivity(activity.id, dayNumber);
               }
             }}
             title="Delete activity"
-            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors"
+            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -449,14 +605,14 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
                 e.stopPropagation();
                 if (
                   confirm(
-                    `Never suggest "${activity.name}" again?\n\nIt will be permanently excluded from all future plans. You can undo this anytime in History → Permanent Skips.`
+                    t("act.permanentSkipPrompt", { name: activity.name })
                   )
                 ) {
                   onSkipPermanently(activity, dayNumber);
                 }
               }}
-              title="Never suggest this place again"
-              className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors"
+              title={t("act.permanentSkip", "Permanently Exclude Spot")}
+              className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
             >
               <Ban className="w-3.5 h-3.5" />
             </button>
@@ -467,11 +623,11 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             type="button"
             onClick={handleSwap}
             disabled={isSwapping}
-            title="Regenerate this spot with a fresh authentic alternative"
-            className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#f5f5f0] text-[#5A5A40] hover:bg-[#ecece4] border border-[#d1d1ca] font-medium transition-all disabled:opacity-50"
+            title={t("act.swap", "Swap Spot")}
+            className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#f5f5f0] text-[#5A5A40] hover:bg-[#ecece4] border border-[#d1d1ca] font-medium transition-all disabled:opacity-50 shrink-0 whitespace-nowrap"
           >
             <RefreshCw className={`w-3 h-3 ${isSwapping ? "animate-spin text-[#5A5A40]" : ""}`} />
-            <span>{isSwapping ? "Swapping..." : "Swap Spot"}</span>
+            <span>{isSwapping ? t("act.swapping", "Swapping...") : t("act.swap", "Swap Spot")}</span>
           </button>
         </div>
       </div>

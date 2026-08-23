@@ -32,6 +32,8 @@ import {
   Footprints,
 } from "lucide-react";
 import { getCuratedPhotosForSpot, generateGoogleMapsSearchUrl } from "../utils/destinations";
+import { useLanguage } from "../context/LanguageContext";
+import { TranslatedText, useTranslateText, useTranslateArray } from "./TranslatedText";
 
 interface ActivityDetailModalProps {
   spot: ActivitySpot;
@@ -122,6 +124,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
   dayNumber,
   onClose,
 }) => {
+  const { t } = useLanguage();
   const [loadingDetails, setLoadingDetails] = useState(true);
   const [details, setDetails] = useState<ActivityDeepDetails | null>(null);
   const [realPhotos, setRealPhotos] = useState<string[]>([]);
@@ -459,7 +462,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             <span
               className={`px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider border ${categoryStyle.bg}`}
             >
-              {categoryStyle.label}
+              {t(`category.${spot.category}`, categoryStyle.label)}
             </span>
             {dayNumber && (
               <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-stone-200/80 text-stone-700">
@@ -533,11 +536,13 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   id="activity-detail-title"
                   className="font-serif text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-white drop-shadow-sm"
                 >
-                  {spot.name}
+                  <TranslatedText text={spot.name} />
                 </h2>
                 {details?.headline && (
-                  <p className="text-sm text-stone-200 mt-1 line-clamp-1 italic font-serif">
-                    "{details.headline}"
+                  <p className="text-sm text-stone-200 mt-1 line-clamp-1 italic font-serif flex items-start gap-0.5">
+                    <span>"</span>
+                    <TranslatedText text={details.headline} />
+                    <span>"</span>
                   </p>
                 )}
               </div>
@@ -578,58 +583,58 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           </div>
 
           {/* Quick Info & Navigation Tabs */}
-          <div className="bg-[#f4f2ea] px-5 py-3 border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-[#f4f2ea] px-4 sm:px-5 py-3 border-b border-stone-200/80 flex flex-wrap items-center justify-between gap-3">
             {/* Tab navigation buttons */}
-            <div className="flex items-center gap-1.5 p-1 bg-stone-200/70 rounded-xl">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-stone-200/70 rounded-xl">
               <button
                 onClick={() => setActiveTab("overview")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   activeTab === "overview"
                     ? "bg-white text-stone-900 shadow-xs"
                     : "text-stone-600 hover:text-stone-900"
                 }`}
               >
-                <BookOpen className="w-3.5 h-3.5 text-[#5A5A40]" />
-                <span>Story & Details</span>
+                <BookOpen className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
+                <span className="whitespace-nowrap">{t("detail.storyAndDetails")}</span>
               </button>
               <button
                 onClick={() => setActiveTab("location")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   activeTab === "location"
                     ? "bg-white text-stone-900 shadow-xs"
                     : "text-stone-600 hover:text-stone-900"
                 }`}
               >
-                <MapPin className="w-3.5 h-3.5 text-[#5A5A40]" />
-                <span>Exact Location & Pins</span>
+                <MapPin className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
+                <span className="whitespace-nowrap">{t("detail.exactLocation")}</span>
                 {details?.subSpots && details.subSpots.length > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-[#5A5A40] text-white text-[10px] flex items-center justify-center font-bold">
+                  <span className="w-4 h-4 rounded-full bg-[#5A5A40] text-white text-[10px] flex items-center justify-center font-bold shrink-0">
                     {details.subSpots.length}
                   </span>
                 )}
               </button>
               <button
                 onClick={() => setActiveTab("anecdotes")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   activeTab === "anecdotes"
                     ? "bg-white text-stone-900 shadow-xs"
                     : "text-stone-600 hover:text-stone-900"
                 }`}
               >
-                <Sparkles className="w-3.5 h-3.5 text-[#5A5A40]" />
-                <span>Anecdotes & Lore</span>
+                <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
+                <span className="whitespace-nowrap">{t("detail.anecdotes")}</span>
               </button>
               <button
                 onClick={() => setActiveTab("chat")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   activeTab === "chat"
                     ? "bg-white text-[#5A5A40] shadow-xs font-bold ring-1 ring-[#5A5A40]/30"
                     : "text-stone-700 hover:text-stone-900 font-semibold"
                 }`}
               >
-                <MessageSquare className="w-3.5 h-3.5 text-[#5A5A40]" />
-                <span>Ask Local Guide</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <MessageSquare className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
+                <span className="whitespace-nowrap">{t("detail.askGuide")}</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
               </button>
             </div>
 
@@ -642,7 +647,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               )}
               {details?.recommendedDuration && (
                 <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-stone-200/80 font-medium text-stone-700">
-                  <Clock className="w-3 h-3 text-stone-500" />
+                  <Clock className="w-3 h-3 text-stone-500 shrink-0" />
                   {details.recommendedDuration}
                 </span>
               )}
@@ -655,19 +660,19 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               {loadingDetails ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-3 text-stone-500">
                   <Loader2 className="w-7 h-7 animate-spin text-[#5A5A40]" />
-                  <p className="text-sm font-medium">Gathering authentic local stories & deep details...</p>
+                  <p className="text-sm font-medium">{t("detail.loading")}</p>
                 </div>
               ) : (
                 <>
                   {/* Comprehensive Explanation */}
                   <div className="space-y-3">
                     <h3 className="font-serif text-lg font-bold text-stone-900 flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-[#5A5A40]" />
-                      About this Experience
+                      <BookOpen className="w-4 h-4 text-[#5A5A40] shrink-0" />
+                      {t("detail.aboutExperience")}
                     </h3>
-                    <p className="text-stone-700 text-sm sm:text-base leading-relaxed font-sans whitespace-pre-line">
-                      {details?.fullExplanation || spot.description}
-                    </p>
+                    <div className="text-stone-700 text-sm sm:text-base leading-relaxed font-sans whitespace-pre-line">
+                      <TranslatedText text={details?.fullExplanation || spot.description || ""} />
+                    </div>
                   </div>
 
                   {/* Historical & Cultural Deep Dive Cards */}
@@ -675,29 +680,37 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                     {/* Historical Context */}
                     <div className="bg-white p-4.5 rounded-xl border border-stone-200/90 shadow-xs space-y-2">
                       <div className="flex items-center gap-2 text-[#5A5A40]">
-                        <History className="w-4 h-4" />
+                        <History className="w-4 h-4 shrink-0" />
                         <h4 className="font-serif font-bold text-stone-900 text-sm">
-                          Historical Context & Roots
+                          {t("detail.historicalContext")}
                         </h4>
                       </div>
-                      <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-                        {details?.historicalContext ||
-                          `Rooted in the rich cultural history of ${destination}, this venue represents generations of local heritage.`}
-                      </p>
+                      <div className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+                        <TranslatedText
+                          text={
+                            details?.historicalContext ||
+                            `Rooted in the rich cultural history of ${destination}, this venue represents generations of local heritage.`
+                          }
+                        />
+                      </div>
                     </div>
 
                     {/* Cultural Significance */}
                     <div className="bg-white p-4.5 rounded-xl border border-stone-200/90 shadow-xs space-y-2">
                       <div className="flex items-center gap-2 text-[#5A5A40]">
-                        <Compass className="w-4 h-4" />
+                        <Compass className="w-4 h-4 shrink-0" />
                         <h4 className="font-serif font-bold text-stone-900 text-sm">
-                          Cultural Significance
+                          {t("detail.culturalSignificance")}
                         </h4>
                       </div>
-                      <p className="text-xs sm:text-sm text-stone-600 leading-relaxed">
-                        {details?.culturalSignificance ||
-                          `A beloved cornerstone of local life that offers authentic immersion into the spirit of ${destination}.`}
-                      </p>
+                      <div className="text-xs sm:text-sm text-stone-600 leading-relaxed">
+                        <TranslatedText
+                          text={
+                            details?.culturalSignificance ||
+                            `A beloved cornerstone of local life that offers authentic immersion into the spirit of ${destination}.`
+                          }
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -705,12 +718,12 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   {details?.architecturalOrNaturalHighlights && (
                     <div className="bg-[#f5f3eb] p-4.5 rounded-xl border border-stone-300/80 space-y-2">
                       <h4 className="font-serif font-bold text-stone-900 text-sm flex items-center gap-2">
-                        <Lightbulb className="w-4 h-4 text-amber-700" />
-                        Architectural & Visual Highlights
+                        <Lightbulb className="w-4 h-4 text-amber-700 shrink-0" />
+                        {t("detail.visualHighlights")}
                       </h4>
-                      <p className="text-xs sm:text-sm text-stone-700 leading-relaxed">
-                        {details.architecturalOrNaturalHighlights}
-                      </p>
+                      <div className="text-xs sm:text-sm text-stone-700 leading-relaxed">
+                        <TranslatedText text={details.architecturalOrNaturalHighlights} />
+                      </div>
                     </div>
                   )}
 
@@ -718,8 +731,8 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   {details?.whatToExpect && details.whatToExpect.length > 0 && (
                     <div className="space-y-2.5">
                       <h4 className="font-serif font-bold text-stone-900 text-sm flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        What to Expect
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        {t("detail.whatToExpect")}
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {details.whatToExpect.map((item, idx) => (
@@ -728,7 +741,9 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                             className="flex items-start gap-2 bg-white px-3.5 py-2.5 rounded-lg border border-stone-200 text-xs sm:text-sm text-stone-700"
                           >
                             <span className="w-1.5 h-1.5 rounded-full bg-[#5A5A40] mt-1.5 shrink-0"></span>
-                            <span>{item}</span>
+                            <span>
+                              <TranslatedText text={item} />
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -738,59 +753,59 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   {/* Practical Visiting Guide: Photography, Best Time, Insider Tip */}
                   <div className="bg-white p-5 rounded-xl border border-stone-200/90 shadow-xs space-y-4">
                     <h4 className="font-serif font-bold text-stone-900 text-sm flex items-center gap-2 border-b border-stone-100 pb-2">
-                      <Info className="w-4 h-4 text-[#5A5A40]" />
-                      Practical Guide for Visitors
+                      <Info className="w-4 h-4 text-[#5A5A40] shrink-0" />
+                      {t("detail.practicalGuide")}
                     </h4>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs sm:text-sm">
                       <div>
                         <p className="font-semibold text-stone-900 mb-1 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5 text-stone-500" />
-                          Best Time to Visit
+                          <Clock className="w-3.5 h-3.5 text-stone-500 shrink-0" />
+                          {t("detail.bestTimeToVisit")}
                         </p>
-                        <p className="text-stone-600">
-                          {details?.bestTimeToVisit || "Morning or golden hour before sunset."}
-                        </p>
+                        <div className="text-stone-600">
+                          <TranslatedText text={details?.bestTimeToVisit || "Morning or golden hour before sunset."} />
+                        </div>
                       </div>
 
                       <div>
                         <p className="font-semibold text-stone-900 mb-1 flex items-center gap-1.5">
-                          <Camera className="w-3.5 h-3.5 text-stone-500" />
-                          Photography Tip
+                          <Camera className="w-3.5 h-3.5 text-stone-500 shrink-0" />
+                          {t("detail.photographyTip")}
                         </p>
-                        <p className="text-stone-600">
-                          {details?.photographyTips?.[0] || "Frame architectural details and warm natural lighting."}
-                        </p>
+                        <div className="text-stone-600">
+                          <TranslatedText text={details?.photographyTips?.[0] || "Frame architectural details and warm natural lighting."} />
+                        </div>
                       </div>
 
                       <div>
                         <p className="font-semibold text-stone-900 mb-1 flex items-center gap-1.5">
-                          <Flame className="w-3.5 h-3.5 text-amber-600" />
-                          Insider Secret
+                          <Flame className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          {t("detail.insiderSecret")}
                         </p>
-                        <p className="text-stone-600">
-                          {spot.insiderTip || details?.insiderAdvice?.[0] || "Take a moment to stroll the quieter adjacent lanes."}
-                        </p>
+                        <div className="text-stone-600">
+                          <TranslatedText text={spot.insiderTip || details?.insiderAdvice?.[0] || "Take a moment to stroll the quieter adjacent lanes."} />
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {/* CTA to Ask the Chatbot */}
                   <div className="p-4 rounded-xl bg-gradient-to-r from-[#5A5A40]/10 to-amber-500/10 border border-[#5A5A40]/20 flex items-center justify-between gap-4">
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
-                        Have a question about this spot?
+                    <div className="space-y-0.5 min-w-0">
+                      <p className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider truncate">
+                        {t("detail.chatCtaTitle")}
                       </p>
                       <p className="text-xs sm:text-sm text-stone-700">
-                        Chat directly with your on-demand AI Local Guide for {spot.name}.
+                        {t("detail.chatCtaDesc", { spot: spot.name })}
                       </p>
                     </div>
                     <button
                       onClick={() => setActiveTab("chat")}
                       className="px-4 py-2 bg-[#5A5A40] hover:bg-[#474732] text-white text-xs font-semibold rounded-lg shadow-xs transition-colors shrink-0 flex items-center gap-1.5"
                     >
-                      <MessageSquare className="w-3.5 h-3.5" />
-                      <span>Chat with Guide</span>
+                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                      <span className="whitespace-nowrap">{t("detail.chatWithGuide")}</span>
                     </button>
                   </div>
                 </>
@@ -804,8 +819,8 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h3 className="font-serif text-lg font-bold text-stone-900 flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-[#5A5A40]" />
-                    Exact Coordinates & Sub-Spot Route
+                    <MapPin className="w-4 h-4 text-[#5A5A40] shrink-0" />
+                    {t("detail.exactCoords")}
                   </h3>
                   <p className="text-xs sm:text-sm text-stone-600">
                     {details?.subSpots && details.subSpots.length > 0
@@ -840,8 +855,8 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                   rel="noopener noreferrer"
                   className="shrink-0 px-3 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 font-semibold rounded-md border border-stone-300 flex items-center gap-1.5 transition-colors"
                 >
-                  <span>Open Maps</span>
-                  <ExternalLink className="w-3 h-3 text-stone-400" />
+                  <span className="whitespace-nowrap">{t("detail.openMaps")}</span>
+                  <ExternalLink className="w-3 h-3 text-stone-400 shrink-0" />
                 </a>
               </div>
 
@@ -849,9 +864,9 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               {details?.subSpots && details.subSpots.length > 0 ? (
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center gap-2">
-                    <Footprints className="w-4 h-4 text-[#5A5A40]" />
+                    <Footprints className="w-4 h-4 text-[#5A5A40] shrink-0" />
                     <h4 className="font-serif font-bold text-stone-900 text-sm">
-                      Must-Visit Highlights Within this Area ({details.subSpots.length} Key Stops)
+                      {t("detail.mustVisitWithin", { count: details.subSpots.length })}
                     </h4>
                   </div>
 
@@ -867,7 +882,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                           </span>
                           <div className="min-w-0 flex-1">
                             <h5 className="font-serif font-bold text-stone-900 text-sm leading-tight">
-                              {sub.name}
+                              <TranslatedText text={sub.name} />
                             </h5>
                             {sub.address && (
                               <p className="text-[11px] text-stone-500 truncate mt-0.5">
@@ -877,14 +892,14 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                           </div>
                         </div>
 
-                        <p className="text-xs text-stone-600 leading-relaxed">
-                          {sub.description}
-                        </p>
+                        <div className="text-xs text-stone-600 leading-relaxed">
+                          <TranslatedText text={sub.description} />
+                        </div>
 
                         {sub.mustSeeReason && (
                           <div className="bg-amber-50/80 p-2 rounded-lg border border-amber-200/80 text-amber-900 text-xs">
-                            <strong className="font-semibold text-amber-950">Why stop here: </strong>
-                            {sub.mustSeeReason}
+                            <strong className="font-semibold text-amber-950 mr-1">{t("detail.whyStopHere")}</strong>
+                            <TranslatedText text={sub.mustSeeReason} />
                           </div>
                         )}
                       </div>
@@ -894,10 +909,10 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               ) : (
                 <div className="bg-[#f5f3eb] p-4 rounded-xl border border-stone-300/80 text-xs sm:text-sm text-stone-700">
                   <p className="font-semibold text-stone-900 mb-1">
-                    Single Location Spot
+                    {t("detail.singleLocation")}
                   </p>
                   <p className="text-stone-600">
-                    This activity is centered directly at this standalone venue or monument. The pin above highlights the primary entrance and meeting point.
+                    {t("detail.singleLocationDesc")}
                   </p>
                 </div>
               )}
@@ -909,18 +924,18 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
             <div className="p-5 sm:p-7 space-y-5">
               <div className="space-y-1">
                 <h3 className="font-serif text-lg font-bold text-stone-900 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-600" />
-                  Anecdotes, Legends & Local Lore
+                  <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+                  {t("detail.anecdotesTitle")}
                 </h3>
                 <p className="text-xs sm:text-sm text-stone-600">
-                  Fascinating historical occurrences, secret trivia, and oral traditions passed down through generations in {destination}.
+                  {t("detail.anecdotesDesc", { dest: destination })}
                 </p>
               </div>
 
               {loadingDetails ? (
                 <div className="py-12 flex flex-col items-center justify-center gap-3 text-stone-500">
                   <Loader2 className="w-7 h-7 animate-spin text-[#5A5A40]" />
-                  <p className="text-sm font-medium">Retrieving historic lore and regional stories...</p>
+                  <p className="text-sm font-medium">{t("detail.loading")}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -942,16 +957,16 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                                 : "bg-stone-100 text-stone-800 border-stone-300"
                             }`}
                           >
-                            {anecdote.type === "quote" ? "Famous Quote" : anecdote.type}
+                            {anecdote.type === "quote" ? t("detail.quote") : anecdote.type}
                           </span>
                           <h4 className="font-serif font-bold text-stone-900 text-sm sm:text-base">
-                            {anecdote.title}
+                            <TranslatedText text={anecdote.title} />
                           </h4>
                         </div>
 
                         {anecdote.sourceOrPeriod && (
                           <span className="text-[11px] text-stone-400 italic">
-                            {anecdote.sourceOrPeriod}
+                            <TranslatedText text={anecdote.sourceOrPeriod} />
                           </span>
                         )}
                       </div>
@@ -962,8 +977,10 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                         ) : (
                           <Sparkles className="w-4 h-4 text-[#5A5A40] shrink-0 mt-1" />
                         )}
-                        <p className="text-xs sm:text-sm text-stone-700 leading-relaxed italic font-serif">
-                          "{anecdote.story}"
+                        <p className="text-xs sm:text-sm text-stone-700 leading-relaxed italic font-serif flex items-start gap-0.5">
+                          <span>"</span>
+                          <TranslatedText text={anecdote.story} />
+                          <span>"</span>
                         </p>
                       </div>
                     </div>
@@ -979,22 +996,22 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
               {/* Chat Header */}
               <div className="px-5 py-3 bg-[#f2eee3] border-b border-stone-200/90 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-[#5A5A40] text-white flex items-center justify-center font-serif font-bold text-xs shadow-xs">
+                  <div className="w-8 h-8 rounded-full bg-[#5A5A40] text-white flex items-center justify-center font-serif font-bold text-xs shadow-xs shrink-0">
                     SS
                   </div>
                   <div>
                     <h4 className="font-serif font-bold text-stone-900 text-sm leading-tight flex items-center gap-1.5">
-                      <span>Local Guide & Travel Agent</span>
-                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      <span>{t("detail.guideHeader")}</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
                     </h4>
                     <p className="text-[11px] text-stone-500">
-                      Live expert on {spot.name} in {destination}
+                      {t("detail.guideSub", { spot: spot.name, dest: destination })}
                     </p>
                   </div>
                 </div>
 
                 <div className="text-[11px] text-stone-500 italic hidden sm:block">
-                  Ask for quotes, history, secret dishes, or stories
+                  {t("detail.guideHint")}
                 </div>
               </div>
 
@@ -1024,7 +1041,13 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                           : "bg-white text-stone-800 border border-stone-200/90 rounded-tl-xs"
                       }`}
                     >
-                      <p className="whitespace-pre-line font-sans">{msg.text}</p>
+                      {msg.sender === "user" ? (
+                        <p className="whitespace-pre-line font-sans">{msg.text}</p>
+                      ) : (
+                        <div className="whitespace-pre-line font-sans">
+                          <TranslatedText text={msg.text} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1036,7 +1059,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                     </div>
                     <div className="p-3.5 bg-white border border-stone-200/90 rounded-2xl rounded-tl-xs flex items-center gap-2 text-stone-500 text-xs">
                       <Loader2 className="w-4 h-4 animate-spin text-[#5A5A40]" />
-                      <span>Thinking with local knowledge...</span>
+                      <span>{t("detail.thinking")}</span>
                     </div>
                   </div>
                 )}
@@ -1049,7 +1072,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                 <div className="flex items-center gap-1.5 mb-2">
                   <HelpCircle className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
                   <span className="text-[11px] font-bold text-stone-700 uppercase tracking-wider">
-                    Suggested Follow-up Questions:
+                    {t("detail.suggestedQuestions")}
                   </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1060,7 +1083,9 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                       disabled={isSendingChat}
                       className="w-full px-3 py-2 rounded-xl text-xs font-medium bg-white text-stone-800 border border-stone-300 hover:border-[#5A5A40] hover:bg-stone-50 transition-all shadow-2xs text-left leading-snug flex items-center justify-between gap-2 group disabled:opacity-50"
                     >
-                      <span>{q}</span>
+                      <span>
+                        <TranslatedText text={q} />
+                      </span>
                       <Sparkles className="w-3.5 h-3.5 text-stone-400 group-hover:text-[#5A5A40] shrink-0 transition-colors" />
                     </button>
                   ))}
@@ -1080,7 +1105,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder={`Ask about ${spot.name}, history, anecdotes, or advice...`}
+                    placeholder={t("detail.chatPlaceholder", { spot: spot.name })}
                     disabled={isSendingChat}
                     className="flex-1 px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs sm:text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-[#5A5A40] focus:bg-white transition-all disabled:opacity-50"
                   />
@@ -1090,7 +1115,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
                     className="px-4 py-2.5 bg-[#5A5A40] hover:bg-[#474732] text-white rounded-xl font-semibold text-xs sm:text-sm shadow-xs transition-colors flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                   >
                     <Send className="w-4 h-4" />
-                    <span className="hidden sm:inline">Ask</span>
+                    <span className="hidden sm:inline">{t("detail.ask")}</span>
                   </button>
                 </form>
               </div>
@@ -1101,15 +1126,15 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
         {/* Modal Bottom Footer */}
         <div className="bg-[#faf9f5] px-5 py-3 border-t border-stone-200 flex items-center justify-between text-xs text-stone-500">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Worldwide dynamic AI exploration enabled</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+            <span>{t("detail.aiEnabled")}</span>
           </div>
 
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-stone-200 hover:bg-stone-300 text-stone-800 font-semibold transition-colors"
           >
-            Close
+            {t("common.close")}
           </button>
         </div>
       </div>

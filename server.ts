@@ -11,6 +11,7 @@ import {
   generateCandidateSpots,
   fetchActivityDeepDetails,
   chatWithActivityGuide,
+  translateText,
 } from "./server/geminiService.js";
 import { geocodeSpot } from "./server/geocoder.js";
 import { getRealPhotosForSpot } from "./server/photoService.js";
@@ -169,6 +170,24 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error in activity chat:", err);
       res.status(500).json({ error: err.message || "Failed to chat with local guide." });
+    }
+  });
+
+  // Translate text or array of texts dynamically using Gemini
+  app.post("/api/translate", async (req, res) => {
+    try {
+      const { text, targetLanguage } = req.body;
+      if (!text || !targetLanguage) {
+        return res.status(400).json({ error: "text and targetLanguage are required." });
+      }
+      if (targetLanguage === "en") {
+        return res.json({ translation: text });
+      }
+      const translation = await translateText(text, targetLanguage);
+      res.json({ translation });
+    } catch (err: any) {
+      console.error("Error in dynamic translation endpoint:", err);
+      res.status(500).json({ error: err.message || "Failed to translate text." });
     }
   });
 

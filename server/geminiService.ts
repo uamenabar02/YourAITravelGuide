@@ -2363,6 +2363,12 @@ export async function swapActivitySpot(req: SwapActivityRequest): Promise<Activi
 
   const tasteInstruction = buildTasteInstruction(req.tasteProfile);
 
+  const indoorInstruction = req.isIndoorOnly
+    ? "RAINY DAY / COVERED SPOT MANDATE: The replacement spot MUST be completely covered or indoors (e.g. historic covered market, world-class museum, artisan roastery, tea house, art gallery, indoor spa/baths, or historic arcade). DO NOT suggest outdoor parks, open trails, or uncovered viewpoints."
+    : req.customRequirement
+    ? `SPECIAL MANDATE: ${req.customRequirement}`
+    : "";
+
   const systemInstruction = `You are LocalExplorer AI, an expert local travel curator.
 Your task is to propose ONE single replacement spot for "${req.currentActivityName}" in ${req.destinationOrTown}.
 
@@ -2376,6 +2382,7 @@ CRITICAL MANDATES FOR SWAPPING:
    - Target Time Slot: ${req.timeSlot || "Flexible"}
    - Requested Category: ${req.category}
    - User Pace: ${req.pace || "balanced"}
+   ${indoorInstruction ? `- ${indoorInstruction}` : ""}
 
 3. PRIOR & POSTERIOR ACTIVITY HARMONY (EFFORT LEVEL & LOCATION FLOW):
    - Immediately PRIOR Activity: ${priorSummary}
@@ -3897,5 +3904,73 @@ Guidelines:
     followUpQuestions: defaultFollowUps,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Translation Service for On-The-Fly AI Text Translations
+// ---------------------------------------------------------------------------
+
+export async function translateText(
+  text: string | string[],
+  targetLanguage: string
+): Promise<string | string[]> {
+  const ai = getAiClient();
+  if (!ai || !text || (Array.isArray(text) && text.length === 0)) {
+    return text;
+  }
+
+  const isArray = Array.isArray(text);
+  const textList = isArray ? text : [text];
+
+  const targetLangName =
+    targetLanguage === "eu"
+      ? "Basque (Euskara)"
+      : targetLanguage === "es"
+      ? "Spanish (Castellano)"
+      : targetLanguage;
+
+  const prompt = `You are a professional, high-quality human translator specializing in Basque, Spanish, and regional European travel, culture, and gastronomy.
+Translate the following English texts into ${targetLangName}.
+
+Guidelines:
+1. Maintain exactly the same tone, nuance, formatting, line breaks, and meaning.
+2. Translate naturally and idiomatically (do not perform literal word-for-word translations). For Basque, ensure correct grammar and use clean, standard unified Basque (Euskara Batua).
+3. Preserve all markdown tags (like bold **, italics *, or list items), pricing ranges (like €10 - €20), and name placeholders in brackets if any are present.
+4. Output your response as a JSON object with a single field "translations" containing an array of translated strings in the EXACT same order as the inputs.
+
+Input texts to translate:
+${JSON.stringify(textList, null, 2)}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: PRIMARY_TEXT_MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            translations: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+          required: ["translations"],
+        },
+      },
+    });
+
+    if (response.text) {
+      const parsed = JSON.parse(response.text);
+      if (parsed && Array.isArray(parsed.translations)) {
+        return isArray ? parsed.translations : parsed.translations[0];
+      }
+    }
+  } catch (err) {
+    console.error("Translation failed, falling back to original:", err);
+  }
+
+  return text;
+}
+
 
 

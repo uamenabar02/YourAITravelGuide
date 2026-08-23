@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { X, ChefHat, Save, Trash2, CheckCircle2 } from "lucide-react";
 import { TasteProfile, BudgetTier } from "../types";
 import { getTasteProfile, saveTasteProfile, clearTasteProfile } from "../utils/storage";
+import { useLanguage } from "../context/LanguageContext";
 
 interface TasteProfileModalProps {
   isOpen: boolean;
@@ -51,6 +52,54 @@ const BUDGET_OPTIONS: { value: BudgetTier; label: string; symbol: string; desc: 
   { value: "luxury", label: "Treat myself", symbol: "€€€", desc: "High-end experiences" },
 ];
 
+const diningStyleKeys: Record<string, string> = {
+  "Pintxo / tapas hopping": "taste.style.pintxo",
+  "Sit-down local restaurant": "taste.style.sitdown",
+  "Market counter & stalls": "taste.style.market",
+  "Quick bites & street food": "taste.style.quick",
+  "Long gastronomic tasting": "taste.style.tasting",
+  "Picnic & takeaway": "taste.style.picnic",
+};
+
+const drinkPrefKeys: Record<string, string> = {
+  "Specialty coffee": "taste.drink.coffee",
+  "Local wine / txakoli": "taste.drink.wine",
+  "Craft beer": "taste.drink.beer",
+  "Cocktails & mixed drinks": "taste.drink.cocktails",
+  "Cider (sagardotegi style)": "taste.drink.cider",
+  "Tea & infusions": "taste.drink.tea",
+  "Alcohol-free options": "taste.drink.nonalcoholic",
+};
+
+const atmosphereKeys: Record<string, string> = {
+  "Quiet & cozy": "taste.atmosphere.quiet",
+  "Lively & social": "taste.atmosphere.lively",
+  "Terrace / outdoor seating": "taste.atmosphere.terrace",
+  "Historic & classic": "taste.atmosphere.historic",
+  "Modern & trendy": "taste.atmosphere.modern",
+  "Family-friendly": "taste.atmosphere.family",
+};
+
+const dislikeKeys: Record<string, string> = {
+  "Tourist traps": "taste.dislike.tourist",
+  "Chains & franchises": "taste.dislike.chains",
+  "Long queues": "taste.dislike.queues",
+  "Loud music": "taste.dislike.loud",
+  "Overcrowded places": "taste.dislike.crowded",
+};
+
+const budgetLabelKeys: Record<string, string> = {
+  "Easy-going": "taste.budget.easy",
+  "Balanced": "taste.budget.balanced",
+  "Treat myself": "taste.budget.luxury",
+};
+
+const budgetDescKeys: Record<string, string> = {
+  "Counters, daily menus": "taste.budget.easyDesc",
+  "Good food, fair price": "taste.budget.balancedDesc",
+  "High-end experiences": "taste.budget.luxuryDesc",
+};
+
 const EMPTY: Omit<TasteProfile, "updatedAt"> = {
   diningStyles: [],
   drinkPreferences: [],
@@ -61,6 +110,7 @@ const EMPTY: Omit<TasteProfile, "updatedAt"> = {
 };
 
 export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, onClose, onSaved }) => {
+  const { t } = useLanguage();
   const [diningStyles, setDiningStyles] = useState<string[]>([]);
   const [drinkPreferences, setDrinkPreferences] = useState<string[]>([]);
   const [atmospheres, setAtmospheres] = useState<string[]>([]);
@@ -104,7 +154,7 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
   };
 
   const handleClear = () => {
-    if (window.confirm("Clear your taste profile? Dining suggestions will no longer be personalized.")) {
+    if (window.confirm(t("taste.clearConfirm", "Clear your taste profile? Dining suggestions will no longer be personalized."))) {
       clearTasteProfile();
       setDiningStyles([]);
       setDrinkPreferences([]);
@@ -121,10 +171,14 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
     options: { label: string; icon: string }[];
     selected: string[];
     onToggle: (item: string) => void;
-  }> = ({ options, selected, onToggle }) => (
+    translationKeys: Record<string, string>;
+  }> = ({ options, selected, onToggle, translationKeys }) => (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {options.map((opt) => {
         const active = selected.includes(opt.label);
+        const displayLabel = translationKeys[opt.label]
+          ? t(translationKeys[opt.label], opt.label)
+          : opt.label;
         return (
           <button
             key={opt.label}
@@ -137,7 +191,7 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
             }`}
           >
             <span className="text-sm">{opt.icon}</span>
-            <span className="font-sans text-[11px] leading-tight">{opt.label}</span>
+            <span className="font-sans text-[11px] leading-tight">{displayLabel}</span>
           </button>
         );
       })}
@@ -161,9 +215,9 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
               <ChefHat className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">Taste Profile</h3>
+              <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">{t("taste.title", "Taste Profile")}</h3>
               <p className="text-xs text-[#8a8a7e] font-sans">
-                Tell the AI how you like to eat & drink — suggestions adapt to you and to each day's plan
+                {t("taste.subtitle", "Tell the AI how you like to eat & drink — suggestions adapt to you and to each day's plan")}
               </p>
             </div>
           </div>
@@ -179,65 +233,68 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 bg-[#f5f5f0]/40">
           {/* How it works */}
           <div className="bg-[#ecece4] p-3.5 border border-[#d1d1ca] rounded-2xl text-xs text-[#2c2c24] leading-relaxed">
-            The AI uses this profile to pick bars, cafés and restaurants that fit you — and pairs them with the
-            flow of the day (a casual counter after a hike, a terrace before a sunset stroll, somewhere cozy on a
-            rainy museum day).
+            {t("taste.explanation", "The AI uses this profile to pick bars, cafés and restaurants that fit you — and pairs them with the flow of the day (a casual counter after a hike, a terrace before a sunset stroll, somewhere cozy on a rainy museum day).")}
           </div>
 
           <div>
-            <SectionLabel hint="Select all that apply">How do you like to eat?</SectionLabel>
-            <ChipGroup options={DINING_STYLES} selected={diningStyles} onToggle={(i) => toggle(diningStyles, setDiningStyles, i)} />
+            <SectionLabel hint={t("taste.selectAll", "Select all that apply")}>{t("taste.diningLabel", "How do you like to eat?")}</SectionLabel>
+            <ChipGroup options={DINING_STYLES} selected={diningStyles} onToggle={(i) => toggle(diningStyles, setDiningStyles, i)} translationKeys={diningStyleKeys} />
           </div>
 
           <div>
-            <SectionLabel hint="Select all that apply">What do you like to drink?</SectionLabel>
+            <SectionLabel hint={t("taste.selectAll", "Select all that apply")}>{t("taste.drinkLabel", "What do you like to drink?")}</SectionLabel>
             <ChipGroup
               options={DRINK_PREFERENCES}
               selected={drinkPreferences}
               onToggle={(i) => toggle(drinkPreferences, setDrinkPreferences, i)}
+              translationKeys={drinkPrefKeys}
             />
           </div>
 
           <div>
-            <SectionLabel hint="Select all that apply">What atmosphere do you enjoy?</SectionLabel>
-            <ChipGroup options={ATMOSPHERES} selected={atmospheres} onToggle={(i) => toggle(atmospheres, setAtmospheres, i)} />
+            <SectionLabel hint={t("taste.selectAll", "Select all that apply")}>{t("taste.atmosphereLabel", "What atmosphere do you enjoy?")}</SectionLabel>
+            <ChipGroup options={ATMOSPHERES} selected={atmospheres} onToggle={(i) => toggle(atmospheres, setAtmospheres, i)} translationKeys={atmosphereKeys} />
           </div>
 
           <div>
-            <SectionLabel hint="The AI will steer clear of these">What should be avoided?</SectionLabel>
-            <ChipGroup options={DISLIKES} selected={dislikes} onToggle={(i) => toggle(dislikes, setDislikes, i)} />
+            <SectionLabel hint={t("taste.avoidHint", "The AI will steer clear of these")}>{t("taste.dislikesLabel", "What should be avoided?")}</SectionLabel>
+            <ChipGroup options={DISLIKES} selected={dislikes} onToggle={(i) => toggle(dislikes, setDislikes, i)} translationKeys={dislikeKeys} />
           </div>
 
           {/* Budget comfort */}
           <div>
-            <SectionLabel>Usual food & drink budget</SectionLabel>
+            <SectionLabel>{t("taste.budgetLabel", "Usual food & drink budget")}</SectionLabel>
             <div className="grid grid-cols-3 gap-2.5">
-              {BUDGET_OPTIONS.map((b) => (
-                <button
-                  key={b.value}
-                  type="button"
-                  onClick={() => {
-                    setSaved(false);
-                    setBudgetComfort(budgetComfort === b.value ? undefined : b.value);
-                  }}
-                  className={`p-3 rounded-xl border text-left transition-all ${
-                    budgetComfort === b.value
-                      ? "bg-[#ecece4] text-[#2c2c24] border-[#5A5A40] font-medium shadow-xs"
-                      : "bg-white text-[#6b6b5e] border-[#d1d1ca] hover:border-[#8a8a7e]"
-                  }`}
-                >
-                  <div className="font-serif italic text-sm text-[#2c2c24]">
-                    {b.symbol} {b.label}
-                  </div>
-                  <div className="text-[10px] text-[#8a8a7e] mt-0.5">{b.desc}</div>
-                </button>
-              ))}
+              {BUDGET_OPTIONS.map((b) => {
+                const labelText = budgetLabelKeys[b.label] ? t(budgetLabelKeys[b.label], b.label) : b.label;
+                const descText = budgetDescKeys[b.desc] ? t(budgetDescKeys[b.desc], b.desc) : b.desc;
+                return (
+                  <button
+                    key={b.value}
+                    type="button"
+                    onClick={() => {
+                      setSaved(false);
+                      setBudgetComfort(budgetComfort === b.value ? undefined : b.value);
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      budgetComfort === b.value
+                        ? "bg-[#ecece4] text-[#2c2c24] border-[#5A5A40] font-medium shadow-xs"
+                        : "bg-white text-[#6b6b5e] border-[#d1d1ca] hover:border-[#8a8a7e]"
+                    }`}
+                  >
+                    <div className="font-serif italic text-sm text-[#2c2c24]">
+                      {b.symbol} {labelText}
+                    </div>
+                    <div className="text-[10px] text-[#8a8a7e] mt-0.5">{descText}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* Dietary notes */}
           <div>
-            <SectionLabel hint="Optional">Dietary notes</SectionLabel>
+            <SectionLabel hint={t("taste.optional", "Optional")}>{t("taste.dietaryLabel", "Dietary notes")}</SectionLabel>
             <textarea
               rows={2}
               value={dietaryNotes}
@@ -245,7 +302,7 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
                 setSaved(false);
                 setDietaryNotes(e.target.value);
               }}
-              placeholder="e.g. Vegetarian, gluten-free, love spicy food, allergic to shellfish…"
+              placeholder={t("taste.placeholder", "e.g. Vegetarian, gluten-free, love spicy food, allergic to shellfish…")}
               className="w-full px-3.5 py-2.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
             />
           </div>
@@ -258,12 +315,12 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
             className="text-rose-700 hover:text-rose-900 font-medium px-3 py-2 rounded-full hover:bg-rose-50 transition-colors flex items-center gap-1.5"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Clear profile
+            {t("taste.clear", "Clear profile")}
           </button>
           <div className="flex items-center space-x-3">
             {saved && (
               <span className="flex items-center gap-1 text-emerald-700 font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Saved
+                <CheckCircle2 className="w-3.5 h-3.5" /> {t("taste.saved", "Saved")}
               </span>
             )}
             <button
@@ -271,7 +328,7 @@ export const TasteProfileModal: React.FC<TasteProfileModalProps> = ({ isOpen, on
               className="px-5 py-2.5 bg-[#5A5A40] hover:bg-[#4a4a35] text-white font-serif italic rounded-full transition-colors flex items-center gap-1.5"
             >
               <Save className="w-3.5 h-3.5" />
-              Save Taste Profile
+              {t("taste.save", "Save Taste Profile")}
             </button>
           </div>
         </div>

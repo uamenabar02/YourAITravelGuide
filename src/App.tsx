@@ -30,8 +30,9 @@ import {
 import { parseShareableUrl } from "./utils/sharing";
 import { getKnownSpotsForDestination } from "./utils/destinations";
 import { Compass } from "lucide-react";
+import { LanguageProvider } from "./context/LanguageContext";
 
-export default function App() {
+function AppContent() {
   const [currentPlan, setCurrentPlan] = useState<ItineraryPlan>(() => {
     const shared = parseShareableUrl();
     if (shared) return shared;
@@ -217,7 +218,11 @@ export default function App() {
       }
 
       const newPlan: ItineraryPlan = await res.json();
-      setCurrentPlan(newPlan);
+      const planWithAccommodation: ItineraryPlan = {
+        ...newPlan,
+        accommodation: newPlan.accommodation || finalPrefs.accommodation,
+      };
+      setCurrentPlan(planWithAccommodation);
       addToast("success", `Generated ${newPlan.totalDays}-day itinerary for ${newPlan.destinationOrTown}!`);
 
       // Smooth scroll to display
@@ -233,6 +238,7 @@ export default function App() {
         ...SAMPLE_VACATION_PLAN,
         destinationOrTown: prefs.destination,
         title: `${prefs.duration}-Day ${prefs.destination} Travel Itinerary`,
+        accommodation: prefs.accommodation,
       });
     } finally {
       setIsLoading(false);
@@ -261,7 +267,11 @@ export default function App() {
       }
 
       const newPlan: ItineraryPlan = await res.json();
-      setCurrentPlan(newPlan);
+      const planWithAccommodation: ItineraryPlan = {
+        ...newPlan,
+        accommodation: newPlan.accommodation || prefs.accommodation,
+      };
+      setCurrentPlan(planWithAccommodation);
       addToast("success", `Found local ${prefs.occasion} spots within ${prefs.radiusKm}km of ${prefs.location}!`);
 
       setTimeout(() => {
@@ -275,6 +285,7 @@ export default function App() {
         ...SAMPLE_HOMETOWN_PLAN,
         destinationOrTown: prefs.location,
         title: `Local Explorer: ${prefs.occasion} in ${prefs.location}`,
+        accommodation: prefs.accommodation,
       });
     } finally {
       setIsLoading(false);
@@ -296,7 +307,11 @@ export default function App() {
   };
 
   // Swap Single Activity Spot Handler
-  const handleSwapActivity = async (activity: ActivitySpot, dayNumber: number) => {
+  const handleSwapActivity = async (
+    activity: ActivitySpot,
+    dayNumber: number,
+    options?: { isIndoorOnly?: boolean; customRequirement?: string }
+  ) => {
     try {
       const dayObj = currentPlan.days.find((d) => d.dayNumber === dayNumber);
       const actIndex = dayObj ? dayObj.activities.findIndex((a) => a.id === activity.id) : -1;
@@ -333,6 +348,8 @@ export default function App() {
           permanentSkips: getPermanentSkipNames(),
           userSpots: getMySpots(),
           tasteProfile: getTasteProfile() || undefined,
+          isIndoorOnly: options?.isIndoorOnly,
+          customRequirement: options?.customRequirement,
         }),
       });
 
@@ -351,7 +368,11 @@ export default function App() {
         }),
       });
 
-      addToast("success", `Replaced "${activity.name}" with "${newSpot.name}"!`);
+      if (options?.isIndoorOnly) {
+        addToast("success", `☔ Rainy Day Swap: Replaced "${activity.name}" with covered indoor spot "${newSpot.name}"!`);
+      } else {
+        addToast("success", `Replaced "${activity.name}" with "${newSpot.name}"!`);
+      }
     } catch (err) {
       console.error("Failed to swap spot:", err);
       addToast("error", "Could not swap spot right now. Please try again.");
@@ -578,3 +599,12 @@ export default function App() {
     </div>
   );
 }
+
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AppContent />
+    </LanguageProvider>
+  );
+}
+
