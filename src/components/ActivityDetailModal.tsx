@@ -7,6 +7,7 @@ import {
   ActivityChatMessage,
   ActivityCategory,
 } from "../types";
+import { escapeHtml } from "../utils/offlineStorage";
 import {
   X,
   MapPin,
@@ -592,8 +593,8 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
     const mainMarker = L.marker([baseCoords.lat, baseCoords.lng], { icon: mainIcon });
     mainMarker.bindPopup(`
       <div class="p-1 max-w-xs font-sans text-xs">
-        <p class="font-bold text-stone-900 text-sm mb-0.5">${spot.name}</p>
-        <p class="text-stone-600 mb-1">${details?.exactAddress || spot.address || destination}</p>
+        <p class="font-bold text-stone-900 text-sm mb-0.5">${escapeHtml(spot.name)}</p>
+        <p class="text-stone-600 mb-1">${escapeHtml(details?.exactAddress || spot.address || destination)}</p>
         <span class="inline-block px-1.5 py-0.5 bg-stone-100 text-stone-800 rounded font-medium text-[10px]">Primary Location</span>
       </div>
     `);
@@ -623,10 +624,10 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           <div class="p-1.5 max-w-xs font-sans text-xs">
             <div class="flex items-center gap-1.5 mb-1">
               <span class="w-5 h-5 rounded-full bg-[#5A5A40] text-white flex items-center justify-center font-bold text-[10px]">${idx + 1}</span>
-              <p class="font-bold text-stone-900 text-sm leading-tight">${sub.name}</p>
+              <p class="font-bold text-stone-900 text-sm leading-tight">${escapeHtml(sub.name)}</p>
             </div>
-            <p class="text-stone-600 text-xs mb-1.5 leading-relaxed">${sub.description}</p>
-            ${sub.mustSeeReason ? `<p class="text-amber-800 bg-amber-50 p-1.5 rounded border border-amber-200 text-[11px] font-medium"><strong class="text-amber-900">Must-see:</strong> ${sub.mustSeeReason}</p>` : ""}
+            <p class="text-stone-600 text-xs mb-1.5 leading-relaxed">${escapeHtml(sub.description)}</p>
+            ${sub.mustSeeReason ? `<p class="text-amber-800 bg-amber-50 p-1.5 rounded border border-amber-200 text-[11px] font-medium"><strong class="text-amber-900">Must-see:</strong> ${escapeHtml(sub.mustSeeReason)}</p>` : ""}
           </div>
         `);
         markersGroup.addLayer(subMarker);
@@ -643,6 +644,17 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
     }, 200);
 
   }, [details, spot.coordinates, spot.name, spot.address, destination, categoryStyle.iconBg, activeTab]);
+
+  // Clean up Leaflet map instance on modal unmount
+  useEffect(() => {
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markersGroupRef.current = null;
+      }
+    };
+  }, []);
 
   // Handle Send Chat
   const handleSendChat = async (textToSend?: string) => {

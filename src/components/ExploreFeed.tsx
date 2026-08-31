@@ -240,17 +240,30 @@ export const ExploreFeed: React.FC<ExploreFeedProps> = ({
     try {
       const reviewerName =
         profile?.name || user?.displayName || emailToUse.split("@")[0] || "Explorer";
-      const updated = await submitTripReview(
+      const result = await submitTripReview(
         tripId,
-        tripReviewRating,
-        tripReviewText.trim(),
         reviewerName,
-        emailToUse
+        emailToUse,
+        tripReviewRating,
+        tripReviewText.trim()
       );
-      if (updated) {
-        setTrips((prev) => prev.map((t) => (t.id === tripId ? updated : t)));
+      if (result && result.success) {
+        setTrips((prev) =>
+          prev.map((t) =>
+            t.id === tripId
+              ? {
+                  ...t,
+                  reviews: result.reviews || t.reviews,
+                  rating: result.rating !== undefined ? result.rating : t.rating,
+                  ratingsCount: result.reviews ? result.reviews.length : t.ratingsCount,
+                }
+              : t
+          )
+        );
         setTripReviewText("");
         if (onShowToast) onShowToast("Review posted successfully!", "success");
+      } else {
+        if (onShowToast) onShowToast(result?.message || "Failed to post review.", "error");
       }
     } catch (err) {
       console.error("Failed to post trip review:", err);

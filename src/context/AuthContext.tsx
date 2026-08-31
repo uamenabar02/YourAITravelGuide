@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   User,
   signInWithEmailAndPassword,
@@ -84,20 +84,31 @@ const CURRENT_SESSION_ID = "sess_" + Math.random().toString(36).substring(2, 9) 
 import { sanitizeForFirestore } from "../utils/sanitizeFirestore";
 export { sanitizeForFirestore };
 
+function getDeviceId(): string {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return "guest_default";
+  }
+  let id = localStorage.getItem("localexplorer_device_id");
+  if (!id) {
+    id = "dev_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now().toString(36);
+    localStorage.setItem("localexplorer_device_id", id);
+  }
+  return id;
+}
+
 /**
  * Computes a canonical, deterministic Firestore Document ID for a user.
- * Guarantees that two or more sessions with the same email (e.g. uamenabar02@gmail.com)
- * always bind to the exact same Firestore document regardless of auth provider.
+ * Maps signed-in users by email or firebase UID, and anonymous visitors to a persistent per-device guest document.
  */
 export function getCanonicalUserDocId(firebaseUser: User | null, customEmail?: string | null): string {
   const email = (
     firebaseUser?.email ||
     customEmail ||
     (typeof window !== "undefined" ? localStorage.getItem("localexplorer_user_email") : null) ||
-    "uamenabar02@gmail.com"
+    ""
   ).trim().toLowerCase();
 
-  if (email && email.includes("@")) {
+  if (email && email.includes("@") && !email.endsWith("@localexplorer.guest")) {
     return "user_" + email.replace(/[^a-z0-9]/g, "_");
   }
 
@@ -105,15 +116,8 @@ export function getCanonicalUserDocId(firebaseUser: User | null, customEmail?: s
     return "user_" + firebaseUser.uid;
   }
 
-  if (typeof window !== "undefined" && window.localStorage) {
-    const existing = localStorage.getItem("localexplorer_device_id");
-    if (existing) return "guest_" + existing;
-    const newId = "guest_" + Math.random().toString(36).substring(2, 10);
-    localStorage.setItem("localexplorer_device_id", newId);
-    return newId;
-  }
-
-  return "user_default";
+  const devId = getDeviceId();
+  return "guest_" + devId.replace(/[^a-z0-9_]/g, "_");
 }
 
 function getAllCollabStates(): Record<string, any> {
@@ -144,15 +148,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [activeEmail, setActiveEmail] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("localexplorer_user_email") || "uamenabar02@gmail.com";
+      const saved = localStorage.getItem("localexplorer_user_email");
+      if (saved) return saved;
+      const guestEmail = `guest_${getDeviceId().substring(0, 8)}@localexplorer.guest`;
+      localStorage.setItem("localexplorer_user_email", guestEmail);
+      return guestEmail;
     }
-    return "uamenabar02@gmail.com";
+    return "guest@localexplorer.guest";
   });
 
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     if (typeof window !== "undefined") {
       const savedName = localStorage.getItem("localexplorer_user_name") || "Traveler";
-      const savedEmail = localStorage.getItem("localexplorer_user_email") || "uamenabar02@gmail.com";
+      const savedEmail = localStorage.getItem("localexplorer_user_email") || `guest_${getDeviceId().substring(0, 8)}@localexplorer.guest`;
       const savedPersona = localStorage.getItem("localexplorer_active_persona") || null;
       return {
         name: savedName,
@@ -238,33 +246,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem("localexplorer_auto_sync_enabled", data.autoSyncEnabled ? "true" : "false");
       }
 
-      // Authoritative synchronization for saved trips
+      // Smart non-destructive merge for saved trips
       if (Array.isArray(data.savedTrips)) {
-        localStorage.setItem("localexplorer_saved_trips_v1", JSON.stringify(data.savedTrips));
+        const localTrips = getSavedTrips();
+        const merged = mergeSavedTrips(localTrips, data.savedTrips);
+        localStorage.setItem("localexplorer_saved_trips_v1", JSON.stringify(merged));
       }
 
-      // Authoritative synchronization for My Spots
+      // Smart non-destructive merge for My Spots
       if (Array.isArray(data.mySpots)) {
-        localStorage.setItem("localexplorer_my_spots_v1", JSON.stringify(data.mySpots));
+        const localSpots = getMySpots();
+        const merged = mergeMySpots(localSpots, data.mySpots);
+        localStorage.setItem("localexplorer_my_spots_v1", JSON.stringify(merged));
       }
 
-      // Authoritative synchronization for Taste Profile
+      // Smart merge for Taste Profile
       if (data.tasteProfile !== undefined) {
         if (data.tasteProfile) {
-          localStorage.setItem("localexplorer_taste_profile_v1", JSON.stringify(data.tasteProfile));
+          const localTaste = getTasteProfile();
+          const merged = mergeTasteProfiles(localTaste, data.tasteProfile);
+          if (merged) {
+            localStorage.setItem("localexplorer_taste_profile_v1", JSON.stringify(merged));
+          }
         } else {
           localStorage.removeItem("localexplorer_taste_profile_v1");
         }
       }
 
-      // Authoritative synchronization for 30-Day Activity History
+      // Smart merge for 30-Day Activity History
       if (Array.isArray(data.activityHistory)) {
-        localStorage.setItem("localexplorer_activity_history_v1", JSON.stringify(data.activityHistory));
+        const localHist = getActivityHistory();
+        const merged = mergeActivityHistory(localHist, data.activityHistory);
+        localStorage.setItem("localexplorer_activity_history_v1", JSON.stringify(merged));
       }
 
-      // Authoritative synchronization for Permanent Skips
+      // Smart merge for Permanent Skips
       if (Array.isArray(data.permanentSkips)) {
-        localStorage.setItem("localexplorer_permanent_skips_v1", JSON.stringify(data.permanentSkips));
+        const localSkips = getPermanentSkips();
+        const merged = mergePermanentSkips(localSkips, data.permanentSkips);
+        localStorage.setItem("localexplorer_permanent_skips_v1", JSON.stringify(merged));
       }
 
       if (data.currentPlan !== undefined && data.currentPlan) {
@@ -834,31 +854,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const contextValue = useMemo(
+    () => ({
+      user,
+      profile,
+      loading,
+      activeEmail,
+      autoSyncEnabled,
+      syncStatus,
+      lastSyncTime,
+      sessionId: CURRENT_SESSION_ID,
+      setAutoSyncEnabled,
+      signUp,
+      signIn,
+      signInWithGoogle,
+      signInGuest,
+      switchUserAccount,
+      logout,
+      updateProfileName,
+      updateActivePersona,
+      updateExtendedProfile,
+      toggleFollowUser,
+      syncUserDataWithCloud,
+    }),
+    [
+      user,
+      profile,
+      loading,
+      activeEmail,
+      autoSyncEnabled,
+      syncStatus,
+      lastSyncTime,
+      setAutoSyncEnabled,
+      signUp,
+      signIn,
+      signInWithGoogle,
+      signInGuest,
+      switchUserAccount,
+      logout,
+      updateProfileName,
+      updateActivePersona,
+      updateExtendedProfile,
+      toggleFollowUser,
+      syncUserDataWithCloud,
+    ]
+  );
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        profile,
-        loading,
-        activeEmail,
-        autoSyncEnabled,
-        syncStatus,
-        lastSyncTime,
-        sessionId: CURRENT_SESSION_ID,
-        setAutoSyncEnabled,
-        signUp,
-        signIn,
-        signInWithGoogle,
-        signInGuest,
-        switchUserAccount,
-        logout,
-        updateProfileName,
-        updateActivePersona,
-        updateExtendedProfile,
-        toggleFollowUser,
-        syncUserDataWithCloud,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

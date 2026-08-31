@@ -21,6 +21,7 @@ import {
 import { useLanguage } from "../context/LanguageContext";
 import { AccommodationMapPickerModal } from "./AccommodationMapPickerModal";
 import { findVerifiedDestination } from "../utils/destinations";
+import { escapeHtml } from "../utils/offlineStorage";
 
 interface SwapSpotModalProps {
   isOpen: boolean;
@@ -218,7 +219,7 @@ export const SwapSpotModal: React.FC<SwapSpotModalProps> = ({
             });
 
             const m = L.marker([coords.lat, coords.lng], { icon: replacedIcon }).addTo(group);
-            m.bindPopup(`<b>Original Spot:</b> ${act.name} (Being Replaced)`);
+            m.bindPopup(`<b>Original Spot:</b> ${escapeHtml(act.name)} (Being Replaced)`);
 
             // Add Candidate coordinates to path instead if candidate exists
             if (selectedCandidate?.coordinates) {
@@ -239,7 +240,7 @@ export const SwapSpotModal: React.FC<SwapSpotModalProps> = ({
               });
 
               const candMarker = L.marker([candLat, candLng], { icon: candidateIcon }).addTo(group);
-              candMarker.bindPopup(`<b>Proposed Swap:</b> ${selectedCandidate.name}<br/><i>${selectedCandidate.address || ""}</i>`);
+              candMarker.bindPopup(`<b>Proposed Swap:</b> ${escapeHtml(selectedCandidate.name)}<br/><i>${escapeHtml(selectedCandidate.address || "")}</i>`);
             } else {
               pathPoints.push([coords.lat, coords.lng]);
             }
@@ -257,7 +258,7 @@ export const SwapSpotModal: React.FC<SwapSpotModalProps> = ({
             });
 
             const m = L.marker([coords.lat, coords.lng], { icon: numIcon }).addTo(group);
-            m.bindPopup(`<b>#${idx + 1} ${act.name}</b><br/>${act.time}`);
+            m.bindPopup(`<b>#${idx + 1} ${escapeHtml(act.name)}</b><br/>${escapeHtml(act.time || "")}`);
             pathPoints.push([coords.lat, coords.lng]);
           }
         }
@@ -280,6 +281,22 @@ export const SwapSpotModal: React.FC<SwapSpotModalProps> = ({
 
     return () => clearTimeout(timer);
   }, [isOpen, dayNumber, activity, selectedCandidate, activeTab]);
+
+  // Clean up Leaflet map instance on modal close or component unmount
+  useEffect(() => {
+    if (!isOpen && mapInstanceRef.current) {
+      mapInstanceRef.current.remove();
+      mapInstanceRef.current = null;
+      layerGroupRef.current = null;
+    }
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        layerGroupRef.current = null;
+      }
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

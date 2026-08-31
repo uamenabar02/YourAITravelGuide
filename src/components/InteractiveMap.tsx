@@ -90,7 +90,24 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       mapInstanceRef.current = map;
     }
 
+    // Attach ResizeObserver to automatically resize Leaflet when container changes
+    let resizeTimer: any = null;
+    const resizeObserver = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+        }
+      }, 100);
+    });
+
+    if (mapContainerRef.current) {
+      resizeObserver.observe(mapContainerRef.current);
+    }
+
     return () => {
+      resizeObserver.disconnect();
+      clearTimeout(resizeTimer);
       // Map cleanup on unmount
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();

@@ -2,19 +2,38 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 1. User Profiles Collection
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 256;
+    }
+
+    // Default deny for unmatched documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. User Profiles Collection (Supports guest_<id> and registered user emails)
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isValidId(userId);
     }
 
-    // 2. Shared Trips Collection
+    // 2. Shared Trips Collection (Real-time collaboration & community discovery)
     match /shared_trips/{tripId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isValidId(tripId);
+
+      // Reviews subcollection
+      match /reviews/{reviewId} {
+        allow read: if true;
+        allow write: if isValidId(reviewId);
+      }
     }
 
-    // 3. Community Spots & Activities Collection
+    // 3. Community Spots & Custom Activities Collection
     match /community_spots/{spotId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isValidId(spotId);
     }
   }
 }

@@ -486,7 +486,7 @@ export function generateOfflineHtml(plan: ItineraryPlan, offlineNotes?: string):
 </html>`;
 }
 
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   if (!str) return "";
   return str
     .replace(/&/g, "&amp;")

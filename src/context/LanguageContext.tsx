@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from "react";
 import { en } from "../locales/en";
 import { es } from "../locales/es";
 import { eu } from "../locales/eu";
@@ -91,7 +91,14 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const [showOriginal, setShowOriginal] = useState<boolean>(false);
 
-  const setLanguage = (lang: Language) => {
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = language;
+      document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
+    }
+  }, [language]);
+
+  const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
     setShowOriginal(false);
     try {
@@ -99,59 +106,68 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     } catch {
       // ignore
     }
-  };
+  }, []);
 
-  const toggleShowOriginal = () => {
+  const toggleShowOriginal = useCallback(() => {
     setShowOriginal((prev) => !prev);
-  };
+  }, []);
 
-  const t = (key: string, fallbackOrParams?: string | Record<string, string | number>): string => {
-    if (showOriginal && translations["en"]?.[key]) {
-      let rawEn = translations["en"][key];
+  const t = useCallback(
+    (key: string, fallbackOrParams?: string | Record<string, string | number>): string => {
+      if (showOriginal && translations["en"]?.[key]) {
+        let rawEn = translations["en"][key];
+        if (typeof fallbackOrParams === "object" && fallbackOrParams !== null) {
+          Object.entries(fallbackOrParams).forEach(([paramKey, paramVal]) => {
+            rawEn = rawEn.replace(new RegExp(`\\{${paramKey}\\}`, "g"), String(paramVal));
+          });
+        }
+        return rawEn;
+      }
+
+      let raw = translations[language]?.[key] || translations["en"]?.[key];
+
+      if (!raw) {
+        if (typeof fallbackOrParams === "string") return fallbackOrParams;
+        return key;
+      }
+
       if (typeof fallbackOrParams === "object" && fallbackOrParams !== null) {
         Object.entries(fallbackOrParams).forEach(([paramKey, paramVal]) => {
-          rawEn = rawEn.replace(new RegExp(`\\{${paramKey}\\}`, "g"), String(paramVal));
+          raw = raw.replace(new RegExp(`\\{${paramKey}\\}`, "g"), String(paramVal));
         });
       }
-      return rawEn;
-    }
 
-    let raw = translations[language]?.[key] || translations["en"]?.[key];
+      return raw;
+    },
+    [language, showOriginal]
+  );
 
-    if (!raw) {
-      if (typeof fallbackOrParams === "string") return fallbackOrParams;
-      return key;
-    }
+  const formatCurrency = useCallback(
+    (amount: number, currencySymbol = "€"): string => {
+      const formatted = amount.toFixed(2);
+      if (language === "eu" || language === "es" || language === "fr" || language === "de" || language === "it" || language === "pt") {
+        return `${formatted.replace(".", ",")} ${currencySymbol}`;
+      }
+      return `${currencySymbol}${formatted}`;
+    },
+    [language]
+  );
 
-    if (typeof fallbackOrParams === "object" && fallbackOrParams !== null) {
-      Object.entries(fallbackOrParams).forEach(([paramKey, paramVal]) => {
-        raw = raw.replace(new RegExp(`\\{${paramKey}\\}`, "g"), String(paramVal));
-      });
-    }
-
-    return raw;
-  };
-
-  const formatCurrency = (amount: number, currencySymbol = "€"): string => {
-    const formatted = amount.toFixed(2);
-    if (language === "eu" || language === "es" || language === "fr" || language === "de" || language === "it" || language === "pt") {
-      return `${formatted.replace(".", ",")} ${currencySymbol}`;
-    }
-    return `${currencySymbol}${formatted}`;
-  };
+  const value = useMemo<LanguageContextType>(
+    () => ({
+      language,
+      setLanguage,
+      showOriginal,
+      setShowOriginal,
+      toggleShowOriginal,
+      t,
+      formatCurrency,
+    }),
+    [language, setLanguage, showOriginal, toggleShowOriginal, t, formatCurrency]
+  );
 
   return (
-    <LanguageContext.Provider
-      value={{
-        language,
-        setLanguage,
-        showOriginal,
-        setShowOriginal,
-        toggleShowOriginal,
-        t,
-        formatCurrency,
-      }}
-    >
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   );

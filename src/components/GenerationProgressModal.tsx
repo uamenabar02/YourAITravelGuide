@@ -24,32 +24,27 @@ export const GenerationProgressModal: React.FC<GenerationProgressModalProps> = (
   mode = "vacation",
 }) => {
   const [elapsed, setElapsed] = useState(0);
-  const [currentStageIndex, setCurrentStageIndex] = useState(0);
 
   useEffect(() => {
     if (!isOpen) {
       setElapsed(0);
-      setCurrentStageIndex(0);
       return;
     }
 
     const timer = setInterval(() => {
-      setElapsed((prev) => {
-        const next = prev + 0.1;
-        // Update stage based on elapsed time
-        if (next >= 7.5) setCurrentStageIndex(4);
-        else if (next >= 5.5) setCurrentStageIndex(3);
-        else if (next >= 3.5) setCurrentStageIndex(2);
-        else if (next >= 1.5) setCurrentStageIndex(1);
-        else if (next >= 0.5) setCurrentStageIndex(0);
-        return next;
-      });
+      setElapsed((prev) => prev + 0.1);
     }, 100);
 
     return () => clearInterval(timer);
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const currentStageIndex =
+    elapsed >= 7.5 ? 4 :
+    elapsed >= 5.5 ? 3 :
+    elapsed >= 3.5 ? 2 :
+    elapsed >= 1.5 ? 1 : 0;
 
   // Calculate progress percentage (0 to 95%)
   const progressPercent = Math.min(95, Math.round((elapsed / 10.0) * 92));

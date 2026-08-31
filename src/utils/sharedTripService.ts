@@ -148,6 +148,9 @@ export function subscribeToSharedTrip(
   );
 }
 
+// Debounce map for publishing updates to prevent rapid write bursts
+const publishDebounceTimers = new Map<string, any>();
+
 /**
  * Publish / Save trip changes to Firestore in real-time
  */
@@ -161,51 +164,61 @@ export async function publishSharedTripUpdate(
 ): Promise<void> {
   if (!plan || !plan.id) return;
 
-  try {
-    const effectiveCollab =
-      collabState ||
-      getCollaborationState(
-        plan.id,
-        plan.destinationOrTown,
-        plan.totalDays,
-        plan.tags
-      );
+  // Persist locally immediately
+  const effectiveCollab =
+    collabState ||
+    getCollaborationState(
+      plan.id,
+      plan.destinationOrTown,
+      plan.totalDays,
+      plan.tags
+    );
 
-    const docRef = doc(db, SHARED_TRIPS_COLLECTION, plan.id);
-    const cleanEmail = (userEmail || plan.creatorEmail || "traveler@localexplorer.ai").toLowerCase();
-
-    // Ensure member profiles exist
-    if (!effectiveCollab.memberProfiles || effectiveCollab.memberProfiles.length === 0) {
-      effectiveCollab.memberProfiles = effectiveCollab.members.map((m, idx) => ({
-        id: `m-${idx}-${m.toLowerCase().replace(/\s+/g, "_")}`,
-        name: m,
-        role: idx === 0 ? "organizer" : "editor",
-        joinedAt: Date.now(),
-      }));
-    }
-
-    const currentWalletPasses = walletPasses || getTripWalletPasses(plan.id);
-
-    const payload: SharedTripDoc = {
-      id: plan.id,
-      creatorEmail: plan.creatorEmail || cleanEmail,
-      creatorName: userName || plan.creatorEmail || "Trip Organizer",
-      plan,
-      collabState: effectiveCollab,
-      offlineNotes: offlineNotes || "",
-      walletPasses: currentWalletPasses,
-      lastUpdated: Date.now(),
-      updatedByEmail: cleanEmail,
-    };
-
-    await setDoc(docRef, sanitizeForFirestore(payload), { merge: true });
-
-    // Also persist locally
-    saveCollaborationState(effectiveCollab);
-    notifyLocalDataChanged();
-  } catch (err) {
-    console.error("Failed to publish shared trip update:", err);
+  if (!effectiveCollab.memberProfiles || effectiveCollab.memberProfiles.length === 0) {
+    effectiveCollab.memberProfiles = effectiveCollab.members.map((m, idx) => ({
+      id: `m-${idx}-${m.toLowerCase().replace(/\s+/g, "_")}`,
+      name: m,
+      role: idx === 0 ? "organizer" : "editor",
+      joinedAt: Date.now(),
+    }));
   }
+
+  saveCollaborationState(effectiveCollab);
+  notifyLocalDataChanged();
+
+  // Clear existing debounce timer for this trip if pending
+  if (publishDebounceTimers.has(plan.id)) {
+    clearTimeout(publishDebounceTimers.get(plan.id));
+  }
+
+  // Debounce cloud write by 300ms
+  publishDebounceTimers.set(
+    plan.id,
+    setTimeout(async () => {
+      publishDebounceTimers.delete(plan.id);
+      try {
+        const docRef = doc(db, SHARED_TRIPS_COLLECTION, plan.id);
+        const cleanEmail = (userEmail || plan.creatorEmail || "traveler@localexplorer.ai").toLowerCase();
+        const currentWalletPasses = walletPasses || getTripWalletPasses(plan.id);
+
+        const payload: SharedTripDoc = {
+          id: plan.id,
+          creatorEmail: plan.creatorEmail || cleanEmail,
+          creatorName: userName || plan.creatorEmail || "Trip Organizer",
+          plan,
+          collabState: effectiveCollab,
+          offlineNotes: offlineNotes || "",
+          walletPasses: currentWalletPasses,
+          lastUpdated: Date.now(),
+          updatedByEmail: cleanEmail,
+        };
+
+        await setDoc(docRef, sanitizeForFirestore(payload), { merge: true });
+      } catch (err) {
+        console.warn("Failed to publish shared trip update to cloud:", err);
+      }
+    }, 300)
+  );
 }
 
 /**

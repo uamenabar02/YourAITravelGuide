@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
 
 export interface CurrencyOption {
   code: string;
@@ -75,27 +75,27 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return "classic";
   });
 
-  const setCurrency = (code: string) => {
+  const setCurrency = useCallback((code: string) => {
     if (SUPPORTED_CURRENCIES[code]) {
       setCurrencyState(code);
       localStorage.setItem(LOCAL_KEY_CURRENCY, code);
     }
-  };
+  }, []);
 
-  const setDistanceUnit = (unit: DistanceUnit) => {
+  const setDistanceUnit = useCallback((unit: DistanceUnit) => {
     setDistanceUnitState(unit);
     localStorage.setItem(LOCAL_KEY_DISTANCE, unit);
-  };
+  }, []);
 
-  const setTemperatureUnit = (unit: TemperatureUnit) => {
+  const setTemperatureUnit = useCallback((unit: TemperatureUnit) => {
     setTemperatureUnitState(unit);
     localStorage.setItem(LOCAL_KEY_TEMP, unit);
-  };
+  }, []);
 
-  const setTheme = (newTheme: string) => {
+  const setTheme = useCallback((newTheme: string) => {
     setThemeState(newTheme);
     localStorage.setItem(LOCAL_KEY_THEME, newTheme);
-  };
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -112,75 +112,101 @@ export const PreferencesProvider: React.FC<{ children: React.ReactNode }> = ({ c
    * Converts and formats a numeric or string USD amount into the target user currency.
    * If given "$25" or "25", extracts digits and applies exchange rate.
    */
-  const formatAmount = (amountInUSD: number | string): string => {
-    if (amountInUSD === null || amountInUSD === undefined || amountInUSD === "") return "";
+  const formatAmount = useCallback(
+    (amountInUSD: number | string): string => {
+      if (amountInUSD === null || amountInUSD === undefined || amountInUSD === "") return "";
 
-    let numericVal = 0;
-    if (typeof amountInUSD === "number") {
-      numericVal = amountInUSD;
-    } else {
-      const parsed = parseFloat(String(amountInUSD).replace(/[^0-9.]/g, ""));
-      if (isNaN(parsed)) return String(amountInUSD);
-      numericVal = parsed;
-    }
+      let numericVal = 0;
+      if (typeof amountInUSD === "number") {
+        numericVal = amountInUSD;
+      } else {
+        const parsed = parseFloat(String(amountInUSD).replace(/[^0-9.]/g, ""));
+        if (isNaN(parsed)) return String(amountInUSD);
+        numericVal = parsed;
+      }
 
-    const converted = numericVal * currencyOption.rateVsUSD;
+      const converted = numericVal * currencyOption.rateVsUSD;
 
-    if (currency === "JPY" || currency === "INR") {
-      return `${currencySymbol}${Math.round(converted).toLocaleString()}`;
-    }
+      if (currency === "JPY" || currency === "INR") {
+        return `${currencySymbol}${Math.round(converted).toLocaleString()}`;
+      }
 
-    return `${currencySymbol}${converted.toFixed(converted % 1 === 0 ? 0 : 2)}`;
-  };
+      return `${currencySymbol}${converted.toFixed(converted % 1 === 0 ? 0 : 2)}`;
+    },
+    [currency, currencyOption.rateVsUSD, currencySymbol]
+  );
 
   /**
    * Converts kilometers to km or miles based on preference.
    */
-  const formatDistance = (kmValue: number | string): string => {
-    const numericKm = typeof kmValue === "number" ? kmValue : parseFloat(String(kmValue));
-    if (isNaN(numericKm)) return String(kmValue);
+  const formatDistance = useCallback(
+    (kmValue: number | string): string => {
+      const numericKm = typeof kmValue === "number" ? kmValue : parseFloat(String(kmValue));
+      if (isNaN(numericKm)) return String(kmValue);
 
-    if (distanceUnit === "mi") {
-      const miles = numericKm * 0.621371;
-      return `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`;
-    }
+      if (distanceUnit === "mi") {
+        const miles = numericKm * 0.621371;
+        return `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`;
+      }
 
-    return `${numericKm < 10 ? numericKm.toFixed(1) : Math.round(numericKm)} km`;
-  };
+      return `${numericKm < 10 ? numericKm.toFixed(1) : Math.round(numericKm)} km`;
+    },
+    [distanceUnit]
+  );
 
   /**
    * Converts Celsius to °C or °F based on preference.
    */
-  const formatTemperature = (celsiusValue: number | string): string => {
-    const numericC = typeof celsiusValue === "number" ? celsiusValue : parseFloat(String(celsiusValue));
-    if (isNaN(numericC)) return String(celsiusValue);
+  const formatTemperature = useCallback(
+    (celsiusValue: number | string): string => {
+      const numericC = typeof celsiusValue === "number" ? celsiusValue : parseFloat(String(celsiusValue));
+      if (isNaN(numericC)) return String(celsiusValue);
 
-    if (temperatureUnit === "F") {
-      const fahrenheit = Math.round((numericC * 9) / 5 + 32);
-      return `${fahrenheit}°F`;
-    }
+      if (temperatureUnit === "F") {
+        const fahrenheit = Math.round((numericC * 9) / 5 + 32);
+        return `${fahrenheit}°F`;
+      }
 
-    return `${Math.round(numericC)}°C`;
-  };
+      return `${Math.round(numericC)}°C`;
+    },
+    [temperatureUnit]
+  );
+
+  const value = useMemo<PreferencesContextType>(
+    () => ({
+      currency,
+      currencyOption,
+      currencySymbol,
+      distanceUnit,
+      temperatureUnit,
+      theme,
+      setCurrency,
+      setDistanceUnit,
+      setTemperatureUnit,
+      setTheme,
+      formatAmount,
+      formatDistance,
+      formatTemperature,
+    }),
+    [
+      currency,
+      currencyOption,
+      currencySymbol,
+      distanceUnit,
+      temperatureUnit,
+      theme,
+      setCurrency,
+      setDistanceUnit,
+      setTemperatureUnit,
+      setTheme,
+      formatAmount,
+      formatDistance,
+      formatTemperature,
+    ]
+  );
 
   return (
-    <PreferencesContext.Provider
-      value={{
-        currency,
-        currencyOption,
-        currencySymbol,
-        distanceUnit,
-        temperatureUnit,
-        theme,
-        setCurrency,
-        setDistanceUnit,
-        setTemperatureUnit,
-        setTheme,
-        formatAmount,
-        formatDistance,
-        formatTemperature,
-      }}
-    >
+    <PreferencesContext.Provider value={value}>
       {children}
     </PreferencesContext.Provider>
   );
