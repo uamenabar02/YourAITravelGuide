@@ -203,7 +203,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         });
 
         markersLayerRef.current?.addLayer(marker);
-        markersMapRef.current.set(act.id, { marker, act, dayNumber: day.dayNumber, actIdx });
+        markersMapRef.current.set(`${day.dayNumber}:${act.id}`, { marker, act, dayNumber: day.dayNumber, actIdx });
       });
 
       // Draw polyline connecting day's sequence

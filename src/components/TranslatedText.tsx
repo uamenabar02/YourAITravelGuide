@@ -179,8 +179,8 @@ export function useTranslateText(text: string): { translated: string; loading: b
 
     const handleUpdate = () => {
       const cached = getCachedTranslation(text, language);
-      if (cached && cached !== translated) {
-        setTranslated(cached);
+      if (cached) {
+        setTranslated((prev) => (prev !== cached ? cached : prev));
         setLoading(false);
       }
     };
@@ -189,7 +189,7 @@ export function useTranslateText(text: string): { translated: string; loading: b
     return () => {
       window.removeEventListener(TRANSLATION_EVENT, handleUpdate);
     };
-  }, [text, language, showOriginal, translated]);
+  }, [text, language, showOriginal]);
 
   return { translated, loading };
 }

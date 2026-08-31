@@ -11,35 +11,29 @@ service cloud.firestore {
       return val is string && val.size() > 0 && val.size() <= maxLen;
     }
 
+    function emailDocId() {
+      return "user_" + request.auth.token.email.replaceAll('[^a-z0-9]', '_');
+    }
+
     // Default deny for unmatched collections
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // 1. User Profiles Collection
+    // 1. User Profiles Collection (Supports guest_<id> and registered user emails)
     match /users/{userId} {
       allow read: if isValidId(userId);
       
-      allow create: if isValidId(userId) 
-        && request.resource.data.email is string
+      allow create, update: if isValidId(userId) 
         && (
-          userId.startsWith("guest_") ||
-          userId.startsWith("user_")
-        );
-
-      allow update: if isValidId(userId)
-        && request.resource.data.email is string
-        && (
-          userId.startsWith("guest_") ||
-          (
-            userId.startsWith("user_") &&
-            (request.auth == null || request.auth.token.email == null || userId == "user_" + request.auth.token.email.replace('[^a-z0-9]', '_'))
-          )
+          userId.matches('guest_.*') ||
+          (request.auth != null && request.auth.token.email != null && userId == emailDocId()) ||
+          (request.auth != null && userId == "user_" + request.auth.uid)
         );
 
       allow delete: if request.auth != null && (
-        request.auth.uid == userId ||
-        (request.auth.token.email != null && userId == "user_" + request.auth.token.email.replace('[^a-z0-9]', '_'))
+        (request.auth.token.email != null && userId == emailDocId()) ||
+        userId == "user_" + request.auth.uid
       );
     }
 
@@ -64,7 +58,10 @@ service cloud.firestore {
     match /community_spots/{spotId} {
       allow read: if isValidId(spotId);
 
-      allow create, update: if isValidId(spotId)
+      allow create: if isValidId(spotId)
+        && isNonEmptyString(request.resource.data.name, 300);
+
+      allow update: if isValidId(spotId)
         && isNonEmptyString(request.resource.data.name, 300);
 
       allow delete: if request.auth != null;
