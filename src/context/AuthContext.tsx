@@ -706,7 +706,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Logout
   const logout = async () => {
-    const guestEmail = "guest_" + Math.random().toString(36).substring(2, 8) + "@localexplorer.ai";
+    const devId = getDeviceId();
+    const guestEmail = `guest_${devId.substring(0, 8)}@localexplorer.guest`;
     setActiveEmail(guestEmail);
     activeEmailRef.current = guestEmail;
     localStorage.setItem("localexplorer_user_email", guestEmail);

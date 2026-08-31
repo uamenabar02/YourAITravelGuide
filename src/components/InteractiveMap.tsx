@@ -123,7 +123,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     }
   }, [plan?.mapCenter?.lat, plan?.mapCenter?.lng, plan?.mapZoom, plan?.id, plan?.destinationOrTown]);
 
-  // Update Markers & Polylines whenever plan, activeDay, or selectedSpot changes
+  // Update Markers & Polylines whenever plan or activeDay changes
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !markersLayerRef.current || !routesLayerRef.current || !plan) return;
@@ -215,15 +215,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     });
 
     // Fit map bounds to show all markers nicely — but ONLY when the plan or
-    // the day filter actually changed. Re-fitting on every marker selection
-    // would cancel the panTo() triggered by clicking a pin.
+    // the day filter actually changed.
     const fitKey = `${plan.id}|${plan.destinationOrTown}|${activeDayNumber}|${allLatLngs.length}`;
     if (allLatLngs.length > 0 && lastFitKeyRef.current !== fitKey) {
       lastFitKeyRef.current = fitKey;
       const bounds = L.latLngBounds(allLatLngs);
       map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
     }
-  }, [plan, activeDayNumber, selectedSpotId, activeCardSpot?.spot.id]);
+  }, [plan, activeDayNumber]);
 
   // Leaflet needs invalidateSize() after the container resizes (fullscreen toggle)
   useEffect(() => {

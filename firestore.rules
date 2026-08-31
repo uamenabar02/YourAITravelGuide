@@ -15,7 +15,12 @@ service cloud.firestore {
     // 1. User Profiles Collection (Supports guest_<id> and registered user emails)
     match /users/{userId} {
       allow read: if true;
-      allow write: if isValidId(userId);
+      allow create, update: if isValidId(userId) && (
+        userId.startsWith("guest_") ||
+        userId.startsWith("user_") ||
+        (request.auth != null && (request.auth.uid == userId || request.auth.token.email != null))
+      );
+      allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
     // 2. Shared Trips Collection (Real-time collaboration & community discovery)

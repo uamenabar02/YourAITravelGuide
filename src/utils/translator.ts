@@ -20,11 +20,28 @@ try {
   console.warn("Failed to load translation cache:", e);
 }
 
+const MAX_CACHE_ENTRIES_PER_LANG = 400;
+
 const saveCache = () => {
   try {
+    // Trim cache to MAX_CACHE_ENTRIES_PER_LANG if needed
+    Object.keys(translationCache).forEach((lang) => {
+      const keys = Object.keys(translationCache[lang] || {});
+      if (keys.length > MAX_CACHE_ENTRIES_PER_LANG) {
+        const trimmed: Record<string, string> = {};
+        keys.slice(keys.length - MAX_CACHE_ENTRIES_PER_LANG).forEach((k) => {
+          trimmed[k] = translationCache[lang][k];
+        });
+        translationCache[lang] = trimmed;
+      }
+    });
+
     localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(translationCache));
   } catch (e) {
-    console.warn("Failed to persist translation cache:", e);
+    console.warn("Failed to persist translation cache (storage full), clearing older keys:", e);
+    try {
+      localStorage.removeItem(CACHE_STORAGE_KEY);
+    } catch (_) {}
   }
 };
 

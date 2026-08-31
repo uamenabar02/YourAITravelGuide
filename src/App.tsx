@@ -141,11 +141,11 @@ function AppContent() {
         if (activeSession) {
           setCurrentPlan((prev) => {
             if (!prev || prev.id !== activeSession.id) {
-              setActiveMode(activeSession.mode);
               return activeSession;
             }
             return prev;
           });
+          setActiveMode(activeSession.mode);
         }
       });
     };
