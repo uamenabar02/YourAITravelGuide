@@ -74,8 +74,8 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
       const customEvent = e as CustomEvent<{ lang: string }>;
       if (!customEvent.detail || customEvent.detail.lang === language) {
         const cached = getCachedTranslation(contentText, language);
-        if (cached && cached !== translatedText) {
-          setTranslatedText(cached);
+        if (cached) {
+          setTranslatedText((prev) => (prev !== cached ? cached : prev));
           setLoading(false);
         }
       }
@@ -85,7 +85,7 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
     return () => {
       window.removeEventListener(TRANSLATION_EVENT, handleUpdate);
     };
-  }, [contentText, language, showOriginal, translatedText]);
+  }, [contentText, language, showOriginal]);
 
   const displayedText = loading ? contentText : translatedText;
 

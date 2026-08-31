@@ -51,6 +51,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routesLayerRef = useRef<L.LayerGroup | null>(null);
+  const markersMapRef = useRef<Map<string, { marker: L.Marker; act: ActivitySpot; dayNumber: number; actIdx: number }>>(new Map());
   const lastFitKeyRef = useRef<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeCardSpot, setActiveCardSpot] = useState<{
@@ -58,6 +59,40 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     dayNumber: number;
     spotIndex: number;
   } | null>(null);
+
+  const createMarkerIcon = (act: ActivitySpot, dayNumber: number, actIdx: number, isSelected: boolean) => {
+    const categoryStyle = CATEGORY_COLORS[act.category] || CATEGORY_COLORS.sightseeing;
+    const numberLabel = activeDayNumber === "all" ? `D${dayNumber}.${actIdx + 1}` : `${actIdx + 1}`;
+    const customHtml = `
+      <div class="custom-leaflet-marker ${isSelected ? "custom-pulse-marker" : ""}" style="width: 32px; height: 32px; cursor: pointer;">
+        <div style="
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background-color: ${isSelected ? "#2c2c24" : categoryStyle.bg};
+          color: ${categoryStyle.text};
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-family: 'Plus Jakarta Sans', sans-serif;
+          font-weight: 700;
+          box-shadow: 0 4px 8px -1px rgba(0,0,0,0.3);
+          border: 2px solid ${isSelected ? "#5A5A40" : "#ffffff"};
+          transition: transform 0.2s;
+        ">
+          ${numberLabel}
+        </div>
+      </div>
+    `;
+
+    return L.divIcon({
+      html: customHtml,
+      className: "",
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+  };
 
   // Initialize Map Once
   useEffect(() => {
@@ -130,6 +165,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
     markersLayerRef.current.clearLayers();
     routesLayerRef.current.clearLayers();
+    markersMapRef.current.clear();
 
     const daysToShow =
       activeDayNumber === "all"
@@ -151,42 +187,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         dayCoords.push(latLng);
         allLatLngs.push(latLng);
 
-        const categoryStyle = CATEGORY_COLORS[act.category] || CATEGORY_COLORS.sightseeing;
         const isSelected = selectedSpotId === act.id || activeCardSpot?.spot.id === act.id;
-        const numberLabel = activeDayNumber === "all" ? `D${day.dayNumber}.${actIdx + 1}` : `${actIdx + 1}`;
-
-        // Custom HTML Marker Icon
-        const customHtml = `
-          <div class="custom-leaflet-marker ${isSelected ? "custom-pulse-marker" : ""}" style="width: 32px; height: 32px; cursor: pointer;">
-            <div style="
-              width: 32px;
-              height: 32px;
-              border-radius: 50%;
-              background-color: ${isSelected ? "#2c2c24" : categoryStyle.bg};
-              color: ${categoryStyle.text};
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              font-size: 11px;
-              font-family: 'Plus Jakarta Sans', sans-serif;
-              font-weight: 700;
-              box-shadow: 0 4px 8px -1px rgba(0,0,0,0.3);
-              border: 2px solid ${isSelected ? "#5A5A40" : "#ffffff"};
-              transition: transform 0.2s;
-            ">
-              ${numberLabel}
-            </div>
-          </div>
-        `;
-
-        const customIcon = L.divIcon({
-          html: customHtml,
-          className: "",
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-        });
-
-        const marker = L.marker(latLng, { icon: customIcon });
+        const icon = createMarkerIcon(act, day.dayNumber, actIdx, isSelected);
+        const marker = L.marker(latLng, { icon });
 
         // When pin is clicked, show the pinned location preview description card inside the map!
         marker.on("click", (e) => {
@@ -200,6 +203,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         });
 
         markersLayerRef.current?.addLayer(marker);
+        markersMapRef.current.set(act.id, { marker, act, dayNumber: day.dayNumber, actIdx });
       });
 
       // Draw polyline connecting day's sequence
@@ -223,6 +227,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       map.fitBounds(bounds, { padding: [45, 45], maxZoom: 15 });
     }
   }, [plan, activeDayNumber]);
+
+  // Targeted update for marker icons on selection change without rebuilding layers
+  useEffect(() => {
+    markersMapRef.current.forEach(({ marker, act, dayNumber, actIdx }) => {
+      const isSelected = selectedSpotId === act.id || activeCardSpot?.spot.id === act.id;
+      marker.setIcon(createMarkerIcon(act, dayNumber, actIdx, isSelected));
+    });
+  }, [selectedSpotId, activeCardSpot?.spot.id, activeDayNumber]);
 
   // Leaflet needs invalidateSize() after the container resizes (fullscreen toggle)
   useEffect(() => {

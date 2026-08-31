@@ -21,6 +21,7 @@ try {
 }
 
 const MAX_CACHE_ENTRIES_PER_LANG = 400;
+const AGGRESSIVE_TRIM_PER_LANG = 150;
 
 const saveCache = () => {
   try {
@@ -38,10 +39,23 @@ const saveCache = () => {
 
     localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(translationCache));
   } catch (e) {
-    console.warn("Failed to persist translation cache (storage full), clearing older keys:", e);
+    console.warn("Storage write limit reached in translation cache; aggressively trimming to retry:", e);
     try {
-      localStorage.removeItem(CACHE_STORAGE_KEY);
-    } catch (_) {}
+      // Aggressively trim to AGGRESSIVE_TRIM_PER_LANG and retry
+      Object.keys(translationCache).forEach((lang) => {
+        const keys = Object.keys(translationCache[lang] || {});
+        if (keys.length > AGGRESSIVE_TRIM_PER_LANG) {
+          const trimmed: Record<string, string> = {};
+          keys.slice(keys.length - AGGRESSIVE_TRIM_PER_LANG).forEach((k) => {
+            trimmed[k] = translationCache[lang][k];
+          });
+          translationCache[lang] = trimmed;
+        }
+      });
+      localStorage.setItem(CACHE_STORAGE_KEY, JSON.stringify(translationCache));
+    } catch (retryErr) {
+      console.warn("Unable to persist translation cache even after aggressive trim:", retryErr);
+    }
   }
 };
 

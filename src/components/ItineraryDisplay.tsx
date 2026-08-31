@@ -196,14 +196,14 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
     showToast(`Day ${dayNumber} route optimized for travel efficiency!`, "success");
   };
 
-  // Auto-translate itinerary in background when language changes
+  // Auto-translate itinerary in background when language changes or a new plan is loaded
   useEffect(() => {
     if (language !== "en" && plan) {
       translateEntireItineraryPlan(plan, language).catch((err) => {
         console.warn("Background translation:", err);
       });
     }
-  }, [plan, language]);
+  }, [plan?.id, plan?.destinationOrTown, language]);
 
   // Reiteration modal state
   const [showReiterateModal, setShowReiterateModal] = useState(false);
