@@ -1,5 +1,6 @@
 import React from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { TranslatedText } from "./TranslatedText";
 
 export interface ToastMessage {
   id: string;
@@ -32,11 +33,11 @@ export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
             {toast.type === "success" && <CheckCircle2 className="w-4 h-4 text-[#d1d1ca] shrink-0" />}
             {toast.type === "error" && <AlertCircle className="w-4 h-4 text-rose-300 shrink-0" />}
             {toast.type === "info" && <Info className="w-4 h-4 text-[#d1d1ca] shrink-0" />}
-            <span className="font-medium">{toast.message}</span>
+            <span className="font-medium"><TranslatedText text={toast.message} /></span>
           </div>
           <button
             onClick={() => onDismiss(toast.id)}
-            className="p-1 text-[#8a8a7e] hover:text-white rounded"
+            className="p-1 text-[#8a8a7e] hover:text-white rounded cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>

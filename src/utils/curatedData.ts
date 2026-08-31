@@ -268,6 +268,7 @@ export const SAMPLE_HOMETOWN_PLAN: ItineraryPlan = {
   ],
   totalDays: 1,
   createdAt: new Date().toISOString(),
+  startDate: new Date().toISOString().split("T")[0],
   tags: ["Half-Day", "15km Radius", "Solo Chill & Date", "Mild 22°C"],
   weatherSummary: "Sunny & clear, 22°C / 72°F with light southern breeze.",
   mapCenter: { lat: 40.7028, lng: -73.9928 },

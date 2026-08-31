@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useLanguage } from "../context/LanguageContext";
-import { getCachedTranslation, fetchTranslation } from "../utils/translator";
+import { getCachedTranslation, fetchTranslation, fetchTranslationBatch, TRANSLATION_EVENT } from "../utils/translator";
 
 interface TranslatedTextProps {
-  text: string;
+  text?: string;
+  children?: React.ReactNode;
   className?: string;
   as?: "span" | "p" | "div" | "h1" | "h2" | "h3" | "h4" | "li" | "strong" | "italic";
   isMarkdown?: boolean;
@@ -11,29 +12,31 @@ interface TranslatedTextProps {
 
 export const TranslatedText: React.FC<TranslatedTextProps> = ({
   text = "",
+  children,
   className = "",
   as: Component = "span",
 }) => {
-  const { language } = useLanguage();
+  const contentText = text || (typeof children === "string" ? children : "");
+  const { language, showOriginal } = useLanguage();
   const [translatedText, setTranslatedText] = useState<string>(() => {
-    if (language === "en" || !text) return text;
-    const cached = getCachedTranslation(text, language);
-    return cached || text;
+    if (showOriginal || language === "en" || !contentText) return contentText;
+    const cached = getCachedTranslation(contentText, language);
+    return cached || contentText;
   });
   const [loading, setLoading] = useState<boolean>(() => {
-    if (language === "en" || !text) return false;
-    const cached = getCachedTranslation(text, language);
+    if (showOriginal || language === "en" || !contentText) return false;
+    const cached = getCachedTranslation(contentText, language);
     return !cached;
   });
 
   useEffect(() => {
-    if (language === "en" || !text) {
-      setTranslatedText(text);
+    if (showOriginal || language === "en" || !contentText) {
+      setTranslatedText(contentText);
       setLoading(false);
       return;
     }
 
-    const cached = getCachedTranslation(text, language);
+    const cached = getCachedTranslation(contentText, language);
     if (cached) {
       setTranslatedText(cached);
       setLoading(false);
@@ -43,7 +46,7 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
     let isCurrent = true;
     setLoading(true);
 
-    fetchTranslation(text, language)
+    fetchTranslation(contentText, language)
       .then((translated) => {
         if (isCurrent) {
           setTranslatedText(translated);
@@ -53,7 +56,7 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
       .catch((err) => {
         console.warn("Dynamic translation failed:", err);
         if (isCurrent) {
-          setTranslatedText(text); // fallback to original
+          setTranslatedText(contentText); // fallback to original
           setLoading(false);
         }
       });
@@ -61,23 +64,36 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
     return () => {
       isCurrent = false;
     };
-  }, [text, language]);
+  }, [contentText, language, showOriginal]);
 
-  if (loading) {
-    return (
-      <span className="inline-flex flex-col gap-1 w-full animate-pulse opacity-75" aria-hidden="true">
-        <span className="h-4 bg-stone-200 rounded-sm w-11/12"></span>
-        {text.length > 80 && <span className="h-4 bg-stone-200 rounded-sm w-9/12"></span>}
-        {text.length > 150 && <span className="h-4 bg-stone-200 rounded-sm w-6/12"></span>}
-      </span>
-    );
-  }
+  // Listen to broadcast translation updates from batch engine
+  useEffect(() => {
+    if (showOriginal || language === "en" || !contentText) return;
+
+    const handleUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ lang: string }>;
+      if (!customEvent.detail || customEvent.detail.lang === language) {
+        const cached = getCachedTranslation(contentText, language);
+        if (cached && cached !== translatedText) {
+          setTranslatedText(cached);
+          setLoading(false);
+        }
+      }
+    };
+
+    window.addEventListener(TRANSLATION_EVENT, handleUpdate);
+    return () => {
+      window.removeEventListener(TRANSLATION_EVENT, handleUpdate);
+    };
+  }, [contentText, language, showOriginal, translatedText]);
+
+  const displayedText = loading ? contentText : translatedText;
 
   // Handle markdown-like formatting (bold **, line breaks \n) cleanly
-  if (translatedText.includes("**") || translatedText.includes("\n")) {
-    const lines = translatedText.split("\n");
+  if (displayedText.includes("**") || displayedText.includes("\n")) {
+    const lines = displayedText.split("\n");
     return (
-      <Component className={`${className} transition-opacity duration-300`}>
+      <Component className={`${className} transition-opacity duration-300 ${loading ? "opacity-75" : "opacity-100"}`}>
         {lines.map((line, lIdx) => {
           // Parse bold markers **text**
           const parts = line.split(/(\*\*[^*]+\*\*)/g);
@@ -99,7 +115,11 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
     );
   }
 
-  return <Component className={`${className} transition-opacity duration-300`}>{translatedText}</Component>;
+  return (
+    <Component className={`${className} transition-opacity duration-300 ${loading ? "opacity-75" : "opacity-100"}`}>
+      {displayedText}
+    </Component>
+  );
 };
 
 /**
@@ -107,18 +127,18 @@ export const TranslatedText: React.FC<TranslatedTextProps> = ({
  * Automatically switches to the active language and handles loading state.
  */
 export function useTranslateText(text: string): { translated: string; loading: boolean } {
-  const { language } = useLanguage();
+  const { language, showOriginal } = useLanguage();
   const [translated, setTranslated] = useState<string>(() => {
-    if (language === "en" || !text) return text;
+    if (showOriginal || language === "en" || !text) return text;
     return getCachedTranslation(text, language) || text;
   });
   const [loading, setLoading] = useState<boolean>(() => {
-    if (language === "en" || !text) return false;
+    if (showOriginal || language === "en" || !text) return false;
     return !getCachedTranslation(text, language);
   });
 
   useEffect(() => {
-    if (language === "en" || !text) {
+    if (showOriginal || language === "en" || !text) {
       setTranslated(text);
       setLoading(false);
       return;
@@ -152,7 +172,24 @@ export function useTranslateText(text: string): { translated: string; loading: b
     return () => {
       isCurrent = false;
     };
-  }, [text, language]);
+  }, [text, language, showOriginal]);
+
+  useEffect(() => {
+    if (showOriginal || language === "en" || !text) return;
+
+    const handleUpdate = () => {
+      const cached = getCachedTranslation(text, language);
+      if (cached && cached !== translated) {
+        setTranslated(cached);
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener(TRANSLATION_EVENT, handleUpdate);
+    return () => {
+      window.removeEventListener(TRANSLATION_EVENT, handleUpdate);
+    };
+  }, [text, language, showOriginal, translated]);
 
   return { translated, loading };
 }
@@ -161,22 +198,20 @@ export function useTranslateText(text: string): { translated: string; loading: b
  * Custom hook to translate an array of strings dynamically.
  * Combines them into a single batch query to optimize performance.
  */
-import { fetchTranslationBatch } from "../utils/translator";
-
 export function useTranslateArray(texts: string[]): { translated: string[]; loading: boolean } {
-  const { language } = useLanguage();
+  const { language, showOriginal } = useLanguage();
   const [translated, setTranslated] = useState<string[]>(() => {
-    if (language === "en" || !texts || texts.length === 0) return texts || [];
+    if (showOriginal || language === "en" || !texts || texts.length === 0) return texts || [];
     return texts.map((t) => getCachedTranslation(t, language) || t);
   });
   const [loading, setLoading] = useState<boolean>(() => {
-    if (language === "en" || !texts || texts.length === 0) return false;
+    if (showOriginal || language === "en" || !texts || texts.length === 0) return false;
     const allCached = texts.every((t) => !!getCachedTranslation(t, language));
     return !allCached;
   });
 
   useEffect(() => {
-    if (language === "en" || !texts || texts.length === 0) {
+    if (showOriginal || language === "en" || !texts || texts.length === 0) {
       setTranslated(texts || []);
       setLoading(false);
       return;
@@ -210,7 +245,22 @@ export function useTranslateArray(texts: string[]): { translated: string[]; load
     return () => {
       isCurrent = false;
     };
-  }, [JSON.stringify(texts), language]);
+  }, [JSON.stringify(texts), language, showOriginal]);
+
+  useEffect(() => {
+    if (showOriginal || language === "en" || !texts || texts.length === 0) return;
+
+    const handleUpdate = () => {
+      const allCached = texts.map((t) => getCachedTranslation(t, language) || t);
+      setTranslated(allCached);
+      setLoading(false);
+    };
+
+    window.addEventListener(TRANSLATION_EVENT, handleUpdate);
+    return () => {
+      window.removeEventListener(TRANSLATION_EVENT, handleUpdate);
+    };
+  }, [JSON.stringify(texts), language, showOriginal]);
 
   return { translated, loading };
 }

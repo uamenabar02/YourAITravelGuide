@@ -15,6 +15,8 @@ import {
   MapPin,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
+import { useLanguage } from "../context/LanguageContext";
+import { TranslatedText } from "./TranslatedText";
 
 interface InteractiveMapProps {
   plan: ItineraryPlan;
@@ -44,6 +46,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   selectedSpotId,
   onSelectSpot,
 }) => {
+  const { t } = useLanguage();
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
@@ -60,9 +63,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    if (!mapInstanceRef.current) {
-      const center = plan.mapCenter || { lat: 43.3183, lng: -1.9812 };
-      const zoom = plan.mapZoom || 13;
+    if (!mapInstanceRef.current && plan) {
+      const center = plan?.mapCenter || { lat: 43.3183, lng: -1.9812 };
+      const zoom = plan?.mapZoom || 13;
 
       const map = L.map(mapContainerRef.current, {
         center: [center.lat, center.lng],
@@ -98,23 +101,23 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
   // Sync center and zoom when destination changes
   useEffect(() => {
-    if (mapInstanceRef.current && plan.mapCenter && typeof plan.mapCenter.lat === "number" && typeof plan.mapCenter.lng === "number") {
+    if (mapInstanceRef.current && plan?.mapCenter && typeof plan.mapCenter.lat === "number" && typeof plan.mapCenter.lng === "number") {
       mapInstanceRef.current.setView([plan.mapCenter.lat, plan.mapCenter.lng], plan.mapZoom || 13);
     }
-  }, [plan.mapCenter?.lat, plan.mapCenter?.lng, plan.mapZoom, plan.id, plan.destinationOrTown]);
+  }, [plan?.mapCenter?.lat, plan?.mapCenter?.lng, plan?.mapZoom, plan?.id, plan?.destinationOrTown]);
 
   // Update Markers & Polylines whenever plan, activeDay, or selectedSpot changes
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !markersLayerRef.current || !routesLayerRef.current) return;
+    if (!map || !markersLayerRef.current || !routesLayerRef.current || !plan) return;
 
     markersLayerRef.current.clearLayers();
     routesLayerRef.current.clearLayers();
 
     const daysToShow =
       activeDayNumber === "all"
-        ? plan.days
-        : plan.days.filter((d) => d.dayNumber === activeDayNumber);
+        ? (plan.days || [])
+        : (plan.days || []).filter((d) => d.dayNumber === activeDayNumber);
 
     const allLatLngs: L.LatLngExpression[] = [];
 
@@ -245,10 +248,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     >
       {/* Top Map Toolbar with Day Selectors */}
       <div className="bg-white/95 backdrop-blur-xs px-3 sm:px-4 py-2.5 border-b border-[#e5e5df] flex flex-wrap items-center justify-between gap-2 z-10">
-        <div className="flex items-center space-x-1.5 overflow-x-auto py-0.5 max-w-full">
+        <div className="flex flex-wrap items-center gap-1.5 py-0.5 max-w-full">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a8a7e] mr-1 flex items-center gap-1 shrink-0">
             <Layers className="w-3.5 h-3.5 text-[#5A5A40]" />
-            Day:
+            {t("map.dayLabel", "Day:")}
           </span>
           <button
             type="button"
@@ -259,7 +262,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 : "bg-[#ecece4] text-[#2c2c24] hover:bg-[#d1d1ca]"
             }`}
           >
-            All Days ({plan.days.length})
+            {t("action.allDays", "All Days")} ({plan.days.length})
           </button>
           {plan.days.map((d) => (
             <button
@@ -272,7 +275,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                   : "bg-[#ecece4] text-[#2c2c24] hover:bg-[#d1d1ca]"
               }`}
             >
-              Day {d.dayNumber}
+              {t("action.day", "Day")} {d.dayNumber}
             </button>
           ))}
         </div>
@@ -286,7 +289,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             className="p-1.5 sm:px-3 sm:py-1 rounded-full bg-[#ecece4] text-[#5A5A40] hover:bg-[#d1d1ca] text-xs font-serif italic flex items-center gap-1"
           >
             <Compass className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Center</span>
+            <span className="hidden sm:inline">{t("map.center", "Center")}</span>
           </button>
 
           <button
@@ -310,10 +313,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <div className="flex items-start justify-between gap-2 mb-2">
               <div className="flex items-center space-x-2">
                 <span className="bg-[#5A5A40] text-white text-[10px] font-serif italic px-2 py-0.5 rounded-full font-semibold">
-                  Day {activeCardSpot.dayNumber} • Spot #{activeCardSpot.spotIndex + 1}
+                  {t("action.day", "Day")} {activeCardSpot.dayNumber} • Spot #{activeCardSpot.spotIndex + 1}
                 </span>
                 <span className="text-[11px] font-sans text-[#8a8a7e] uppercase font-bold">
-                  {activeCardSpot.spot.category}
+                  {t(`category.${activeCardSpot.spot.category}`, activeCardSpot.spot.category.toUpperCase())}
                 </span>
               </div>
               <button
@@ -326,11 +329,11 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             </div>
 
             <h4 className="font-serif text-base sm:text-lg font-normal italic text-[#2c2c24] leading-snug">
-              {activeCardSpot.spot.name}
+              <TranslatedText text={activeCardSpot.spot.name} />
             </h4>
 
             <p className="text-xs text-[#2c2c24]/90 mt-1.5 line-clamp-3 font-sans leading-relaxed">
-              {activeCardSpot.spot.description}
+              <TranslatedText text={activeCardSpot.spot.description} />
             </p>
 
             {activeCardSpot.spot.insiderTip && (
@@ -338,7 +341,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 <Lightbulb className="w-3.5 h-3.5 text-[#5A5A40] shrink-0 mt-0.5" />
                 <span className="line-clamp-2">
                   <strong className="font-serif italic mr-1">Tip:</strong>
-                  {activeCardSpot.spot.insiderTip}
+                  <TranslatedText text={activeCardSpot.spot.insiderTip} />
                 </span>
               </div>
             )}
@@ -346,7 +349,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             {/* Price & Rating line */}
             <div className="flex items-center justify-between text-xs mt-2.5 pt-2 border-t border-[#e5e5df]">
               <span className="font-serif italic font-semibold text-[#2c2c24]">
-                Cost: {activeCardSpot.spot.approxCost}
+                {t("map.cost", "Cost")}: {activeCardSpot.spot.approxCost}
               </span>
               {activeCardSpot.spot.rating && (
                 <span className="flex items-center text-[#5A5A40] font-semibold text-xs">
@@ -366,7 +369,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                   className="px-3 py-1.5 rounded-xl bg-[#ecece4] hover:bg-[#d1d1ca] text-[#2c2c24] text-xs font-serif italic flex items-center space-x-1 transition-all border border-[#d1d1ca]"
                 >
                   <Ticket className="w-3.5 h-3.5 text-[#5A5A40]" />
-                  <span>Buy Tickets</span>
+                  <span>{t("map.buyTickets", "Buy Tickets")}</span>
                 </a>
               )}
 
@@ -393,7 +396,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                 }}
                 className="flex-1 py-1.5 px-3 rounded-xl bg-[#5A5A40] hover:bg-[#4a4a35] text-white text-xs font-serif italic flex items-center justify-center space-x-1.5 transition-all shadow-xs"
               >
-                <span>Go to Activity List</span>
+                <span>{t("map.goToList", "Go to Activity List")}</span>
                 <ArrowDownCircle className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -405,19 +408,19 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       <div className="bg-[#f5f5f0] px-4 py-2 border-t border-[#e5e5df] flex items-center justify-between text-[11px] text-[#8a8a7e] shrink-0">
         <div className="flex items-center space-x-3 overflow-x-auto">
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#c86446] inline-block" /> Food
+            <span className="w-2 h-2 rounded-full bg-[#c86446] inline-block" /> {t("category.food", "Food")}
           </span>
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#4a6b53] inline-block" /> Nature
+            <span className="w-2 h-2 rounded-full bg-[#4a6b53] inline-block" /> {t("category.nature", "Nature")}
           </span>
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#5A5A40] inline-block" /> Culture
+            <span className="w-2 h-2 rounded-full bg-[#5A5A40] inline-block" /> {t("category.culture", "Culture")}
           </span>
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#657786] inline-block" /> Landmark
+            <span className="w-2 h-2 rounded-full bg-[#657786] inline-block" /> {t("category.sightseeing", "Landmark")}
           </span>
           <span className="flex items-center gap-1.5 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#c68a3c] inline-block" /> Secret Spot
+            <span className="w-2 h-2 rounded-full bg-[#c68a3c] inline-block" /> {t("category.hidden-gem", "Secret Spot")}
           </span>
         </div>
         <span className="hidden sm:inline text-[11px] text-[#8a8a7e]">Click pin for preview & details</span>

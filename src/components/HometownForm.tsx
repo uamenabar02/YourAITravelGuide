@@ -1,143 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle, Hotel, Plus, Trash2, Eye, EyeOff, CheckCircle2, Loader2 } from "lucide-react";
+import { MapPin, Navigation, Sparkles, Clock, Compass, Sun, ShieldCheck, ChevronDown, ChevronUp, AlertCircle, CheckCircle2, Loader2, Bus, Car, Bike, Search, Footprints } from "lucide-react";
 import { HometownPreferences, TimeAvailability, TransportMode, WeatherData, Coordinates } from "../types";
 import { fetchLiveWeather, reverseGeocode } from "../utils/weather";
 import { getRecentExcludedPlaces, getPermanentSkips, getPermanentSkipNames } from "../utils/storage";
 import { DestinationAdvisor } from "./DestinationAdvisor";
 import { findVerifiedDestination } from "../utils/destinations";
-import { searchLocationSuggestions, VerifiedLocation } from "../utils/locationVerification";
-import { AccommodationMapPickerModal } from "./AccommodationMapPickerModal";
 import { useLanguage } from "../context/LanguageContext";
-
-interface AccommodationLocationInputProps {
-  location: string;
-  isVerified?: boolean;
-  coordinates?: Coordinates;
-  cityContext?: string;
-  onUpdate: (location: string, coordinates?: Coordinates, isVerified?: boolean) => void;
-}
-
-function AccommodationLocationInput({
-  location,
-  isVerified,
-  coordinates,
-  cityContext,
-  onUpdate,
-}: AccommodationLocationInputProps) {
-  const { t } = useLanguage();
-  const [query, setQuery] = useState(location);
-  const [suggestions, setSuggestions] = useState<VerifiedLocation[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [isMapOpen, setIsMapOpen] = useState(false);
-
-  useEffect(() => {
-    setQuery(location);
-  }, [location]);
-
-  const handleSearch = async (text: string) => {
-    setQuery(text);
-    onUpdate(text, undefined, false);
-
-    if (text.trim().length >= 3) {
-      setIsSearching(true);
-      const results = await searchLocationSuggestions(text, cityContext);
-      setSuggestions(results);
-      setIsSearching(false);
-      setShowSuggestions(true);
-    } else {
-      setSuggestions([]);
-      setShowSuggestions(false);
-    }
-  };
-
-  const handleSelectSuggestion = (item: VerifiedLocation) => {
-    setQuery(item.displayName);
-    onUpdate(item.displayName, { lat: item.lat, lng: item.lng }, true);
-    setShowSuggestions(false);
-  };
-
-  return (
-    <div className="relative">
-      <div className="flex items-center justify-between mb-1">
-        <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] truncate">
-          {t("vacation.locationAddress")}
-        </label>
-        <div className="flex items-center space-x-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsMapOpen(true)}
-            className="inline-flex items-center gap-1 text-[10px] text-[#5A5A40] hover:text-[#2c2c24] underline font-bold cursor-pointer whitespace-nowrap"
-          >
-            🗺️ {t("vacation.pinOnMap")}
-          </button>
-          {isVerified && coordinates ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-mono whitespace-nowrap">
-              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-              {t("vacation.geoVerified")} ({coordinates.lat.toFixed(2)}, {coordinates.lng.toFixed(2)})
-            </span>
-          ) : (
-            <span className="text-[10px] text-[#8a8a7e] italic whitespace-nowrap">
-              {t("vacation.searchVerify")}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="relative">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => handleSearch(e.target.value)}
-          onFocus={() => {
-            if (suggestions.length > 0) setShowSuggestions(true);
-          }}
-          placeholder={t("vacation.accommodationPlaceholder")}
-          className="w-full pl-8 pr-8 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-        />
-        <MapPin className="w-3.5 h-3.5 text-[#8a8a7e] absolute left-2.5 top-2.5" />
-        {isSearching && (
-          <Loader2 className="w-3.5 h-3.5 text-[#5A5A40] animate-spin absolute right-2.5 top-2.5" />
-        )}
-      </div>
-
-      {showSuggestions && suggestions.length > 0 && (
-        <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-white border border-[#d1d1ca] rounded-xl shadow-lg max-h-48 overflow-y-auto divide-y divide-[#ecece4]">
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-[#8a8a7e] bg-[#f5f5f0]">
-            Verified Location Matches (Click to Lock)
-          </div>
-          {suggestions.map((item, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => handleSelectSuggestion(item)}
-              className="w-full text-left px-3 py-2 text-xs hover:bg-[#f5f5f0] flex items-center justify-between transition-colors"
-            >
-              <div className="min-w-0 pr-2">
-                <p className="font-medium text-[#2c2c24] truncate">{item.displayName}</p>
-              </div>
-              <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 shrink-0 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> Lock Geo
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <AccommodationMapPickerModal
-        isOpen={isMapOpen}
-        onClose={() => setIsMapOpen(false)}
-        onSelect={(displayName, coords) => {
-          setQuery(displayName);
-          onUpdate(displayName, coords, true);
-        }}
-        cityContext={cityContext || ""}
-        initialCoordinates={coordinates}
-        initialLocationName={location}
-      />
-    </div>
-  );
-}
+import { AccommodationMapPickerModal } from "./AccommodationMapPickerModal";
+import { TranslatedText } from "./TranslatedText";
 
 interface HometownFormProps {
   onSubmit: (prefs: HometownPreferences) => void;
@@ -146,6 +16,7 @@ interface HometownFormProps {
 }
 
 const OCCASIONS = [
+  { id: "beach", key: "occ.beach", descKey: "occ.beachDesc", icon: "🏖️", defaultLabel: "Beaches & Swim Spots" },
   { id: "solo", key: "occ.solo", descKey: "occ.soloDesc", icon: "☕", defaultLabel: "Solo Chill & Read" },
   { id: "date", key: "occ.date", descKey: "occ.dateDesc", icon: "🍷", defaultLabel: "Date Night & Ambiance" },
   { id: "adventure", key: "occ.adventure", descKey: "occ.adventureDesc", icon: "🥾", defaultLabel: "Outdoor Adventure" },
@@ -154,6 +25,7 @@ const OCCASIONS = [
   { id: "nature", key: "occ.nature", descKey: "occ.natureDesc", icon: "🌿", defaultLabel: "Nature & River Spots" },
   { id: "vintage", key: "occ.vintage", descKey: "occ.vintageDesc", icon: "💎", defaultLabel: "Hidden Gems & Vintage" },
   { id: "family", key: "occ.family", descKey: "occ.familyDesc", icon: "🪁", defaultLabel: "Family Fun Outing" },
+  { id: "sunsetSunrise", key: "occ.sunsetSunrise", descKey: "occ.sunsetSunriseDesc", icon: "🌅", defaultLabel: "Sunset & Sunrise Spots" },
 ];
 
 const WEATHER_PRESETS = [
@@ -170,7 +42,7 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
   const [radiusKm, setRadiusKm] = useState<number>(10);
   const [timeAvailable, setTimeAvailable] = useState<TimeAvailability>("half-day");
   const [transportModes, setTransportModes] = useState<TransportMode[]>(["public_transit"]);
-  const [occasion, setOccasion] = useState("Solo Chill & Read");
+  const [occasions, setOccasions] = useState<string[]>(["Solo Chill & Read"]);
 
   const toggleTransportMode = (mode: TransportMode) => {
     setTransportModes((prev) => {
@@ -181,71 +53,134 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
       return [...prev, mode];
     });
   };
+
+  const toggleOccasion = (occLabel: string) => {
+    setOccasions((prev) => {
+      if (prev.includes(occLabel)) {
+        if (prev.length === 1) return prev; // keep at least 1 vibe
+        return prev.filter((o) => o !== occLabel);
+      }
+      return [...prev, occLabel];
+    });
+  };
+
   const [weatherCondition, setWeatherCondition] = useState("Sunny & Mild (22°C)");
+  const [startDate, setStartDate] = useState<string>("");
+  const [startTime, setStartTime] = useState<string>("");
+  const [startLocation, setStartLocation] = useState<string>("");
+  const [startLocationCoordinates, setStartLocationCoordinates] = useState<Coordinates | undefined>(undefined);
+  const [isStartLocationVerified, setIsStartLocationVerified] = useState<boolean>(false);
+  const [isSearchingStartAddress, setIsSearchingStartAddress] = useState<boolean>(false);
+  const [startAddressSuggestions, setStartAddressSuggestions] = useState<{ displayName: string; coords: Coordinates }[]>([]);
+
+  // End Time & Return Location states
+  const [endTime, setEndTime] = useState<string>("");
+  const [endLocation, setEndLocation] = useState<string>("");
+  const [endLocationCoordinates, setEndLocationCoordinates] = useState<Coordinates | undefined>(undefined);
+  const [isEndLocationVerified, setIsEndLocationVerified] = useState<boolean>(false);
+  const [isSearchingEndAddress, setIsSearchingEndAddress] = useState<boolean>(false);
+  const [endAddressSuggestions, setEndAddressSuggestions] = useState<{ displayName: string; coords: Coordinates }[]>([]);
+
+  // Map Picker Modal target ('start' | 'end')
+  const [mapPickerTarget, setMapPickerTarget] = useState<"start" | "end">("start");
+  const [isMapPickerOpen, setIsMapPickerOpen] = useState<boolean>(false);
+
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [liveWeatherData, setLiveWeatherData] = useState<WeatherData | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [customNotes, setCustomNotes] = useState("");
 
-  // Optional Accommodation / Base Stay Context
-  const [hasAccommodation, setHasAccommodation] = useState(false);
-  const [accommodations, setAccommodations] = useState<
-    {
-      id: string;
-      name: string;
-      location: string;
-      description: string;
-      checkInDay: number;
-      checkInHour: string;
-      checkOutDay: number;
-      checkOutHour: string;
-    }[]
-  >([
-    {
-      id: "acc-1",
-      name: "",
-      location: "",
-      description: "",
-      checkInDay: 1,
-      checkInHour: "15:00",
-      checkOutDay: 1,
-      checkOutHour: "11:00",
-    },
-  ]);
-
   const verifiedTown = findVerifiedDestination(location);
   const excludedCount = getRecentExcludedPlaces(location).length;
   const permanentSkipCount = getPermanentSkips().length;
 
-  const handleAddAccommodation = () => {
-    setAccommodations([
-      ...accommodations,
-      {
-        id: `acc-${Date.now()}`,
-        name: "",
-        location: "",
-        description: "",
-        checkInDay: 1,
-        checkInHour: "15:00",
-        checkOutDay: 1,
-        checkOutHour: "11:00",
-      },
-    ]);
-  };
+  // Verify search address using Nominatim (Start location)
+  const handleVerifyStartLocation = async () => {
+    if (!startLocation.trim()) return;
+    setIsSearchingStartAddress(true);
+    try {
+      const townContext = location.split(",")[0] || location;
+      const query = startLocation.toLowerCase().includes(townContext.toLowerCase())
+        ? startLocation
+        : `${startLocation}, ${location}`;
 
-  const handleRemoveAccommodation = (id: string) => {
-    if (accommodations.length <= 1) {
-      setHasAccommodation(false);
-      return;
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=4`,
+        { headers: { "Accept-Language": "en" } }
+      );
+
+      if (res.ok) {
+        const items = await res.json();
+        if (Array.isArray(items) && items.length > 0) {
+          const formatted = items.map((i: any) => ({
+            displayName: i.display_name,
+            coords: { lat: parseFloat(i.lat), lng: parseFloat(i.lon) },
+          }));
+          setStartAddressSuggestions(formatted);
+          setStartLocationCoordinates(formatted[0].coords);
+          setIsStartLocationVerified(true);
+        } else {
+          setStartAddressSuggestions([]);
+          setIsStartLocationVerified(false);
+        }
+      }
+    } catch (err) {
+      console.warn("Start location search error:", err);
+    } finally {
+      setIsSearchingStartAddress(false);
     }
-    setAccommodations(accommodations.filter((a) => a.id !== id));
   };
 
-  const handleUpdateAccommodation = (id: string, field: string, val: any) => {
-    setAccommodations(
-      accommodations.map((a) => (a.id === id ? { ...a, [field]: val } : a))
-    );
+  const handlePickStartSuggestion = (sug: { displayName: string; coords: Coordinates }) => {
+    setStartLocation(sug.displayName);
+    setStartLocationCoordinates(sug.coords);
+    setIsStartLocationVerified(true);
+    setStartAddressSuggestions([]);
+  };
+
+  // Verify search address using Nominatim (End location)
+  const handleVerifyEndLocation = async () => {
+    if (!endLocation.trim()) return;
+    setIsSearchingEndAddress(true);
+    try {
+      const townContext = location.split(",")[0] || location;
+      const query = endLocation.toLowerCase().includes(townContext.toLowerCase())
+        ? endLocation
+        : `${endLocation}, ${location}`;
+
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=4`,
+        { headers: { "Accept-Language": "en" } }
+      );
+
+      if (res.ok) {
+        const items = await res.json();
+        if (Array.isArray(items) && items.length > 0) {
+          const formatted = items.map((i: any) => ({
+            displayName: i.display_name,
+            coords: { lat: parseFloat(i.lat), lng: parseFloat(i.lon) },
+          }));
+          setEndAddressSuggestions(formatted);
+          setEndLocationCoordinates(formatted[0].coords);
+          setIsEndLocationVerified(true);
+        } else {
+          setEndAddressSuggestions([]);
+          setIsEndLocationVerified(false);
+        }
+      }
+    } catch (err) {
+      console.warn("End location search error:", err);
+    } finally {
+      setIsSearchingEndAddress(false);
+    }
+  };
+
+  const handlePickEndSuggestion = (sug: { displayName: string; coords: Coordinates }) => {
+    setEndLocation(sug.displayName);
+    setEndLocationCoordinates(sug.coords);
+    setIsEndLocationVerified(true);
+    setEndAddressSuggestions([]);
   };
 
   // Auto-detect GPS location on click
@@ -291,43 +226,30 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
     if (!location.trim()) return;
 
     const excludedPlaces = getRecentExcludedPlaces(location);
-    let accommodationData = undefined;
-    let accommodationsData = undefined;
-
-    if (hasAccommodation) {
-      const validList = accommodations
-        .filter((a) => a.name.trim() || a.location.trim())
-        .map((a) => ({
-          id: a.id,
-          name: a.name.trim() || "Base Accommodation",
-          location: a.location.trim(),
-          description: a.description.trim() || undefined,
-          checkInDay: a.checkInDay,
-          checkInHour: a.checkInHour || undefined,
-          checkOutDay: a.checkOutDay,
-          checkOutHour: a.checkOutHour || undefined,
-        }));
-
-      if (validList.length > 0) {
-        accommodationData = validList[0];
-        accommodationsData = validList;
-      }
-    }
+    const primaryOccasion = occasions.join(", ");
 
     onSubmit({
       location: location.trim(),
       radiusKm,
+      startDate: startDate.trim() || undefined,
+      startTime: startTime.trim() || undefined,
+      startLocation: startLocation.trim() || undefined,
+      startLocationCoordinates,
+      isStartLocationVerified,
+      endTime: endTime.trim() || undefined,
+      endLocation: endLocation.trim() || undefined,
+      endLocationCoordinates,
+      isEndLocationVerified,
       timeAvailable,
       transportMode: transportModes[0] || "public_transit",
       transportModes,
-      occasion,
+      occasion: primaryOccasion,
+      occasions,
       weatherCondition,
       currentTemp: liveWeatherData?.temperature,
       excludedPlaces,
       permanentSkips: getPermanentSkipNames(),
       customNotes: customNotes.trim() || undefined,
-      accommodation: accommodationData,
-      accommodations: accommodationsData,
     });
   };
 
@@ -420,8 +342,10 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
                 </span>
               </div>
               {verifiedTown.popularSpots && verifiedTown.popularSpots.length > 0 && (
-                <div className="mt-2.5 text-[#333d31] font-sans flex flex-wrap items-center gap-1.5 text-[11px]">
-                  <span className="font-semibold text-emerald-900">Local Spots within radius:</span>
+                <div className="mt-2.5 text-[#333d31] font-sans flex-wrap items-center gap-1.5 text-[11px] hidden sm:flex">
+                  <span className="font-semibold text-emerald-900">
+                    <TranslatedText text="Local Spots within radius:" />
+                  </span>
                   {verifiedTown.popularSpots.slice(0, 4).map((spot, i) => (
                     <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-full bg-white text-[#2c352a] border border-emerald-200/90 shadow-2xs font-medium">
                       📍 {spot}
@@ -430,9 +354,11 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
                 </div>
               )}
               <div className="mt-2.5 text-[11px] text-emerald-900 italic font-serif border-t border-emerald-200/80 pt-2 flex flex-wrap items-center justify-between gap-2">
-                <span>AI Strict Radius Boundary: Search will be constrained within {radiusKm} km of {verifiedTown.name}.</span>
+                <span>
+                  <TranslatedText text={`AI Strict Radius Boundary: Search will be constrained within ${radiusKm} km of ${verifiedTown.name}.`} />
+                </span>
                 <span className="not-italic font-sans font-bold text-[10px] text-emerald-900 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300/80 flex items-center gap-1">
-                  🔒 {radiusKm} km Limit Enforced
+                  🔒 {radiusKm} km <TranslatedText text="Limit Enforced" />
                 </span>
               </div>
             </div>
@@ -440,9 +366,11 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
             <div className="mt-2.5 flex items-center justify-between text-[11px] text-[#6b6b5e] px-1 font-sans">
               <span className="flex items-center gap-1">
                 <Compass className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
-                Type your town or neighborhood to verify exact GPS coordinates & boundary
+                <TranslatedText text="Type your town or neighborhood to verify exact GPS coordinates & boundary" />
               </span>
-              <span className="text-[10px] text-[#8a8a7e] font-mono whitespace-nowrap">Max Search Radius: {radiusKm} km</span>
+              <span className="text-[10px] text-[#8a8a7e] font-mono whitespace-nowrap">
+                <TranslatedText text="Max Search Radius" />: {radiusKm} km
+              </span>
             </div>
           )}
         </div>
@@ -527,33 +455,370 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
           </div>
         </div>
 
-        {/* 3. Occasion / Vibe Selection Grid */}
-        <div>
-          <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-2.5 flex items-center justify-between">
-            <span className="flex items-center gap-1.5">
-              <span>🎯</span>
-              {t("hometown.occasion")}
+        {/* 2c. Start Time, End Time & Location Context (Optional Inputs) */}
+        <div className="bg-[#f5f5f0] p-5 rounded-2xl border border-[#e5e5df] space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-[#e5e5df]">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#5A5A40]" />
+              <h3 className="font-serif italic font-semibold text-sm text-[#2c2c24]">
+                {t("hometown.timingRoutingHeader", "Outing Schedule & Routing (Optional)")}
+              </h3>
+            </div>
+            <span className="text-[10px] text-[#8a8a7e] font-sans italic">
+              {t("hometown.optionalNotice", "Leave blank for AI-chosen natural start/end")}
             </span>
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          </div>
+
+          {/* Grid of Start and End options */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* START POINT */}
+            <div className="space-y-3 bg-white p-3.5 rounded-xl border border-[#e5e5df]">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-700" />
+                  {t("hometown.startTimeLabel", "1. Departure Point & Start Time")}
+                </label>
+                {isStartLocationVerified && (
+                  <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    {t("hometown.locationVerified", "Verified")}
+                  </span>
+                )}
+              </div>
+
+              {/* Start Time input */}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  placeholder="e.g. 09:30"
+                  className="px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-[#f9f9f6] text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40] h-[36px]"
+                />
+                <div className="hidden sm:flex flex-wrap gap-1 flex-1">
+                  {["09:00", "11:30", "14:00", "18:00"].map((timeVal) => (
+                    <button
+                      key={timeVal}
+                      type="button"
+                      onClick={() => setStartTime(startTime === timeVal ? "" : timeVal)}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] border transition-colors ${
+                        startTime === timeVal
+                          ? "bg-[#5A5A40] text-white border-[#5A5A40]"
+                          : "bg-white text-[#5A5A40] border-[#d1d1ca] hover:bg-[#ecece4]"
+                      }`}
+                    >
+                      {timeVal}
+                    </button>
+                  ))}
+                  {startTime && (
+                    <button
+                      type="button"
+                      onClick={() => setStartTime("")}
+                      className="text-[10px] text-amber-800 hover:underline px-1 cursor-pointer"
+                    >
+                      <TranslatedText text="Clear" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Start Address input */}
+              <div className="flex gap-1.5 w-full">
+                <input
+                  type="text"
+                  value={startLocation}
+                  onChange={(e) => {
+                    setStartLocation(e.target.value);
+                    setIsStartLocationVerified(false);
+                  }}
+                  placeholder={t("hometown.startLocationPlaceholder", "e.g. Calle Mayor 14 or Central Station")}
+                  className="flex-1 min-w-0 px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-[#f9f9f6] text-xs text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] h-[36px]"
+                />
+                <button
+                  type="button"
+                  onClick={handleVerifyStartLocation}
+                  disabled={isSearchingStartAddress || !startLocation.trim()}
+                  className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-[#ecece4] hover:bg-[#d1d1ca] text-[#2c2c24] text-xs font-semibold rounded-xl transition-colors shrink-0 disabled:opacity-50 h-[36px]"
+                >
+                  {isSearchingStartAddress ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-[#5A5A40]" />
+                  ) : (
+                    <Search className="w-3 h-3 text-[#5A5A40]" />
+                  )}
+                  <span className="text-[11px]">{t("hometown.verify", "Verify")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapPickerTarget("start");
+                    setIsMapPickerOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors shrink-0 h-[36px]"
+                >
+                  <MapPin className="w-3 h-3 text-amber-700" />
+                  <span className="text-[11px]">{t("hometown.pinMap", "Pin")}</span>
+                </button>
+              </div>
+
+              {/* Suggestions List for Start */}
+              {startAddressSuggestions.length > 0 && (
+                <div className="mt-1.5 p-2 bg-white border border-[#d1d1ca] rounded-xl space-y-1 shadow-sm">
+                  {startAddressSuggestions.map((sug, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => handlePickStartSuggestion(sug)}
+                      className="p-1.5 hover:bg-[#f5f5f0] rounded-lg cursor-pointer text-xs flex items-center justify-between border border-transparent hover:border-[#e5e5df]"
+                    >
+                      <span className="font-medium text-[#2c2c24] truncate">{sug.displayName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* END POINT */}
+            <div className="space-y-3 bg-white p-3.5 rounded-xl border border-[#e5e5df]">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-rose-700" />
+                  {t("hometown.endTimeLabel", "2. Final Return Location & Wrap-up Time")}
+                </label>
+                {isEndLocationVerified && (
+                  <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    {t("hometown.locationVerified", "Verified")}
+                  </span>
+                )}
+              </div>
+
+              {/* End Time input */}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  placeholder="e.g. 18:00"
+                  className="px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-[#f9f9f6] text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40] h-[36px]"
+                />
+                <div className="hidden sm:flex flex-wrap gap-1 flex-1">
+                  {["13:30", "17:00", "20:30", "23:00"].map((timeVal) => (
+                    <button
+                      key={timeVal}
+                      type="button"
+                      onClick={() => setEndTime(endTime === timeVal ? "" : timeVal)}
+                      className={`px-2 py-0.5 rounded-lg text-[11px] border transition-colors ${
+                        endTime === timeVal
+                          ? "bg-[#5A5A40] text-white border-[#5A5A40]"
+                          : "bg-white text-[#5A5A40] border-[#d1d1ca] hover:bg-[#ecece4]"
+                      }`}
+                    >
+                      {timeVal}
+                    </button>
+                  ))}
+                  {endTime && (
+                    <button
+                      type="button"
+                      onClick={() => setEndTime("")}
+                      className="text-[10px] text-amber-800 hover:underline px-1 cursor-pointer"
+                    >
+                      <TranslatedText text="Clear" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* End Address input */}
+              <div className="flex gap-1.5 w-full">
+                <input
+                  type="text"
+                  value={endLocation}
+                  onChange={(e) => {
+                    setEndLocation(e.target.value);
+                    setIsEndLocationVerified(false);
+                  }}
+                  placeholder={t("hometown.endLocationPlaceholder", "e.g. Home, Hotel, or Plaza Gipuzkoa")}
+                  className="flex-1 min-w-0 px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-[#f9f9f6] text-xs text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] h-[36px]"
+                />
+                <button
+                  type="button"
+                  onClick={handleVerifyEndLocation}
+                  disabled={isSearchingEndAddress || !endLocation.trim()}
+                  className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 bg-[#ecece4] hover:bg-[#d1d1ca] text-[#2c2c24] text-xs font-semibold rounded-xl transition-colors shrink-0 disabled:opacity-50 h-[36px] cursor-pointer"
+                >
+                  {isSearchingEndAddress ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-[#5A5A40]" />
+                  ) : (
+                    <Search className="w-3 h-3 text-[#5A5A40]" />
+                  )}
+                  <span className="text-[11px]">{t("hometown.verify", "Verify")}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapPickerTarget("end");
+                    setIsMapPickerOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-semibold rounded-xl flex items-center gap-1 transition-colors shrink-0 h-[36px] cursor-pointer"
+                >
+                  <MapPin className="w-3 h-3 text-amber-700" />
+                  <span className="text-[11px]">{t("hometown.pinMap", "Pin")}</span>
+                </button>
+              </div>
+
+              {/* Suggestions List for End */}
+              {endAddressSuggestions.length > 0 && (
+                <div className="mt-1.5 p-2 bg-white border border-[#d1d1ca] rounded-xl space-y-1 shadow-sm">
+                  {endAddressSuggestions.map((sug, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => handlePickEndSuggestion(sug)}
+                      className="p-1.5 hover:bg-[#f5f5f0] rounded-lg cursor-pointer text-xs flex items-center justify-between border border-transparent hover:border-[#e5e5df]"
+                    >
+                      <span className="font-medium text-[#2c2c24] truncate">{sug.displayName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 2b. Primary Means of Transport */}
+        <div className="bg-[#f5f5f0] p-4 rounded-2xl border border-[#e5e5df]">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+              <Bus className="w-3.5 h-3.5 text-[#5A5A40]" />
+              {t("vacation.transportHeading", "Means of Transport")}
+            </label>
+            <span className="text-[10px] text-[#5A5A40] bg-white px-2 py-0.5 rounded-full border border-[#d1d1ca] font-mono">
+              {t("vacation.transportMulti", "Multiple Choice")}
+            </span>
+          </div>
+          <p className="text-xs text-[#6b6b5e] mb-3 font-sans">
+            {t("vacation.transportDesc", "Select all transportation options available during your outing:")}
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {[
+              {
+                mode: "public_transit" as TransportMode,
+                keyLabel: "hometown.transportPublic",
+                label: "Public Transit",
+                icon: <Bus className="w-4 h-4" />,
+                keyDesc: "hometown.transportPublicDesc",
+                desc: "Buses, metro, trams & local trains",
+              },
+              {
+                mode: "walking" as TransportMode,
+                keyLabel: "hometown.transportWalking",
+                label: "Walking / On Foot",
+                icon: <Footprints className="w-4 h-4" />,
+                keyDesc: "hometown.transportWalkingDesc",
+                desc: "Pedestrian routes & neighborhood walks",
+              },
+              {
+                mode: "car" as TransportMode,
+                keyLabel: "vacation.transportCar",
+                label: "Private / Rental Car",
+                icon: <Car className="w-4 h-4" />,
+                keyDesc: "vacation.transportCarDesc",
+                desc: "Excursions & local drives",
+              },
+              {
+                mode: "bicycle" as TransportMode,
+                keyLabel: "vacation.transportBike",
+                label: "Bicycle / E-Bike",
+                icon: <Bike className="w-4 h-4" />,
+                keyDesc: "vacation.transportBikeDesc",
+                desc: "Bike paths & urban rides",
+              },
+              {
+                mode: "taxi" as TransportMode,
+                keyLabel: "vacation.transportTaxi",
+                label: "Taxi / Rideshare",
+                icon: <Navigation className="w-4 h-4" />,
+                keyDesc: "vacation.transportTaxiDesc",
+                desc: "Door-to-door city transfers",
+              },
+            ].map((tItem) => {
+              const isSelected = transportModes.includes(tItem.mode);
+              return (
+                <button
+                  key={tItem.mode}
+                  type="button"
+                  onClick={() => toggleTransportMode(tItem.mode)}
+                  className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border text-left transition-all flex flex-col justify-between cursor-pointer ${
+                    isSelected
+                      ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xs"
+                      : "bg-white text-[#2c2c24] border-[#d1d1ca] hover:border-[#5A5A40]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className={isSelected ? "text-white" : "text-[#5A5A40]"}>
+                      {tItem.icon}
+                    </span>
+                    {isSelected && (
+                      <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-serif italic font-semibold text-xs leading-tight">
+                      {t(tItem.keyLabel, tItem.label)}
+                    </div>
+                    <div
+                      className={`hidden sm:block text-[10px] mt-0.5 font-sans ${
+                        isSelected ? "text-white/80" : "text-[#8a8a7e]"
+                      }`}
+                    >
+                      {t(tItem.keyDesc, tItem.desc)}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 3. Occasion / Vibe Selection Grid (Multiple Choice) */}
+        <div>
+          <div className="flex items-center justify-between mb-2.5">
+            <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+              <span>🎯</span>
+              {t("hometown.occasion", "Occasion & Desired Vibe")}
+            </label>
+            <span className="text-[10px] text-[#5A5A40] bg-[#ecece4] px-2.5 py-0.5 rounded-full border border-[#d1d1ca] font-mono">
+              <TranslatedText text="Multiple Choice" />
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             {OCCASIONS.map((occ) => {
               const occLabel = t(occ.key) || occ.defaultLabel;
-              const occDesc = t(occ.descKey);
-              const isSelected = occasion === occ.defaultLabel || occasion === occLabel;
+              const occDesc = t(occ.descKey) || (occ.id === "sunsetSunrise" ? "Golden hour lookouts, dawn walks & scenic vistas" : "");
+              const isSelected = occasions.includes(occ.defaultLabel) || occasions.includes(occLabel);
               return (
                 <button
                   key={occ.id}
                   type="button"
-                  onClick={() => setOccasion(occ.defaultLabel)}
-                  className={`p-3 rounded-2xl border text-left transition-all ${
+                  onClick={() => toggleOccasion(occ.defaultLabel)}
+                  className={`p-3 rounded-2xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
                     isSelected
-                      ? "bg-white border-[#5A5A40] ring-1 ring-[#5A5A40] shadow-xs"
-                      : "bg-[#f5f5f0] border-[#e5e5df] hover:bg-white"
+                      ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-xs"
+                      : "bg-[#f5f5f0] text-[#2c2c24] border-[#e5e5df] hover:bg-white"
                   }`}
                 >
-                  <div className="text-lg mb-1">{occ.icon}</div>
-                  <div className="font-serif italic font-semibold text-xs text-[#2c2c24] leading-snug line-clamp-1">{occLabel}</div>
-                  <div className="text-[10px] text-[#6b6b5e] mt-0.5 line-clamp-1">{occDesc}</div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-lg">{occ.icon}</span>
+                      {isSelected && (
+                        <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />
+                      )}
+                    </div>
+                    <div className="font-serif italic font-semibold text-xs leading-snug line-clamp-1">
+                      {occLabel}
+                    </div>
+                  </div>
+                  <div className={`text-[10px] mt-1 line-clamp-2 ${isSelected ? "text-white/80" : "text-[#6b6b5e]"}`}>
+                    {occDesc}
+                  </div>
                 </button>
               );
             })}
@@ -597,195 +862,6 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
           </div>
         </div>
 
-        {/* 5. Booked Accommodation / Stay Context */}
-        {!hasAccommodation ? (
-          <div className="bg-[#f5f5f0] p-4 sm:p-5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3">
-            <div className="flex items-center space-x-3 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-white border border-[#d1d1ca] flex items-center justify-center text-[#5A5A40] shrink-0">
-                <Hotel className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <h4 className="text-xs font-semibold text-[#2c2c24] font-serif italic truncate">
-                  {t("vacation.accommodationTitle")}
-                </h4>
-                <p className="text-[11px] text-[#6b6b5e] font-sans truncate">
-                  {t("vacation.accommodationSubtitle")}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setHasAccommodation(true);
-                if (accommodations.length === 0) {
-                  handleAddAccommodation();
-                }
-              }}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-white text-[#5A5A40] hover:text-[#2c2c24] border border-[#d1d1ca] hover:border-[#5A5A40] rounded-xl text-xs font-medium font-serif italic shadow-2xs transition-colors shrink-0 whitespace-nowrap"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>{t("vacation.showAccommodation")}</span>
-            </button>
-          </div>
-        ) : (
-          <div className="bg-[#f5f5f0] p-4 sm:p-5 rounded-2xl border border-[#e5e5df] space-y-4">
-            <div className="flex items-center justify-between border-b border-[#e5e5df] pb-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
-                  <Hotel className="w-4 h-4 text-[#5A5A40]" />
-                  {t("vacation.accommodationHeading")}
-                </label>
-                <p className="text-xs text-[#6b6b5e] mt-0.5 font-sans">
-                  {t("vacation.accommodationSub")}
-                </p>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setHasAccommodation(false)}
-                  className="flex items-center space-x-1 text-[11px] text-[#6b6b5e] hover:text-[#2c2c24] font-serif italic px-2.5 py-1 rounded-lg border border-[#d1d1ca] bg-white transition-colors whitespace-nowrap"
-                >
-                  <EyeOff className="w-3 h-3" />
-                  <span>{t("vacation.hideAccommodation")}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAddAccommodation}
-                  className="flex items-center space-x-1 text-[11px] bg-[#5A5A40] text-white px-3 py-1 rounded-xl font-serif italic hover:bg-[#2c2c24] transition-colors whitespace-nowrap"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>{t("vacation.addStay")}</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {accommodations.map((acc, index) => (
-                <div key={acc.id} className="bg-white p-4 rounded-xl border border-[#d1d1ca] space-y-3 shadow-2xs relative">
-                  <div className="flex items-center justify-between border-b border-[#ecece4] pb-2">
-                    <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40] font-mono">
-                      {t("vacation.stay")} #{index + 1}
-                    </span>
-                    {accommodations.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveAccommodation(acc.id)}
-                        className="p-1 text-[#8a8a7e] hover:text-red-600 transition-colors flex items-center gap-1 text-[11px]"
-                        title="Remove stay"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>{t("action.delete")}</span>
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1">
-                        {t("vacation.accommodationName")}
-                      </label>
-                      <input
-                        type="text"
-                        value={acc.name}
-                        onChange={(e) => handleUpdateAccommodation(acc.id, "name", e.target.value)}
-                        placeholder={t("vacation.accommodationPlaceholder")}
-                        className="w-full px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                      />
-                    </div>
-
-                    <AccommodationLocationInput
-                      location={acc.location}
-                      isVerified={acc.isVerified}
-                      coordinates={acc.coordinates}
-                      cityContext={location}
-                      onUpdate={(locText, coords, verified) => {
-                        setAccommodations(
-                          accommodations.map((a) =>
-                            a.id === acc.id
-                              ? { ...a, location: locText, coordinates: coords, isVerified: verified }
-                              : a
-                          )
-                        );
-                      }}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-[#f5f5f0] p-3 rounded-xl border border-[#e5e5df]">
-                    {/* Check-in Day & Hour */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1">
-                          {t("vacation.checkInDay")}
-                        </label>
-                        <select
-                          value={acc.checkInDay}
-                          onChange={(e) => handleUpdateAccommodation(acc.id, "checkInDay", Number(e.target.value))}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                        >
-                          <option value={1}>{t("action.day")} 1</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-[#5A5A40]" />
-                          {t("vacation.checkInHour")}
-                        </label>
-                        <input
-                          type="time"
-                          value={acc.checkInHour}
-                          onChange={(e) => handleUpdateAccommodation(acc.id, "checkInHour", e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Check-out Day & Hour */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1">
-                          {t("vacation.checkOutDay")}
-                        </label>
-                        <select
-                          value={acc.checkOutDay}
-                          onChange={(e) => handleUpdateAccommodation(acc.id, "checkOutDay", Number(e.target.value))}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                        >
-                          <option value={1}>{t("action.day")} 1</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1 flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-[#5A5A40]" />
-                          {t("vacation.checkOutHour")}
-                        </label>
-                        <input
-                          type="time"
-                          value={acc.checkOutHour}
-                          onChange={(e) => handleUpdateAccommodation(acc.id, "checkOutHour", e.target.value)}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1">
-                      {t("vacation.accommodationNotes")}
-                    </label>
-                    <input
-                      type="text"
-                      value={acc.description}
-                      onChange={(e) => handleUpdateAccommodation(acc.id, "description", e.target.value)}
-                      placeholder="e.g. Near town hall square, luggage storage available"
-                      className="w-full px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* 6. 30-Day Deduplication Banner */}
         <div className="bg-[#ecece4] border border-[#d1d1ca] rounded-2xl p-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -795,9 +871,13 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
                 {t("hometown.antiRepeat")}
               </div>
               <div className="text-[11px] text-[#6b6b5e]">
-                {excludedCount > 0 || permanentSkipCount > 0
-                  ? `Filtering out ${excludedCount} recent + ${permanentSkipCount} permanently excluded spots for ${location.split(",")[0]}`
-                  : t("hometown.antiRepeatDesc")}
+                {excludedCount > 0 || permanentSkipCount > 0 ? (
+                  <TranslatedText
+                    text={`Filtering out ${excludedCount} recent + ${permanentSkipCount} permanently excluded spots for ${location.split(",")[0]}`}
+                  />
+                ) : (
+                  t("hometown.antiRepeatDesc")
+                )}
               </div>
             </div>
           </div>
@@ -856,6 +936,26 @@ export const HometownForm: React.FC<HometownFormProps> = ({ onSubmit, isLoading,
           </button>
         </div>
       </div>
+
+      <AccommodationMapPickerModal
+        isOpen={isMapPickerOpen}
+        onClose={() => setIsMapPickerOpen(false)}
+        onSelect={(displayName, coordinates) => {
+          if (mapPickerTarget === "end") {
+            setEndLocation(displayName);
+            setEndLocationCoordinates(coordinates);
+            setIsEndLocationVerified(true);
+          } else {
+            setStartLocation(displayName);
+            setStartLocationCoordinates(coordinates);
+            setIsStartLocationVerified(true);
+          }
+          setIsMapPickerOpen(false);
+        }}
+        cityContext={location}
+        initialCoordinates={mapPickerTarget === "end" ? endLocationCoordinates : startLocationCoordinates}
+        initialLocationName={mapPickerTarget === "end" ? endLocation : startLocation}
+      />
     </form>
   );
 };

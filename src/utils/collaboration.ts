@@ -1,8 +1,11 @@
 import {
+  ItineraryPlan,
   GroupCollaborationState,
   ActivityVote,
   ActivityComment,
   GroupPackingItem,
+  GroupShoppingItem,
+  ShoppingCategory,
   GroupExpenseItem,
   BalanceSheet,
   DebtTransfer,
@@ -13,6 +16,7 @@ import {
   MemberRole,
 } from "../types";
 import { perfCache } from "./performanceCache";
+import { notifyLocalDataChanged } from "./storage";
 
 const COLLAB_PREFIX = "localexplorer_collab_";
 const CURRENT_USER_KEY = "localexplorer_collab_current_user";
@@ -148,6 +152,10 @@ export function getCollaborationState(
           return item;
         });
       }
+      // Normalize shopping list
+      if (!parsed.shoppingList) {
+        parsed.shoppingList = getInitialShoppingList(destination, currentUser);
+      }
       // Normalize expenses with new Tricount fields if needed
       if (parsed.expenses) {
         parsed.expenses = parsed.expenses.map((exp) => ({
@@ -186,6 +194,7 @@ export function getCollaborationState(
     votes: {},
     comments: {},
     packingList: getInitialPackingList(destination, duration, vibes),
+    shoppingList: getInitialShoppingList(destination, currentUser),
     expenses: [],
     lastUpdated: Date.now(),
   };
@@ -198,7 +207,10 @@ export function saveCollaborationState(state: GroupCollaborationState): void {
   try {
     state.lastUpdated = Date.now();
     perfCache.set(`collab_${state.tripId}`, state, 1000 * 60 * 60 * 24);
-    perfCache.debouncedSave(COLLAB_PREFIX + state.tripId, state, 180);
+    if (typeof window !== "undefined" && window.localStorage) {
+      localStorage.setItem(COLLAB_PREFIX + state.tripId, JSON.stringify(state));
+    }
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to save collab state:", err);
   }
@@ -454,6 +466,12 @@ export function togglePackingItemForUser(tripId: string, itemId: string, userNam
   saveCollaborationState(state);
 }
 
+export function deletePackingItem(tripId: string, itemId: string): void {
+  const state = getCollaborationState(tripId);
+  state.packingList = state.packingList.filter((item) => item.id !== itemId);
+  saveCollaborationState(state);
+}
+
 export function assignPackingItem(tripId: string, itemId: string, assignee?: string): void {
   const state = getCollaborationState(tripId);
   state.packingList = state.packingList.map((item) =>
@@ -481,9 +499,45 @@ export function addPackingItem(
   return newItem;
 }
 
-export function deletePackingItem(tripId: string, itemId: string): void {
+import { generateSmartPackingList } from "./packingGenerator";
+
+export function generateSmartGroupPackingList(plan: ItineraryPlan): GroupPackingItem[] {
+  const smartItems = generateSmartPackingList(plan);
+  return smartItems.map((item) => ({
+    id: item.id,
+    category: item.category as GroupPackingItem["category"],
+    item: item.item,
+    reason: item.reason,
+    checkedBy: item.isPacked ? [getCurrentUserName()] : [],
+  }));
+}
+
+export function resetPackingListWithWeatherAI(plan: ItineraryPlan): GroupPackingItem[] {
+  const state = getCollaborationState(plan.id);
+  const freshItems = generateSmartGroupPackingList(plan);
+  state.packingList = freshItems;
+  saveCollaborationState(state);
+  return freshItems;
+}
+
+export function packAllItemsForUser(tripId: string, userName: string): void {
   const state = getCollaborationState(tripId);
-  state.packingList = state.packingList.filter((item) => item.id !== itemId);
+  const cleanName = userName.trim() || getCurrentUserName();
+  state.packingList = state.packingList.map((item) => {
+    const set = new Set(item.checkedBy || []);
+    set.add(cleanName);
+    return { ...item, checkedBy: Array.from(set), isChecked: true };
+  });
+  saveCollaborationState(state);
+}
+
+export function unpackAllItemsForUser(tripId: string, userName: string): void {
+  const state = getCollaborationState(tripId);
+  const cleanName = userName.trim() || getCurrentUserName();
+  state.packingList = state.packingList.map((item) => {
+    const newChecked = (item.checkedBy || []).filter((u) => u !== cleanName);
+    return { ...item, checkedBy: newChecked, isChecked: newChecked.length > 0 };
+  });
   saveCollaborationState(state);
 }
 
@@ -667,4 +721,191 @@ export function calculateDebtSettlements(balances: BalanceSheet[]): DebtTransfer
   }
 
   return transfers;
+}
+
+// --- Bring!-inspired Shopping List Catalog & Actions ---
+
+export interface BringPresetItem {
+  id: string;
+  name: string;
+  category: ShoppingCategory;
+  emoji: string;
+}
+
+export const BRING_CATEGORIES: Array<{ id: ShoppingCategory; label: string; icon: string }> = [
+  { id: "fresh_produce", label: "Fresh Produce", icon: "🥦" },
+  { id: "bakery_snacks", label: "Bakery & Snacks", icon: "🥖" },
+  { id: "drinks", label: "Drinks & Beverages", icon: "🥤" },
+  { id: "pantry_cooking", label: "Pantry & Cooking", icon: "🫒" },
+  { id: "toiletries_meds", label: "Toiletries & Meds", icon: "🧴" },
+  { id: "camping_gear", label: "Outdoor & Beach", icon: "⛺" },
+  { id: "household_misc", label: "Household & Misc", icon: "⚡" },
+];
+
+export const BRING_PRESET_ITEMS: BringPresetItem[] = [
+  // fresh_produce
+  { id: "p-1", name: "Apples & Bananas", category: "fresh_produce", emoji: "🍎" },
+  { id: "p-2", name: "Fresh Berries", category: "fresh_produce", emoji: "🍓" },
+  { id: "p-3", name: "Avocados & Tomatoes", category: "fresh_produce", emoji: "🥑" },
+  { id: "p-4", name: "Lemons & Limes", category: "fresh_produce", emoji: "🍋" },
+  { id: "p-5", name: "Salad Greens", category: "fresh_produce", emoji: "🥗" },
+
+  // bakery_snacks
+  { id: "p-6", name: "Fresh Baguette / Bread", category: "bakery_snacks", emoji: "🥖" },
+  { id: "p-7", name: "Potato Chips & Dips", category: "bakery_snacks", emoji: "🥔" },
+  { id: "p-8", name: "Croissants & Pastries", category: "bakery_snacks", emoji: "🥐" },
+  { id: "p-9", name: "Nuts & Dried Fruit", category: "bakery_snacks", emoji: "🥜" },
+  { id: "p-10", name: "Crackers & Biscuits", category: "bakery_snacks", emoji: "🥨" },
+
+  // drinks
+  { id: "p-11", name: "Mineral Water (Bottles)", category: "drinks", emoji: "💧" },
+  { id: "p-12", name: "Specialty Coffee / Beans", category: "drinks", emoji: "☕" },
+  { id: "p-13", name: "Fresh Juices & Sodas", category: "drinks", emoji: "🧃" },
+  { id: "p-14", name: "Local Wine / Cava", category: "drinks", emoji: "🍷" },
+  { id: "p-15", name: "Craft Beer / Cider", category: "drinks", emoji: "🍺" },
+
+  // pantry_cooking
+  { id: "p-16", name: "Local Cheese Selection", category: "pantry_cooking", emoji: "🧀" },
+  { id: "p-17", name: "Fresh Milk / Oat Milk", category: "pantry_cooking", emoji: "🥛" },
+  { id: "p-18", name: "Eggs & Butter", category: "pantry_cooking", emoji: "🍳" },
+  { id: "p-19", name: "Olive Oil & Salt", category: "pantry_cooking", emoji: "🫒" },
+  { id: "p-20", name: "Pasta & Tomato Sauce", category: "pantry_cooking", emoji: "🍝" },
+
+  // toiletries_meds
+  { id: "p-21", name: "Sunscreen & Aftersun", category: "toiletries_meds", emoji: "🧴" },
+  { id: "p-22", name: "Mosquito Bug Spray", category: "toiletries_meds", emoji: "🦟" },
+  { id: "p-23", name: "First Aid & Painkillers", category: "toiletries_meds", emoji: "🩹" },
+  { id: "p-24", name: "Toothpaste & Brush", category: "toiletries_meds", emoji: "🪥" },
+  { id: "p-25", name: "Wet Wipes & Tissues", category: "toiletries_meds", emoji: "🧻" },
+
+  // camping_gear
+  { id: "p-26", name: "Charcoal & Firestarter", category: "camping_gear", emoji: "🔥" },
+  { id: "p-27", name: "Bag of Ice Cubes", category: "camping_gear", emoji: "🧊" },
+  { id: "p-28", name: "BBQ Sausages & Meat", category: "camping_gear", emoji: "🥩" },
+  { id: "p-29", name: "Beach / Picnic Towel", category: "camping_gear", emoji: "🏖️" },
+  { id: "p-30", name: "Portable Cooler Box", category: "camping_gear", emoji: "🧊" },
+
+  // household_misc
+  { id: "p-31", name: "Trash Bags", category: "household_misc", emoji: "🗑️" },
+  { id: "p-32", name: "Paper Towels & Napkins", category: "household_misc", emoji: "🧻" },
+  { id: "p-33", name: "Power Bank & Cables", category: "household_misc", emoji: "⚡" },
+  { id: "p-34", name: "Playing Cards / Games", category: "household_misc", emoji: "🃏" },
+  { id: "p-35", name: "Aluminum Foil & Zip Bags", category: "household_misc", emoji: "📦" },
+];
+
+export function getInitialShoppingList(destination: string, addedBy = "Traveler"): GroupShoppingItem[] {
+  const defaults: Array<{ name: string; category: ShoppingCategory; emoji: string; quantity?: string }> = [
+    { name: "Mineral Water (Bottles)", category: "drinks", emoji: "💧", quantity: "6x 1.5L" },
+    { name: "Specialty Coffee / Beans", category: "drinks", emoji: "☕", quantity: "1 pack" },
+    { name: "Fresh Baguette / Bread", category: "bakery_snacks", emoji: "🥖", quantity: "2" },
+    { name: "Local Cheese Selection", category: "pantry_cooking", emoji: "🧀", quantity: "Assorted" },
+    { name: "Sunscreen & Aftersun", category: "toiletries_meds", emoji: "🧴", quantity: "SPF 50" },
+    { name: "Apples & Bananas", category: "fresh_produce", emoji: "🍎", quantity: "1 basket" },
+  ];
+
+  return defaults.map((d, i) => ({
+    id: `shop-init-${Date.now()}-${i}`,
+    name: d.name,
+    category: d.category,
+    emoji: d.emoji,
+    quantity: d.quantity,
+    status: "needed",
+    addedBy,
+    createdAt: Date.now() - i * 1000,
+  }));
+}
+
+export function addShoppingItem(
+  tripId: string,
+  name: string,
+  category: ShoppingCategory,
+  emoji = "🛒",
+  quantity?: string,
+  assignedTo?: string,
+  addedBy?: string
+): GroupShoppingItem {
+  const state = getCollaborationState(tripId);
+  const cleanAddedBy = addedBy || getCurrentUserName();
+
+  const newItem: GroupShoppingItem = {
+    id: `shop-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    name: name.trim(),
+    category,
+    emoji,
+    quantity: quantity?.trim() || undefined,
+    assignedTo: assignedTo || undefined,
+    status: "needed",
+    addedBy: cleanAddedBy,
+    createdAt: Date.now(),
+  };
+
+  if (!state.shoppingList) {
+    state.shoppingList = [];
+  }
+
+  // Check if item already exists in needed status; if so, update quantity or return existing
+  const existingIdx = state.shoppingList.findIndex(
+    (item) => item.name.toLowerCase() === name.trim().toLowerCase() && item.status === "needed"
+  );
+
+  if (existingIdx !== -1) {
+    state.shoppingList[existingIdx] = {
+      ...state.shoppingList[existingIdx],
+      quantity: quantity?.trim() || state.shoppingList[existingIdx].quantity,
+      assignedTo: assignedTo || state.shoppingList[existingIdx].assignedTo,
+    };
+    saveCollaborationState(state);
+    return state.shoppingList[existingIdx];
+  }
+
+  state.shoppingList.push(newItem);
+  saveCollaborationState(state);
+  return newItem;
+}
+
+export function toggleShoppingItemStatus(tripId: string, itemId: string, currentUser?: string): void {
+  const state = getCollaborationState(tripId);
+  const activeUser = currentUser || getCurrentUserName();
+
+  if (state.shoppingList) {
+    state.shoppingList = state.shoppingList.map((item) => {
+      if (item.id === itemId) {
+        const nextStatus = item.status === "needed" ? "bought" : "needed";
+        return {
+          ...item,
+          status: nextStatus,
+          // If marking bought, auto-assign to the user who bought it if unassigned
+          assignedTo: nextStatus === "bought" && !item.assignedTo ? activeUser : item.assignedTo,
+        };
+      }
+      return item;
+    });
+    saveCollaborationState(state);
+  }
+}
+
+export function assignShoppingItem(tripId: string, itemId: string, assignee?: string): void {
+  const state = getCollaborationState(tripId);
+  if (state.shoppingList) {
+    state.shoppingList = state.shoppingList.map((item) =>
+      item.id === itemId ? { ...item, assignedTo: assignee || undefined } : item
+    );
+    saveCollaborationState(state);
+  }
+}
+
+export function deleteShoppingItem(tripId: string, itemId: string): void {
+  const state = getCollaborationState(tripId);
+  if (state.shoppingList) {
+    state.shoppingList = state.shoppingList.filter((item) => item.id !== itemId);
+    saveCollaborationState(state);
+  }
+}
+
+export function clearBoughtShoppingItems(tripId: string): void {
+  const state = getCollaborationState(tripId);
+  if (state.shoppingList) {
+    state.shoppingList = state.shoppingList.filter((item) => item.status !== "bought");
+    saveCollaborationState(state);
+  }
 }

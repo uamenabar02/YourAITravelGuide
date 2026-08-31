@@ -14,6 +14,8 @@ import {
   Trash2,
   ChevronUp,
   ChevronDown,
+  ArrowUp,
+  ArrowDown,
   Layers,
   MessageSquare,
   Ticket,
@@ -22,6 +24,7 @@ import {
   ThumbsDown,
   Heart,
   Send,
+  GripVertical,
 } from "lucide-react";
 import { generateGoogleMapsSearchUrl, getTicketOrBookingUrl } from "../utils/destinations";
 import { normalizeTimeSlot } from "../utils/time";
@@ -49,8 +52,19 @@ interface ActivityCardProps {
   onSelectAlternativeOption: (dayNumber: number, activityIndex: number, optionIndex: number) => void;
   onSkipPermanently?: (activity: ActivitySpot, dayNumber: number) => void;
   onOpenDetails?: (activity: ActivitySpot, dayNumber: number) => void;
+  onPublishActivity?: (activity: ActivitySpot, dayNumber: number) => void;
   onVisitedChanged?: (activity: ActivitySpot, isVisited: boolean) => void;
   destinationOrTown: string;
+  canEdit?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: (e: React.DragEvent, index: number) => void;
+  onDragOver?: (e: React.DragEvent, index: number) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent, index: number) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  isCardExpanded?: boolean;
+  onToggleCardExpanded?: () => void;
 }
 
 const CATEGORY_META: Record<ActivityCategory, { label: string; icon: string; badgeClass: string }> = {
@@ -80,8 +94,19 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
   onSelectAlternativeOption,
   onSkipPermanently,
   onOpenDetails,
+  onPublishActivity,
   onVisitedChanged,
   destinationOrTown,
+  canEdit = true,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
+  isCardExpanded = true,
+  onToggleCardExpanded = () => {},
 }) => {
   const { t } = useLanguage();
   const [isSwapping, setIsSwapping] = useState(false);
@@ -144,6 +169,84 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
     }
   };
 
+  if (!isCardExpanded) {
+    return (
+      <div
+        id={`activity-card-${activity.id}`}
+        onClick={handleCardClick}
+        draggable={canEdit}
+        onDragStart={(e) => canEdit && onDragStart && onDragStart(e, index)}
+        onDragOver={(e) => canEdit && onDragOver && onDragOver(e, index)}
+        onDragLeave={(e) => canEdit && onDragLeave && onDragLeave(e)}
+        onDrop={(e) => canEdit && onDrop && onDrop(e, index)}
+        onDragEnd={(e) => canEdit && onDragEnd && onDragEnd(e)}
+        className={`group relative bg-white rounded-xl p-3 border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+          isDragging
+            ? "opacity-40 scale-[0.99] border-dashed border-[#5A5A40] bg-[#fafaf8]"
+            : isDragOver
+            ? "border-emerald-500 ring-2 ring-emerald-400/60 bg-emerald-50/40 shadow-md scale-[1.01]"
+            : isSelected
+            ? "border-[#5A5A40] ring-1 ring-[#5A5A40] shadow-2xs bg-[#ecece4]/20 border-l-4 border-l-[#5A5A40]"
+            : "border-[#e5e5df] hover:border-[#d1d1ca] hover:shadow-3xs"
+        }`}
+      >
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {canEdit && (
+            <span
+              className="cursor-grab active:cursor-grabbing text-[#8a8a7e] hover:text-[#5A5A40] p-1 rounded opacity-50 group-hover:opacity-100 transition-opacity no-print"
+              title="Drag & drop to reorder activity slot"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical className="w-4 h-4 shrink-0" />
+            </span>
+          )}
+
+          <div
+            className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-serif italic shrink-0 ${
+              isSelected ? "bg-[#5A5A40] text-white font-bold" : "bg-[#ecece4] text-[#2c2c24]"
+            }`}
+          >
+            {index + 1}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 text-xs font-serif italic text-[#2c2c24] bg-[#f5f5f0] px-2 py-0.5 rounded-lg border border-[#e5e5df] shrink-0">
+            <Clock className="w-3.5 h-3.5 text-[#8a8a7e]" />
+            <span>{normalizeTimeSlot(activity.time)}</span>
+          </div>
+
+          <h4 className="font-serif text-sm sm:text-base font-normal italic text-[#2c2c24] truncate flex-1 hover:text-[#5A5A40] transition-colors">
+            <TranslatedText text={activity.name} />
+          </h4>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="hidden sm:inline-block text-xs font-serif italic font-semibold text-[#2c2c24] bg-[#ecece4] px-2.5 py-0.5 rounded-lg border border-[#d1d1ca]">
+            {activity.approxCost}
+          </span>
+
+          <span
+            className={`hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-sans border ${categoryMeta.badgeClass}`}
+          >
+            <span>{categoryMeta.icon}</span>
+            <span className="ml-1">{t(`category.${activity.category}`, categoryMeta.label)}</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCardExpanded();
+            }}
+            title="Expand details"
+            className="p-1 rounded-lg hover:bg-[#ecece4] text-[#8a8a7e] hover:text-[#2c2c24] cursor-pointer"
+          >
+            <ChevronDown className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const handleSwap = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsSwapping(true);
@@ -190,15 +293,34 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
     <div
       id={`activity-card-${activity.id}`}
       onClick={handleCardClick}
-      className={`group relative bg-white rounded-2xl p-5 sm:p-6 border transition-all cursor-pointer ${
-        isSelected
+      draggable={canEdit}
+      onDragStart={(e) => canEdit && onDragStart && onDragStart(e, index)}
+      onDragOver={(e) => canEdit && onDragOver && onDragOver(e, index)}
+      onDragLeave={(e) => canEdit && onDragLeave && onDragLeave(e)}
+      onDrop={(e) => canEdit && onDrop && onDrop(e, index)}
+      onDragEnd={(e) => canEdit && onDragEnd && onDragEnd(e)}
+      className={`group relative bg-white rounded-2xl p-3.5 sm:p-6 border transition-all cursor-pointer ${
+        isDragging
+          ? "opacity-40 scale-[0.99] border-dashed border-[#5A5A40] bg-[#fafaf8]"
+          : isDragOver
+          ? "border-emerald-500 ring-2 ring-emerald-400/60 bg-emerald-50/40 shadow-md scale-[1.01]"
+          : isSelected
           ? "border-[#5A5A40] ring-1 ring-[#5A5A40] shadow-sm bg-[#ecece4]/20 border-l-4 border-l-[#5A5A40]"
           : "border-[#e5e5df] hover:border-[#d1d1ca] hover:shadow-xs"
       }`}
     >
-      {/* Top row: Number, Time, Category, and Cost */}
+      {/* Top row: Drag Grip, Number, Time, Category, and Cost */}
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex flex-wrap items-center gap-2">
+          {canEdit && (
+            <span
+              className="cursor-grab active:cursor-grabbing text-[#8a8a7e] hover:text-[#5A5A40] p-0.5 rounded opacity-50 group-hover:opacity-100 transition-opacity no-print"
+              title="Drag & drop to reorder activity slot"
+            >
+              <GripVertical className="w-4 h-4" />
+            </span>
+          )}
+
           <div
             className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-serif italic shrink-0 ${
               isSelected ? "bg-[#5A5A40] text-white font-bold" : "bg-[#ecece4] text-[#2c2c24] group-hover:bg-[#5A5A40] group-hover:text-white transition-colors"
@@ -239,31 +361,47 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             </span>
           )}
 
-          {/* Reorder Buttons */}
-          <div className="flex items-center space-x-0.5 opacity-60 group-hover:opacity-100 transition-opacity no-print">
+          {/* Reorder & Collapse Controls */}
+          <div className="flex items-center space-x-1 opacity-60 group-hover:opacity-100 transition-opacity no-print">
+            <div className="flex items-center bg-[#ecece4]/50 rounded-lg p-0.5 border border-[#d1d1ca]/40">
+              <button
+                type="button"
+                disabled={index === 0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveActivity(dayNumber, index, index - 1);
+                }}
+                title="Move Up"
+                className="p-1 rounded-md text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-white disabled:opacity-20 cursor-pointer"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={index === totalActivities - 1}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveActivity(dayNumber, index, index + 1);
+                }}
+                title="Move Down"
+                className="p-1 rounded-md text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-white disabled:opacity-20 cursor-pointer"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <span className="w-[1px] h-4 bg-[#d1d1ca] mx-1 shrink-0" />
+
             <button
               type="button"
-              disabled={index === 0}
               onClick={(e) => {
                 e.stopPropagation();
-                onMoveActivity(dayNumber, index, index - 1);
+                onToggleCardExpanded();
               }}
-              title="Move Up"
-              className="p-1 rounded text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] disabled:opacity-20"
+              title="Collapse Spot"
+              className="p-1 rounded-lg text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] cursor-pointer"
             >
-              <ChevronUp className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              disabled={index === totalActivities - 1}
-              onClick={(e) => {
-                e.stopPropagation();
-                onMoveActivity(dayNumber, index, index + 1);
-              }}
-              title="Move Down"
-              className="p-1 rounded text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] disabled:opacity-20"
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronUp className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -308,9 +446,9 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
       )}
 
       {/* Title & Description */}
-      <div className="mb-3.5">
+      <div className="mb-2 sm:mb-3.5">
         <div className="flex items-center justify-between">
-          <h4 className="font-serif text-lg sm:text-xl font-normal italic text-[#2c2c24] leading-snug group-hover:text-[#5A5A40] transition-colors">
+          <h4 className="font-serif text-base sm:text-xl font-normal italic text-[#2c2c24] leading-snug group-hover:text-[#5A5A40] transition-colors">
             <TranslatedText text={activity.name} />
           </h4>
           {activity.isSwapped && (
@@ -319,14 +457,14 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             </span>
           )}
         </div>
-        <div className="text-sm text-[#2c2c24]/90 mt-1.5 leading-relaxed font-sans">
+        <div className="text-xs sm:text-sm text-[#2c2c24]/90 mt-1 sm:mt-1.5 leading-relaxed font-sans line-clamp-2 sm:line-clamp-none">
           <TranslatedText text={activity.description} />
         </div>
       </div>
 
       {/* Live Event Callout Box */}
       {activity.eventDetails && (
-        <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3 sm:p-3.5 mb-3.5 text-xs text-amber-950 leading-relaxed flex items-start space-x-2.5 shadow-2xs">
+        <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-2.5 sm:p-3.5 mb-2.5 sm:mb-3.5 text-xs text-amber-950 leading-relaxed flex items-start space-x-2.5 shadow-2xs">
           <Ticket className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
           <div>
             <div className="font-serif italic font-bold text-amber-900 flex flex-wrap items-center gap-2">
@@ -348,7 +486,7 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
 
       {/* Insider Tip Callout */}
       {activity.insiderTip && (
-        <div className="bg-[#ecece4] border border-[#d1d1ca] rounded-2xl p-3 sm:p-3.5 mb-3.5 text-xs text-[#2c2c24] leading-relaxed flex items-start space-x-2.5">
+        <div className="hidden sm:flex bg-[#ecece4] border border-[#d1d1ca] rounded-2xl p-3 sm:p-3.5 mb-3.5 text-xs text-[#2c2c24] leading-relaxed items-start space-x-2.5">
           <Lightbulb className="w-4 h-4 text-[#5A5A40] shrink-0 mt-0.5" />
           <div>
             <span className="font-serif italic font-semibold mr-1">{t("act.insiderTip", "Insider Note:")}</span>
@@ -448,6 +586,22 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
             >
               <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] group-hover/detail:text-white transition-colors" />
               <span>{t("act.details", "Details & Guide")}</span>
+            </button>
+          )}
+
+          {/* Publish Activity to Community Explore Button */}
+          {onPublishActivity && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPublishActivity(activity, dayNumber);
+              }}
+              title={t("act.publishToExplore", "Publish this activity with photos to Community Explore")}
+              className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-50 hover:bg-emerald-600 text-emerald-800 hover:text-white border border-emerald-300 font-medium transition-all shadow-2xs group/pub shrink-0 whitespace-nowrap"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600 group-hover/pub:text-white transition-colors" />
+              <span>{t("act.publish", "Publish Spot")}</span>
             </button>
           )}
 
@@ -567,69 +721,71 @@ export const ActivityCard: React.FC<ActivityCardProps> = ({
           </button>
         </div>
 
-        {/* Action Controls: Edit, Swap, Delete */}
-        <div className="flex items-center space-x-2 no-print ml-auto shrink-0">
-          {/* Edit Activity Button */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEditActivity(activity, dayNumber);
-            }}
-            title="Edit activity details"
-            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors shrink-0"
-          >
-            <Edit2 className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Delete Activity Button */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm(t("act.deleteConfirm", "Remove \"{name}\" from Day {day}?").replace("{name}", activity.name).replace("{day}", dayNumber.toString()))) {
-                onDeleteActivity(activity.id, dayNumber);
-              }
-            }}
-            title="Delete activity"
-            className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Permanent Skip: never suggest this place again */}
-          {onSkipPermanently && (
+        {/* Action Controls: Edit, Swap, Delete (Only for Organizers / Contributors) */}
+        {canEdit && (
+          <div className="flex items-center space-x-2 no-print ml-auto shrink-0">
+            {/* Edit Activity Button */}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                if (
-                  confirm(
-                    t("act.permanentSkipPrompt", { name: activity.name })
-                  )
-                ) {
-                  onSkipPermanently(activity, dayNumber);
+                onEditActivity(activity, dayNumber);
+              }}
+              title="Edit activity details"
+              className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors shrink-0"
+            >
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Delete Activity Button */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm(t("act.deleteConfirm", "Remove \"{name}\" from Day {day}?").replace("{name}", activity.name).replace("{day}", dayNumber.toString()))) {
+                  onDeleteActivity(activity.id, dayNumber);
                 }
               }}
-              title={t("act.permanentSkip", "Permanently Exclude Spot")}
+              title="Delete activity"
               className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
             >
-              <Ban className="w-3.5 h-3.5" />
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
-          )}
 
-          {/* Regenerate / Swap Single Activity Button */}
-          <button
-            type="button"
-            onClick={handleSwap}
-            disabled={isSwapping}
-            title={t("act.swap", "Swap Spot")}
-            className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#f5f5f0] text-[#5A5A40] hover:bg-[#ecece4] border border-[#d1d1ca] font-medium transition-all disabled:opacity-50 shrink-0 whitespace-nowrap"
-          >
-            <RefreshCw className={`w-3 h-3 ${isSwapping ? "animate-spin text-[#5A5A40]" : ""}`} />
-            <span>{isSwapping ? t("act.swapping", "Swapping...") : t("act.swap", "Swap Spot")}</span>
-          </button>
-        </div>
+            {/* Permanent Skip: never suggest this place again */}
+            {onSkipPermanently && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (
+                    confirm(
+                      t("act.permanentSkipPrompt", { name: activity.name })
+                    )
+                  ) {
+                    onSkipPermanently(activity, dayNumber);
+                  }
+                }}
+                title={t("act.permanentSkip", "Permanently Exclude Spot")}
+                className="p-1.5 rounded-lg text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
+              >
+                <Ban className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Regenerate / Swap Single Activity Button */}
+            <button
+              type="button"
+              onClick={handleSwap}
+              disabled={isSwapping}
+              title={t("act.swap", "Swap Spot")}
+              className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-[#f5f5f0] text-[#5A5A40] hover:bg-[#ecece4] border border-[#d1d1ca] font-medium transition-all disabled:opacity-50 shrink-0 whitespace-nowrap"
+            >
+              <RefreshCw className={`w-3 h-3 ${isSwapping ? "animate-spin text-[#5A5A40]" : ""}`} />
+              <span>{isSwapping ? t("act.swapping", "Swapping...") : t("act.swap", "Swap Spot")}</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

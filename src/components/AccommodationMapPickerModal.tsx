@@ -3,6 +3,7 @@ import L from "leaflet";
 import { X, CheckCircle2, MapPin, Search, Loader2, Navigation } from "lucide-react";
 import { Coordinates } from "../types";
 import { findVerifiedDestination } from "../utils/destinations";
+import { TranslatedText } from "./TranslatedText";
 
 interface AccommodationMapPickerModalProps {
   isOpen: boolean;
@@ -124,8 +125,10 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
     }
   };
 
-  const handleSearchAddress = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSearchAddress = async (e?: React.FormEvent | React.KeyboardEvent | React.MouseEvent) => {
+    if (e && "preventDefault" in e) {
+      e.preventDefault();
+    }
     if (!searchQuery.trim()) return;
 
     setIsSearchingAddress(true);
@@ -186,16 +189,16 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
             </div>
             <div>
               <h3 className="font-serif text-lg font-bold text-[#2c2c24] italic">
-                Manual Accommodation Pin
+                <TranslatedText text="Manual Map Pin & Location Picker" />
               </h3>
               <p className="text-[11px] text-[#8a8a7e]">
-                Click anywhere on the map to pin your accommodation location precisely
+                <TranslatedText text="Click anywhere on the map to pin your location precisely" />
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-[#f5f5f0] text-[#8a8a7e] hover:text-[#2c2c24] transition-colors"
+            className="p-1.5 rounded-full hover:bg-[#f5f5f0] text-[#8a8a7e] hover:text-[#2c2c24] transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -203,29 +206,36 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
 
         {/* Search Header for looking up specific landmarks/addresses */}
         <div className="p-3 bg-[#ecece4] border-b border-[#d1d1ca] shrink-0">
-          <form onSubmit={handleSearchAddress} className="flex gap-2">
+          <div className="flex gap-2">
             <div className="relative flex-1">
               <input
                 type="text"
                 placeholder="Search specific address or venue near here..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSearchAddress(e);
+                  }
+                }}
                 className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
               />
               <Search className="w-3.5 h-3.5 text-[#8a8a7e] absolute left-2.5 top-2.5" />
             </div>
             <button
-              type="submit"
+              type="button"
+              onClick={handleSearchAddress}
               disabled={isSearchingAddress}
-              className="px-3.5 py-1.5 bg-[#5A5A40] text-white rounded-xl text-xs font-semibold hover:bg-[#444430] transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0"
+              className="px-3.5 py-1.5 bg-[#5A5A40] text-white rounded-xl text-xs font-semibold hover:bg-[#444430] transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0 cursor-pointer"
             >
               {isSearchingAddress ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                "Locate"
+                <TranslatedText text="Locate" />
               )}
             </button>
-          </form>
+          </div>
         </div>
 
         {/* Map Area */}
@@ -233,10 +243,10 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
           <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
           <div className="absolute bottom-4 left-4 z-20 pointer-events-none bg-white/95 px-3 py-2 rounded-xl border border-[#d1d1ca] shadow-sm max-w-xs">
             <p className="text-[10px] uppercase font-bold tracking-wider text-[#8a8a7e] flex items-center gap-1 mb-0.5">
-              <Navigation className="w-3 h-3 text-[#5A5A40]" /> Instructions
+              <Navigation className="w-3 h-3 text-[#5A5A40]" /> <TranslatedText text="Instructions" />
             </p>
             <p className="text-[11px] text-[#2c2c24] font-medium leading-relaxed">
-              Drag or click map to move target pin. It auto-updates coordinates and street address.
+              <TranslatedText text="Drag or click map to move target pin. It auto-updates coordinates and street address." />
             </p>
           </div>
         </div>
@@ -246,11 +256,11 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e]">
-                Location/Address Name (Click Map to Update or Edit Below)
+                <TranslatedText text="Location/Address Name (Click Map to Update or Edit Below)" />
               </label>
               {isReverseGeocoding && (
                 <span className="text-[10px] text-[#5A5A40] animate-pulse flex items-center gap-1 font-sans italic">
-                  <Loader2 className="w-3 h-3 animate-spin inline" /> Querying address...
+                  <Loader2 className="w-3 h-3 animate-spin inline" /> <TranslatedText text="Querying address..." />
                 </span>
               )}
             </div>
@@ -265,7 +275,7 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
 
           <div className="flex items-center justify-between pt-1">
             <div className="text-[11px] font-mono text-[#6b6b5e]">
-              Coordinates:{" "}
+              <TranslatedText text="Coordinates:" />{" "}
               <span className="font-semibold text-[#2c2c24]">
                 {selectedCoords ? `${selectedCoords.lat.toFixed(5)}, ${selectedCoords.lng.toFixed(5)}` : "None"}
               </span>
@@ -275,18 +285,18 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border border-[#d1d1ca] hover:border-[#2c2c24] text-[#6b6b5e] hover:text-[#2c2c24] rounded-xl text-xs font-semibold transition-colors bg-white"
+                className="px-4 py-2 border border-[#d1d1ca] hover:border-[#2c2c24] text-[#6b6b5e] hover:text-[#2c2c24] rounded-xl text-xs font-semibold transition-colors bg-white cursor-pointer"
               >
-                Cancel
+                <TranslatedText text="Cancel" />
               </button>
               <button
                 type="button"
                 onClick={handleConfirm}
                 disabled={!selectedCoords}
-                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Confirm Pin & Save
+                <TranslatedText text="Confirm Pin & Save" />
               </button>
             </div>
           </div>
@@ -296,3 +306,4 @@ export const AccommodationMapPickerModal: React.FC<AccommodationMapPickerModalPr
     </div>
   );
 };
+

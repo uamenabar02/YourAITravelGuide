@@ -3,14 +3,26 @@ import { parseTimeToHours } from "./time";
 
 export function generateShareableUrl(plan: ItineraryPlan): string {
   try {
+    const url = new URL(window.location.href);
+    // Prefer clean sharedTripId
+    url.searchParams.set("sharedTripId", plan.id);
+    // Also include encoded backup so link works even without cloud latency
     const jsonStr = JSON.stringify(plan);
     const encoded = encodeURIComponent(btoa(unescape(encodeURIComponent(jsonStr))));
-    const url = new URL(window.location.href);
     url.searchParams.set("trip", encoded);
     return url.toString();
   } catch (err) {
     console.error("Failed to generate shareable URL:", err);
     return window.location.href;
+  }
+}
+
+export function getSharedTripIdFromUrl(): string | null {
+  try {
+    const url = new URL(window.location.href);
+    return url.searchParams.get("sharedTripId") || url.searchParams.get("tripId") || null;
+  } catch {
+    return null;
   }
 }
 

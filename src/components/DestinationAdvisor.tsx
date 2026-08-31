@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { MapPin, Check, Sparkles, Compass } from "lucide-react";
 import { searchDestinationSuggestions, VerifiedDestination, VERIFIED_DESTINATIONS } from "../utils/destinations";
+import { TranslatedText } from "./TranslatedText";
 
 interface DestinationAdvisorProps {
   value: string;
@@ -74,9 +75,9 @@ export const DestinationAdvisor: React.FC<DestinationAdvisorProps> = ({
           <div className="p-2.5 bg-[#f5f5f0]/80 text-[10px] uppercase font-bold tracking-widest text-[#8a8a7e] flex items-center justify-between">
             <span className="flex items-center gap-1">
               <Compass className="w-3 h-3 text-[#5A5A40]" />
-              Verified Destination Advisor
+              <TranslatedText text="Verified Destination Advisor" />
             </span>
-            <span>{suggestions.length} places</span>
+            <span>{suggestions.length} <TranslatedText text="places" /></span>
           </div>
 
           {suggestions.map((dest) => {
@@ -86,7 +87,7 @@ export const DestinationAdvisor: React.FC<DestinationAdvisorProps> = ({
                 key={dest.id}
                 type="button"
                 onClick={() => handleSelect(dest)}
-                className="w-full text-left p-3 hover:bg-[#ecece4]/60 transition-colors flex items-start justify-between gap-3 group"
+                className="w-full text-left p-3 hover:bg-[#ecece4]/60 transition-colors flex items-start justify-between gap-3 group cursor-pointer"
               >
                 <div className="flex items-start space-x-3">
                   <div className="w-8 h-8 rounded-lg bg-[#ecece4] text-[#5A5A40] flex items-center justify-center font-serif text-xs shrink-0 group-hover:bg-[#5A5A40] group-hover:text-white transition-colors border border-[#d1d1ca]">
@@ -95,14 +96,14 @@ export const DestinationAdvisor: React.FC<DestinationAdvisorProps> = ({
                   <div>
                     <div className="flex items-center space-x-2">
                       <span className="font-serif italic font-medium text-sm text-[#2c2c24] group-hover:text-[#5A5A40]">
-                        {dest.name}
+                        <TranslatedText text={dest.name} />
                       </span>
                       <span className="text-[11px] font-sans px-2 py-0.5 rounded-full bg-[#ecece4] text-[#6b6b5e] border border-[#d1d1ca]">
-                        {dest.region}, {dest.country}
+                        <TranslatedText text={`${dest.region}, ${dest.country}`} />
                       </span>
                     </div>
                     <p className="text-xs text-[#8a8a7e] font-sans line-clamp-1 mt-0.5">
-                      Highlights: {dest.popularSpots.slice(0, 3).join(" • ")}
+                      <TranslatedText text="Highlights:" /> {dest.popularSpots.slice(0, 3).join(" • ")}
                     </p>
                   </div>
                 </div>

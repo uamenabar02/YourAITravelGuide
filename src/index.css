@@ -200,3 +200,268 @@
   }
 }
 
+/* ===========================================================================
+   DYNAMIC THEME ENGINE
+   The application uses beautiful custom CSS overrides to change colors
+   across the entire interface instantly and seamlessly.
+=========================================================================== */
+
+/* --- Theme 1: Classic Warm (Default) --- */
+.theme-classic {
+  --theme-bg-body: #f5f5f0;
+  --theme-bg-secondary: #ecece4;
+  --theme-text-dark: #2c2c24;
+  --theme-text-muted: #8a8a7e;
+  --theme-accent: #5A5A40;
+  --theme-accent-hover: #4a4a35;
+  --theme-border-main: #e5e5df;
+  --theme-border-accent: #d1d1ca;
+  --theme-bg-white: #ffffff;
+  --theme-bg-stone-50: #fafaf9;
+  --theme-bg-stone-50-40: rgba(250, 250, 249, 0.4);
+  --theme-bg-dark-block: #2c2c24;
+}
+
+/* --- Theme 2: Emerald Forest (Pine & Sage) --- */
+.theme-emerald {
+  --theme-bg-body: #f0f5f1;
+  --theme-bg-secondary: #e2ece5;
+  --theme-text-dark: #1b2e1e;
+  --theme-text-muted: #788c7b;
+  --theme-accent: #2d5a27;
+  --theme-accent-hover: #1f421b;
+  --theme-border-main: #dee6df;
+  --theme-border-accent: #cbd9cc;
+  --theme-bg-white: #ffffff;
+  --theme-bg-stone-50: #fafaf9;
+  --theme-bg-stone-50-40: rgba(250, 250, 249, 0.4);
+  --theme-bg-dark-block: #1b2e1e;
+}
+
+/* --- Theme 3: Nordic Breeze (Slate Blue & Ice) --- */
+.theme-nordic {
+  --theme-bg-body: #f0f4f8;
+  --theme-bg-secondary: #e1e8f0;
+  --theme-text-dark: #1e293b;
+  --theme-text-muted: #64748b;
+  --theme-accent: #1a5276;
+  --theme-accent-hover: #113a54;
+  --theme-border-main: #e2e8f0;
+  --theme-border-accent: #cbd5e1;
+  --theme-bg-white: #ffffff;
+  --theme-bg-stone-50: #fafaf9;
+  --theme-bg-stone-50-40: rgba(250, 250, 249, 0.4);
+  --theme-bg-dark-block: #1e293b;
+}
+
+/* --- Theme 4: Royal Burgundy (Plum & Rose) --- */
+.theme-burgundy {
+  --theme-bg-body: #f9f3f3;
+  --theme-bg-secondary: #f2e5e5;
+  --theme-text-dark: #321a1e;
+  --theme-text-muted: #8c7376;
+  --theme-accent: #7d1f2d;
+  --theme-accent-hover: #5e1621;
+  --theme-border-main: #ebd9da;
+  --theme-border-accent: #dfc4c6;
+  --theme-bg-white: #ffffff;
+  --theme-bg-stone-50: #fafaf9;
+  --theme-bg-stone-50-40: rgba(250, 250, 249, 0.4);
+  --theme-bg-dark-block: #321a1e;
+}
+
+/* --- Theme 5: Calm Obsidian (Luxury Charcoal Dark Mode) --- */
+.theme-obsidian {
+  --theme-bg-body: #141412;
+  --theme-bg-secondary: #222220;
+  --theme-text-dark: #f5f5f0;
+  --theme-text-muted: #9a9a91;
+  --theme-accent: #c5c1a7;
+  --theme-accent-hover: #a5a188;
+  --theme-border-main: #2a2a28;
+  --theme-border-accent: #383835;
+  --theme-bg-white: #1a1a18;
+  --theme-bg-stone-50: #141412;
+  --theme-bg-stone-50-40: rgba(20, 20, 18, 0.4);
+  --theme-bg-dark-block: #2a2a28;
+  color-scheme: dark;
+}
+
+/* --- Theme 6: Midnight Ink (Deep Navy Dark Mode) --- */
+.theme-midnight {
+  --theme-bg-body: #0b0f19;
+  --theme-bg-secondary: #172033;
+  --theme-text-dark: #f1f5f9;
+  --theme-text-muted: #94a3b8;
+  --theme-accent: #38bdf8;
+  --theme-accent-hover: #0ea5e9;
+  --theme-border-main: #1e293b;
+  --theme-border-accent: #334155;
+  --theme-bg-white: #111827;
+  --theme-bg-stone-50: #0b0f19;
+  --theme-bg-stone-50-40: rgba(11, 15, 25, 0.4);
+  --theme-bg-dark-block: #1e293b;
+  color-scheme: dark;
+}
+
+/* --- Theme 7: Deep Moss (Forest Dark Mode) --- */
+.theme-forest-dark {
+  --theme-bg-body: #08110b;
+  --theme-bg-secondary: #122218;
+  --theme-text-dark: #f2f7f4;
+  --theme-text-muted: #7da08a;
+  --theme-accent: #4ade80;
+  --theme-accent-hover: #22c55e;
+  --theme-border-main: #182f21;
+  --theme-border-accent: #23432f;
+  --theme-bg-white: #0d1a11;
+  --theme-bg-stone-50: #08110b;
+  --theme-bg-stone-50-40: rgba(8, 17, 11, 0.4);
+  --theme-bg-dark-block: #182f21;
+  color-scheme: dark;
+}
+
+/* --- Global Overrides for HTML / Body --- */
+html.theme-classic body,
+html.theme-emerald body,
+html.theme-nordic body,
+html.theme-burgundy body,
+html.theme-obsidian body,
+html.theme-midnight body,
+html.theme-forest-dark body {
+  background-color: var(--theme-bg-body) !important;
+  color: var(--theme-text-dark) !important;
+}
+
+/* Apply scrollbar and maps container background changes per theme */
+html.theme-emerald ::-webkit-scrollbar-track,
+html.theme-nordic ::-webkit-scrollbar-track,
+html.theme-burgundy ::-webkit-scrollbar-track,
+html.theme-obsidian ::-webkit-scrollbar-track,
+html.theme-midnight ::-webkit-scrollbar-track,
+html.theme-forest-dark ::-webkit-scrollbar-track {
+  background: var(--theme-bg-body) !important;
+}
+
+html.theme-emerald ::-webkit-scrollbar-thumb,
+html.theme-nordic ::-webkit-scrollbar-thumb,
+html.theme-burgundy ::-webkit-scrollbar-thumb,
+html.theme-obsidian ::-webkit-scrollbar-thumb,
+html.theme-midnight ::-webkit-scrollbar-thumb,
+html.theme-forest-dark ::-webkit-scrollbar-thumb {
+  background: var(--theme-border-accent) !important;
+}
+
+/* --- Override rules applied only when an active theme is active --- */
+html.theme-classic, html.theme-emerald, html.theme-nordic, html.theme-burgundy, html.theme-obsidian, html.theme-midnight, html.theme-forest-dark {
+  /* Primary Accent Overrides */
+  & .bg-\[\#5A5A40\] { background-color: var(--theme-accent) !important; }
+  & .text-\[\#5A5A40\] { color: var(--theme-accent) !important; }
+  & .border-\[\#5A5A40\] { border-color: var(--theme-accent) !important; }
+  & .hover\:bg-\[\#4a4a35\]\:hover:hover { background-color: var(--theme-accent-hover) !important; }
+  & .hover\:text-\[\#4a4a35\]\:hover:hover { color: var(--theme-accent-hover) !important; }
+  & .text-emerald-700 { color: var(--theme-accent) !important; }
+  & .bg-emerald-600 { background-color: var(--theme-accent) !important; }
+  & .hover\:bg-emerald-700:hover { background-color: var(--theme-accent-hover) !important; }
+  & .border-emerald-600 { border-color: var(--theme-accent) !important; }
+
+  /* Muted Text / Details */
+  & .text-emerald-800 { color: var(--theme-accent) !important; }
+  & .bg-emerald-50 { background-color: var(--theme-bg-secondary) !important; }
+  & .text-emerald-900 { color: var(--theme-text-dark) !important; }
+  & .border-emerald-200 { border-color: var(--theme-border-main) !important; }
+
+  /* Body background & Neutral backgrounds */
+  & .bg-\[\#f5f5f0\] { background-color: var(--theme-bg-body) !important; }
+  & .bg-\[\#f5f5f0\]\/95 { background-color: var(--theme-bg-body) !important; }
+  & .hover\:bg-\[\#f5f5f0\]:hover { background-color: var(--theme-bg-body) !important; }
+  & .bg-\[\#ecece4\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#ecece4\]\/95 { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#ecece4\]\/90 { background-color: var(--theme-bg-secondary) !important; }
+  & .hover\:bg-\[\#ecece4\]:hover { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fafaf7\] { background-color: var(--theme-bg-body) !important; }
+
+  /* Typography / Text Dark */
+  & .text-\[\#2c2c24\] { color: var(--theme-text-dark) !important; }
+  & .bg-\[\#2c2c24\] { background-color: var(--theme-bg-dark-block) !important; }
+  & .border-\[\#2c2c24\] { border-color: var(--theme-bg-dark-block) !important; }
+
+  /* Secondary / Muted metadata text */
+  & .text-\[\#8a8a7e\] { color: var(--theme-text-muted) !important; }
+  & .text-\[\#6b6b5e\] { color: var(--theme-text-muted) !important; }
+  & .text-stone-500 { color: var(--theme-text-muted) !important; }
+
+  /* Borders / Dividers */
+  & .border-\[\#e5e5df\] { border-color: var(--theme-border-main) !important; }
+  & .border-\[\#d1d1ca\] { border-color: var(--theme-border-accent) !important; }
+  & .border-stone-200 { border-color: var(--theme-border-main) !important; }
+  
+  /* Background White overrides (Dynamic for both light and dark) */
+  & .bg-white { background-color: var(--theme-bg-white) !important; }
+  & .bg-white\/95 { background-color: var(--theme-bg-white) !important; }
+  & .bg-white\/90 { background-color: var(--theme-bg-white) !important; }
+  & .bg-white\/80 { background-color: var(--theme-bg-white) !important; }
+  & .bg-white\/50 { background-color: var(--theme-bg-white) !important; }
+  & .bg-stone-50 { background-color: var(--theme-bg-stone-50) !important; }
+  & .bg-stone-50\/40 { background-color: var(--theme-bg-stone-50-40) !important; }
+  & .lg\:bg-\[\#fcfcfb\] { background-color: var(--theme-bg-white) !important; }
+
+  /* Additional Custom Cream & Light Neutral Background Overrides */
+  & .bg-\[\#fdfbf7\] { background-color: var(--theme-bg-white) !important; }
+  & .bg-\[\#fafaf7\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fafaf8\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fcfcf9\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#f9f9f6\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fbfbf9\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fbfbfa\] { background-color: var(--theme-bg-secondary) !important; }
+  & .bg-\[\#fcfcfb\] { background-color: var(--theme-bg-white) !important; }
+
+  /* Hover States for Cream/Light Neutrals */
+  & .hover\:bg-\[\#fafaf7\]:hover { background-color: var(--theme-border-main) !important; }
+  & .hover\:bg-\[\#fafaf8\]:hover { background-color: var(--theme-border-main) !important; }
+  & .hover\:bg-\[\#fcfcf9\]:hover { background-color: var(--theme-border-main) !important; }
+  & .hover\:bg-\[\#f5f5f0\]:hover { background-color: var(--theme-border-main) !important; }
+
+  /* Gradient Component Containers */
+  & .bg-gradient-to-r.from-\[\#f7f7f2\] {
+    background-image: none !important;
+    background-color: var(--theme-bg-white) !important;
+    border-color: var(--theme-border-main) !important;
+  }
+}
+
+/* --- Unified Dark Mode Style Adjustments (Calm Obsidian, Midnight Ink, Deep Moss) --- */
+html.theme-obsidian, html.theme-midnight, html.theme-forest-dark {
+  & .text-stone-900 { color: #ffffff !important; }
+  & .text-stone-800 { color: #f5f5f0 !important; }
+  & .text-stone-700 { color: #e1e1da !important; }
+  & .text-stone-600 { color: #cbd5e1 !important; }
+  & .bg-stone-100 { background-color: var(--theme-bg-secondary) !important; }
+  & .hover\:bg-stone-100:hover { background-color: var(--theme-border-main) !important; }
+  & .hover\:bg-stone-50:hover { background-color: var(--theme-bg-white) !important; }
+
+  /* High contrast elements */
+  & input[type="text"], & input[type="number"], & select, & textarea {
+    background-color: var(--theme-bg-secondary) !important;
+    color: #ffffff !important;
+    border-color: var(--theme-border-main) !important;
+  }
+
+  & input::placeholder, & textarea::placeholder {
+    color: var(--theme-text-muted) !important;
+    opacity: 0.7;
+  }
+
+  & .shadow-xs, & .shadow-sm, & .shadow-md, & .shadow-lg {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  }
+
+  /* Translucent list row & alert background overrides using active theme accent */
+  & .bg-emerald-50\/30, & .bg-emerald-50\/40, & .bg-emerald-50\/50, & .bg-emerald-50\/80, & .bg-emerald-50\/20,
+  & .bg-amber-50\/30, & .bg-amber-50\/40, & .bg-amber-50\/50, & .bg-amber-50\/80, & .bg-amber-50\/20,
+  & .bg-rose-50\/30, & .bg-rose-50\/40, & .bg-rose-50\/50, & .bg-rose-50\/80, & .bg-rose-50\/20,
+  & .bg-purple-50\/30, & .bg-purple-50\/40, & .bg-purple-50\/50, & .bg-purple-50\/80, & .bg-purple-50\/20 {
+    background-color: color-mix(in srgb, var(--theme-accent) 15%, transparent) !important;
+  }
+}
+

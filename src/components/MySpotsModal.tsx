@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { X, Plus, Trash2, MapPin, Utensils, Coffee, Wine, Star, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { X, Plus, Trash2, MapPin, Utensils, Coffee, Wine, Star, Loader2, AlertCircle, CheckCircle2, RefreshCw, ArrowLeft } from "lucide-react";
 import { UserSpot } from "../types";
 import { getMySpots, addMySpot, removeMySpot } from "../utils/storage";
 import { useLanguage } from "../context/LanguageContext";
+import { useAuth } from "../context/AuthContext";
 
 interface MySpotsModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultTown?: string;
+  isInline?: boolean;
+  onBack?: () => void;
 }
 
 const CATEGORY_META: Record<UserSpot["category"], { label: string; Icon: any }> = {
@@ -17,24 +20,56 @@ const CATEGORY_META: Record<UserSpot["category"], { label: string; Icon: any }> 
   other: { label: "Other favorite", Icon: Star },
 };
 
-export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, defaultTown = "" }) => {
+export const MySpotsModal: React.FC<MySpotsModalProps> = ({
+  isOpen,
+  onClose,
+  defaultTown = "",
+  isInline = false,
+  onBack,
+}) => {
   const { t } = useLanguage();
+  const { activeEmail, syncStatus, lastSyncTime, syncUserDataWithCloud } = useAuth();
   const [spots, setSpots] = useState<UserSpot[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<UserSpot["category"]>("cafe");
   const [town, setTown] = useState(defaultTown);
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "warn" | "error"; message: string } | null>(null);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsManualSyncing(true);
+    try {
+      await syncUserDataWithCloud(true);
+    } finally {
+      setTimeout(() => setIsManualSyncing(false), 500);
+    }
+  };
 
   useEffect(() => {
-    if (isOpen) {
-      setSpots(getMySpots());
-      if (defaultTown) setTown(defaultTown);
-    }
-  }, [isOpen, defaultTown]);
+    if (!isOpen && !isInline) return;
 
-  if (!isOpen) return null;
+    setSpots(getMySpots());
+    if (defaultTown) setTown(defaultTown);
+    setShowAddForm(false);
+
+    const handleSync = () => {
+      queueMicrotask(() => {
+        setSpots(getMySpots());
+      });
+    };
+
+    window.addEventListener("localexplorer_cloud_sync_updated", handleSync);
+    window.addEventListener("storage", handleSync);
+    return () => {
+      window.removeEventListener("localexplorer_cloud_sync_updated", handleSync);
+      window.removeEventListener("storage", handleSync);
+    };
+  }, [isOpen, defaultTown, isInline]);
+
+  if (!isOpen && !isInline) return null;
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +109,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
     setName("");
     setNotes("");
     setIsSaving(false);
+    setShowAddForm(false);
     setStatus(
       geocoded
         ? { type: "ok", message: t("spots.addSuccess", "Added and located on the map.") }
@@ -94,37 +130,58 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#2c2c24]/40 backdrop-blur-xs flex items-center justify-center p-4 no-print animate-fade-in">
-      <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-[#e5e5df] overflow-hidden flex flex-col max-h-[88vh]">
-        {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-[#e5e5df] flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-xl bg-[#ecece4] text-[#5A5A40]">
-              <Utensils className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-serif text-2xl font-light italic text-[#2c2c24]">{t("spots.title", "My Places")}</h3>
-              <p className="text-xs text-[#8a8a7e] font-sans">
-                {t("spots.subtitle", "Your own bars, cafés & restaurants — the only source for dining recommendations")}
-              </p>
-            </div>
+  const content = (
+    <div className={`bg-white w-full ${isInline ? "" : "h-full md:h-auto md:max-w-lg md:rounded-3xl shadow-2xl border-0 md:border md:border-[#e5e5df] md:max-h-[88vh]"} overflow-hidden flex flex-col`}>
+      {/* Header */}
+      <div className="p-4 sm:p-6 border-b border-[#e5e5df] flex items-center justify-between shrink-0 bg-[#f5f5f0]/50">
+        <div className="flex items-center space-x-3">
+          {isInline && onBack && (
+            <button
+              onClick={onBack}
+              className="p-2 -ml-2 rounded-full text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors shrink-0 mr-1 cursor-pointer"
+              title="Back to User Profile"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+          <div className="p-2.5 rounded-xl bg-[#ecece4] text-[#5A5A40]">
+            <Utensils className="w-5 h-5" />
           </div>
+          <div>
+            <h3 className="font-serif text-xl sm:text-2xl font-light italic text-[#2c2c24]">{t("spots.title", "My Places")}</h3>
+            <p className="text-xs text-[#8a8a7e] font-sans">
+              {t("spots.subtitle", "Your own bars, cafés & restaurants — the only source for dining recommendations")}
+            </p>
+          </div>
+        </div>
+        {!isInline && (
           <button
             onClick={onClose}
-            className="p-2 rounded-full text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors"
+            className="p-2 rounded-full text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
+        )}
+      </div>
 
-        {/* Why this exists */}
-        <div className="mx-5 sm:mx-6 mt-4 bg-[#ecece4] p-3.5 border border-[#d1d1ca] rounded-2xl text-xs text-[#2c2c24] leading-relaxed">
-          {t("spots.explanation", "LocalExplorer never invents bars, cafés or restaurants from a built-in list. Dining suggestions come from places you add here or from live AI search — everything is located dynamically on the map.")}
-        </div>
+      {/* Add Place Bar / Toggle */}
+      <div className="px-5 pt-4 pb-2 flex items-center justify-between shrink-0 bg-white">
+        <span className="text-xs font-serif italic text-[#8a8a7e]">
+          {spots.length} saved place{spots.length !== 1 ? "s" : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-[#5A5A40] text-white rounded-xl text-xs font-serif italic hover:bg-[#4a4a35] transition-colors shadow-2xs cursor-pointer"
+        >
+          {showAddForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+          <span>{showAddForm ? t("action.cancel", "Cancel") : t("spots.btnAdd", "+ Add Place")}</span>
+        </button>
+      </div>
 
-        {/* Add form */}
-        <form onSubmit={handleAdd} className="mx-5 sm:mx-6 mt-4 p-4 bg-[#f5f5f0] border border-[#e5e5df] rounded-2xl space-y-3">
+      {/* Add form (hidden by default) */}
+      {showAddForm && (
+        <form onSubmit={handleAdd} className="mx-5 my-2 p-4 bg-[#f5f5f0] border border-[#d1d1ca] rounded-2xl space-y-3 shrink-0 animate-in fade-in-10">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 sm:col-span-1">
               <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] mb-1.5">
@@ -183,7 +240,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3 pt-1">
             <div className="text-[11px] leading-snug">
               {status && (
                 <span
@@ -204,89 +261,136 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({ isOpen, onClose, def
                 </span>
               )}
             </div>
-            <button
-              type="submit"
-              disabled={isSaving || !name.trim()}
-              className="px-4 py-2.5 rounded-xl bg-[#5A5A40] text-white text-xs font-serif italic flex items-center space-x-1.5 hover:bg-[#4a4a35] transition-colors disabled:opacity-50 shrink-0"
-            >
-              {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-              <span>{isSaving ? t("spots.btnSaving", "Locating…") : t("spots.btnAdd", "Add Place")}</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowAddForm(false)}
+                className="px-3 py-2 text-xs font-serif italic text-[#6b6b5e] hover:bg-[#ecece4] rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving || !name.trim()}
+                className="px-4 py-2 rounded-xl bg-[#5A5A40] text-white text-xs font-serif italic flex items-center space-x-1.5 hover:bg-[#4a4a35] transition-colors disabled:opacity-50 shrink-0"
+              >
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                <span>{isSaving ? t("spots.btnSaving", "Locating…") : t("spots.btnAdd", "Save Place")}</span>
+              </button>
+            </div>
           </div>
         </form>
+      )}
 
-        {/* List */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-2.5 bg-[#f5f5f0]/40">
-          {spots.length === 0 ? (
-            <div className="text-center py-10">
-              <Coffee className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
-              <p className="font-serif text-base italic text-[#2c2c24]">{t("spots.empty", "No places saved yet")}</p>
-              <p className="text-xs text-[#8a8a7e] mt-0.5 max-w-xs mx-auto">
-                {t("spots.emptyDesc", "Add your favorite café, bar or restaurant above and plans will be built around them.")}
-              </p>
-            </div>
-          ) : (
-            spots.map((spot) => {
-              const meta = CATEGORY_META[spot.category] || CATEGORY_META.other;
-              const categoryLabel = t(`spots.category.${spot.category}`, meta.label);
-              return (
-                <div
-                  key={spot.id}
-                  className="bg-white p-3.5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="flex items-start space-x-3 flex-1 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-[#ecece4] text-[#5A5A40] flex items-center justify-center shrink-0 border border-[#d1d1ca]">
-                      <meta.Icon className="w-4 h-4" />
+      {/* List */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-2.5 bg-[#f5f5f0]/40">
+        {spots.length === 0 ? (
+          <div className="text-center py-10">
+            <Coffee className="w-8 h-8 text-[#d1d1ca] mx-auto mb-2 stroke-1" />
+            <p className="font-serif text-base italic text-[#2c2c24]">{t("spots.empty", "No places saved yet")}</p>
+            <p className="text-xs text-[#8a8a7e] mt-0.5 max-w-xs mx-auto">
+              {t("spots.emptyDesc", "Add your favorite café, bar or restaurant above and plans will be built around them.")}
+            </p>
+          </div>
+        ) : (
+          spots.map((spot) => {
+            const meta = CATEGORY_META[spot.category] || CATEGORY_META.other;
+            const categoryLabel = t(`spots.category.${spot.category}`, meta.label);
+            return (
+              <div
+                key={spot.id}
+                className="bg-white p-3.5 rounded-2xl border border-[#e5e5df] flex items-center justify-between gap-3 text-xs"
+              >
+                <div className="flex items-start space-x-3 flex-1 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-[#ecece4] text-[#5A5A40] flex items-center justify-center shrink-0 border border-[#d1d1ca]">
+                    <meta.Icon className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-serif italic font-medium text-sm text-[#2c2c24] truncate">
+                      {spot.name}
                     </div>
-                    <div className="min-w-0">
-                      <div className="font-serif italic font-medium text-sm text-[#2c2c24] truncate">
-                        {spot.name}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[#8a8a7e] mt-0.5">
-                        <span className="capitalize font-medium text-[#5A5A40] bg-[#ecece4] px-2 py-0.5 rounded-full border border-[#d1d1ca]">
-                          {categoryLabel}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[#8a8a7e] mt-0.5">
+                      <span className="capitalize font-medium text-[#5A5A40] bg-[#ecece4] px-2 py-0.5 rounded-full border border-[#d1d1ca]">
+                        {categoryLabel}
+                      </span>
+                      {spot.town && (
+                        <span className="flex items-center gap-0.5">
+                          <MapPin className="w-3 h-3 text-[#5A5A40]" />
+                          {spot.town}
                         </span>
-                        {spot.town && (
-                          <span className="flex items-center gap-0.5">
-                            <MapPin className="w-3 h-3 text-[#5A5A40]" />
-                            {spot.town}
-                          </span>
-                        )}
-                        {spot.coordinates ? (
-                          <span className="text-emerald-700">{t("spots.located", "located")}</span>
-                        ) : (
-                          <span className="text-amber-700">{t("spots.pending", "pending location")}</span>
-                        )}
-                        {spot.notes && <span className="italic text-[#6b6b5e]">“{spot.notes}”</span>}
-                      </div>
+                      )}
+                      {spot.coordinates ? (
+                        <span className="text-emerald-700">{t("spots.located", "located")}</span>
+                      ) : (
+                        <span className="text-amber-700">{t("spots.pending", "pending location")}</span>
+                      )}
+                      {spot.notes && <span className="italic text-[#6b6b5e]">“{spot.notes}”</span>}
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleRemove(spot.id)}
-                    title={t("spots.deleteConfirm", "Delete this place?")}
-                    className="p-1.5 text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
                 </div>
-              );
-            })
-          )}
+                <button
+                  onClick={() => handleRemove(spot.id)}
+                  title={t("spots.deleteConfirm", "Delete this place?")}
+                  className="p-1.5 text-[#8a8a7e] hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
+        <span className="text-[#8a8a7e] font-serif italic">
+          {t("spots.footer", "{count} places saved — they power your dining recommendations").replace("{count}", spots.length.toString())}
+        </span>
+        <button
+          onClick={isInline && onBack ? onBack : onClose}
+          className="px-4 py-2 bg-[#5A5A40] hover:bg-[#4a4a35] text-white text-xs font-serif italic rounded-full transition-colors cursor-pointer"
+        >
+          {isInline && onBack ? "Back" : t("spots.done", "Done")}
+        </button>
+      </div>
+
+      {/* Footer Cloud Sync Bar */}
+      <div className="px-4 py-2.5 bg-white border-t border-[#e5e5df] flex items-center justify-between gap-2 text-xs">
+        <div className="flex items-center space-x-2 min-w-0">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${syncStatus === "synced" ? "bg-emerald-500" : syncStatus === "syncing" ? "bg-amber-500 animate-ping" : "bg-[#8a8a7e]"}`} />
+          <div className="truncate">
+            <p className="text-[11px] font-medium text-[#2c2c24] truncate">
+              {activeEmail}
+            </p>
+            <p className="text-[10px] text-[#8a8a7e]">
+              Cloud Sync: {lastSyncTime}
+            </p>
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-4 bg-[#f5f5f0] border-t border-[#e5e5df] flex justify-between items-center text-xs">
-          <span className="text-[#8a8a7e] font-serif italic">
-            {t("spots.footer", "{count} places saved — they power your dining recommendations").replace("{count}", spots.length.toString())}
-          </span>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-[#5A5A40] hover:bg-[#4a4a35] text-white text-xs font-serif italic rounded-full transition-colors"
-          >
-            {t("spots.done", "Done")}
-          </button>
-        </div>
+        <button
+          onClick={handleManualSync}
+          disabled={isManualSyncing || syncStatus === "syncing"}
+          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full border border-[#d1d1ca] hover:bg-[#ecece4] text-[#2c2c24] font-medium text-xs transition-colors shrink-0 disabled:opacity-50 cursor-pointer"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isManualSyncing || syncStatus === "syncing" ? "animate-spin text-[#5A5A40]" : "text-[#8a8a7e]"}`} />
+          <span>{isManualSyncing ? "Syncing..." : "Sync"}</span>
+        </button>
       </div>
+    </div>
+  );
+
+  if (isInline) {
+    return (
+      <div className="w-full no-print animate-fade-in">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-x-0 top-0 bottom-[58px] md:inset-0 z-40 md:z-50 bg-[#2c2c24]/40 md:backdrop-blur-xs flex items-center justify-center p-0 md:p-4 no-print animate-fade-in">
+      {content}
     </div>
   );
 };

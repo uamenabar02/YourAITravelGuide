@@ -1,0 +1,158 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User synchronized travel profile, trips, and state",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the traveler"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user"
+        },
+        "passwordHash": {
+          "type": "string",
+          "description": "Optional salt/hash for email authentication"
+        },
+        "premium": {
+          "type": "boolean",
+          "description": "Subscription status"
+        },
+        "activePersona": {
+          "type": "string",
+          "description": "Selected traveler persona ID"
+        },
+        "savedTrips": {
+          "type": "array",
+          "description": "List of saved itinerary plans"
+        },
+        "mySpots": {
+          "type": "array",
+          "description": "List of custom saved spots"
+        },
+        "tasteProfile": {
+          "type": "object",
+          "description": "User taste preferences"
+        },
+        "activityHistory": {
+          "type": "array",
+          "description": "Recent activity history"
+        },
+        "permanentSkips": {
+          "type": "array",
+          "description": "Permanently skipped suggestions"
+        },
+        "currentPlan": {
+          "type": "object",
+          "description": "Currently active itinerary"
+        },
+        "offlinePlans": {
+          "type": "array",
+          "description": "Offline cached plans"
+        },
+        "collabStates": {
+          "type": "object",
+          "description": "Group collaboration rooms state"
+        },
+        "currentCollabSessionId": {
+          "type": "string",
+          "description": "Active group collaboration session ID"
+        },
+        "lastSynced": {
+          "type": "number",
+          "description": "Timestamp of last synchronization"
+        }
+      },
+      "required": ["email"]
+    },
+    "SharedTrip": {
+      "title": "SharedTrip",
+      "description": "Real-time shared itinerary, group collaboration state, and member identity bindings",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique itinerary trip ID"
+        },
+        "creatorEmail": {
+          "type": "string",
+          "description": "Google account email of the itinerary creator/organizer"
+        },
+        "creatorName": {
+          "type": "string",
+          "description": "Display name of the creator"
+        },
+        "plan": {
+          "type": "object",
+          "description": "Full itinerary plan containing days, activities, accommodation, transit"
+        },
+        "collabState": {
+          "type": "object",
+          "description": "Real-time group collaboration state, members, roles, claimed accounts, expenses, packing, votes"
+        },
+        "offlineNotes": {
+          "type": "string",
+          "description": "Shared trip notes"
+        },
+        "emergencyInfo": {
+          "type": "object",
+          "description": "Shared emergency numbers and medical information"
+        },
+        "lastUpdated": {
+          "type": "number",
+          "description": "Timestamp of last modification"
+        },
+        "updatedByEmail": {
+          "type": "string",
+          "description": "Email of user who made the last modification"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "True if the trip is published to the public Community feed"
+        },
+        "visibility": {
+          "type": "string",
+          "description": "Privacy level: private, public, or passcode-protected"
+        },
+        "passcode": {
+          "type": "string",
+          "description": "Passcode required to view or join if visibility is passcode-protected"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Average rating given by other travelers"
+        },
+        "ratingsCount": {
+          "type": "number",
+          "description": "Total number of reviews and ratings received"
+        },
+        "reviews": {
+          "type": "array",
+          "description": "Public reviews and comments from community explorers"
+        },
+        "downloadsCount": {
+          "type": "number",
+          "description": "Number of times this itinerary has been cloned"
+        },
+        "featuredTags": {
+          "type": "array",
+          "description": "Community tags such as Backpacking, Adventure, Foodie, Family"
+        }
+      },
+      "required": ["id", "creatorEmail", "plan"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Main user state document synchronized across sessions and devices"
+    },
+    "/shared_trips/{tripId}": {
+      "schema": "SharedTrip",
+      "description": "Shared real-time trip document with role-based member claims and live updates"
+    }
+  }
+}

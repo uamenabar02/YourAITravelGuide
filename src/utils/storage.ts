@@ -8,6 +8,86 @@ const MY_SPOTS_KEY = "localexplorer_my_spots_v1";
 const TASTE_PROFILE_KEY = "localexplorer_taste_profile_v1";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
+// --- Smart Merge Helpers for Cloud Sync ---
+
+export function mergeSavedTrips(local: ItineraryPlan[], incoming: ItineraryPlan[]): ItineraryPlan[] {
+  const map = new Map<string, ItineraryPlan>();
+  // Add incoming first
+  incoming.forEach((trip) => {
+    if (trip && trip.id) {
+      map.set(trip.id, trip);
+    }
+  });
+  // Local items overwrite or add
+  local.forEach((trip) => {
+    if (trip && trip.id) {
+      map.set(trip.id, trip);
+    }
+  });
+  return Array.from(map.values());
+}
+
+export function mergeMySpots(local: UserSpot[], incoming: UserSpot[]): UserSpot[] {
+  const map = new Map<string, UserSpot>();
+  incoming.forEach((spot) => {
+    if (spot && (spot.id || spot.name)) {
+      map.set(spot.id || spot.name.toLowerCase(), spot);
+    }
+  });
+  local.forEach((spot) => {
+    if (spot && (spot.id || spot.name)) {
+      map.set(spot.id || spot.name.toLowerCase(), spot);
+    }
+  });
+  return Array.from(map.values());
+}
+
+export function mergePermanentSkips(local: PermanentSkip[], incoming: PermanentSkip[]): PermanentSkip[] {
+  const map = new Map<string, PermanentSkip>();
+  incoming.forEach((skip) => {
+    if (skip && skip.name) {
+      map.set(skip.name.toLowerCase(), skip);
+    }
+  });
+  local.forEach((skip) => {
+    if (skip && skip.name) {
+      map.set(skip.name.toLowerCase(), skip);
+    }
+  });
+  return Array.from(map.values());
+}
+
+export function mergeActivityHistory(local: ActivityHistoryItem[], incoming: ActivityHistoryItem[]): ActivityHistoryItem[] {
+  const map = new Map<string, ActivityHistoryItem>();
+  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  incoming.forEach((item) => {
+    if (item && item.timestamp >= cutoff) {
+      map.set(item.id || `${item.name}-${item.location}`, item);
+    }
+  });
+  local.forEach((item) => {
+    if (item && item.timestamp >= cutoff) {
+      map.set(item.id || `${item.name}-${item.location}`, item);
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 200);
+}
+
+export function mergeTasteProfiles(local: TasteProfile | null, incoming: TasteProfile | null): TasteProfile | null {
+  if (!local) return incoming;
+  if (!incoming) return local;
+  return (incoming.updatedAt || 0) >= (local.updatedAt || 0) ? incoming : local;
+}
+
+// --- Notification helper for real-time cloud sync ---
+
+export function notifyLocalDataChanged(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("localexplorer_data_changed"));
+    window.dispatchEvent(new Event("storage"));
+  }
+}
+
 // --- Saved Trips ---
 
 export function getSavedTrips(): ItineraryPlan[] {
@@ -33,6 +113,7 @@ export function saveTrip(trip: ItineraryPlan): void {
       updated = [trip, ...current];
     }
     localStorage.setItem(SAVED_TRIPS_KEY, JSON.stringify(updated));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to save trip to localStorage:", err);
   }
@@ -41,8 +122,43 @@ export function saveTrip(trip: ItineraryPlan): void {
 export function deleteSavedTrip(id: string): void {
   try {
     const current = getSavedTrips();
+    const deletedTrip = current.find((t) => t.id === id);
     const updated = current.filter((t) => t.id !== id);
     localStorage.setItem(SAVED_TRIPS_KEY, JSON.stringify(updated));
+
+    // Clear cached activity details for the deleted trip's spots or destination
+    try {
+      const keysToRemove: string[] = [];
+      const rawDest = deletedTrip?.destinationOrTown?.toLowerCase() || "";
+      const destTag = rawDest.replace(/[^a-z0-9]/g, "");
+      
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("act_details_cache_")) {
+          const lowerKey = key.toLowerCase();
+          const cleanKey = lowerKey.replace(/[^a-z0-9]/g, "");
+          if (destTag && cleanKey.includes(destTag)) {
+            keysToRemove.push(key);
+          } else if (
+            deletedTrip &&
+            deletedTrip.days.some((d) =>
+              d.activities.some(
+                (a) =>
+                  (a.id && lowerKey.includes(a.id.toLowerCase())) ||
+                  (a.name && lowerKey.includes(a.name.toLowerCase().replace(/[^a-z0-9]/g, "_")))
+              )
+            )
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch (e) {
+      console.warn("Error cleaning cached details on trip deletion:", e);
+    }
+
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to delete saved trip:", err);
   }
@@ -73,6 +189,7 @@ export function saveCurrentSessionPlan(plan: ItineraryPlan | null): void {
     } else {
       localStorage.setItem(CURRENT_SESSION_PLAN_KEY, JSON.stringify(plan));
     }
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to save current session plan to localStorage:", err);
   }
@@ -115,6 +232,7 @@ export function recordActivityVisit(activity: ActivitySpot, location: string): v
     );
     const updated = [newItem, ...filtered];
     localStorage.setItem(ACTIVITY_HISTORY_KEY, JSON.stringify(updated.slice(0, 200)));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to record activity visit:", err);
   }
@@ -145,6 +263,7 @@ export function removeHistoryItem(id: string): void {
     const current = getActivityHistory();
     const updated = current.filter((h) => h.id !== id);
     localStorage.setItem(ACTIVITY_HISTORY_KEY, JSON.stringify(updated));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to remove history item:", err);
   }
@@ -152,6 +271,7 @@ export function removeHistoryItem(id: string): void {
 
 export function clearActivityHistory(): void {
   localStorage.removeItem(ACTIVITY_HISTORY_KEY);
+  notifyLocalDataChanged();
 }
 
 // --- Permanent Skips ("never suggest this again") ---
@@ -187,6 +307,7 @@ export function addPermanentSkip(name: string): void {
       ...current,
     ];
     localStorage.setItem(PERMANENT_SKIPS_KEY, JSON.stringify(updated));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to add permanent skip:", err);
   }
@@ -197,9 +318,33 @@ export function removePermanentSkip(id: string): void {
     const current = getPermanentSkips();
     const updated = current.filter((s) => s.id !== id);
     localStorage.setItem(PERMANENT_SKIPS_KEY, JSON.stringify(updated));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to remove permanent skip:", err);
   }
+}
+
+export function moveHistoryItemToPermanentSkips(historyItem: ActivityHistoryItem): void {
+  addPermanentSkip(historyItem.name);
+  removeHistoryItem(historyItem.id);
+}
+
+export function movePermanentSkipToHistory(skip: PermanentSkip, defaultLocation: string = "Local Area"): void {
+  recordActivityVisit(
+    {
+      id: skip.id,
+      name: skip.name,
+      category: "culture",
+      description: "",
+      insiderTip: "",
+      address: defaultLocation,
+      time: "",
+      approxCost: "",
+      coordinates: { lat: 0, lng: 0 },
+    },
+    defaultLocation
+  );
+  removePermanentSkip(skip.id);
 }
 
 // --- My Places (user-provided spots: bars, cafés, restaurants, favorites) ---
@@ -224,6 +369,7 @@ export function addMySpot(spot: Omit<UserSpot, "id" | "addedAt">): UserSpot {
   try {
     const current = getMySpots();
     localStorage.setItem(MY_SPOTS_KEY, JSON.stringify([newSpot, ...current]));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to save My Spot:", err);
   }
@@ -234,6 +380,7 @@ export function removeMySpot(id: string): void {
   try {
     const current = getMySpots();
     localStorage.setItem(MY_SPOTS_KEY, JSON.stringify(current.filter((s) => s.id !== id)));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to remove My Spot:", err);
   }
@@ -265,6 +412,7 @@ export function getTasteProfile(): TasteProfile | null {
 export function saveTasteProfile(profile: Omit<TasteProfile, "updatedAt">): void {
   try {
     localStorage.setItem(TASTE_PROFILE_KEY, JSON.stringify({ ...profile, updatedAt: Date.now() }));
+    notifyLocalDataChanged();
   } catch (err) {
     console.error("Failed to save taste profile:", err);
   }
@@ -272,6 +420,45 @@ export function saveTasteProfile(profile: Omit<TasteProfile, "updatedAt">): void
 
 export function clearTasteProfile(): void {
   localStorage.removeItem(TASTE_PROFILE_KEY);
+  notifyLocalDataChanged();
+}
+
+/** Check if an activity spot has been recorded in the 30-day visit history */
+export function isActivityVisited(name: string): boolean {
+  if (!name) return false;
+  const history = getActivityHistory();
+  return history.some((h) => h.name.toLowerCase() === name.toLowerCase());
+}
+
+/** Toggle visited status for an activity spot in the 30-day visit history */
+export function toggleActivityVisited(
+  name: string,
+  location: string,
+  category: any,
+  approxCost?: string
+): boolean {
+  if (!name) return false;
+  const history = getActivityHistory();
+  const existing = history.find((h) => h.name.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    removeHistoryItem(existing.id);
+    return false;
+  } else {
+    recordActivityVisit(
+      {
+        id: "spot-" + Date.now(),
+        time: "",
+        name,
+        category: category || "sightseeing",
+        description: "",
+        insiderTip: "",
+        approxCost: approxCost || "Free",
+        coordinates: { lat: 0, lng: 0 },
+      },
+      location
+    );
+    return true;
+  }
 }
 
 /** Fuzzy match: is this spot name covered by any exclusion list? */

@@ -179,6 +179,7 @@ const POPULAR_DESTINATIONS = [
 ];
 
 const VIBE_OPTIONS = [
+  { key: "vibe.beaches", label: "Beaches & Swim Spots", icon: "🏖️" },
   { key: "vibe.gastro", label: "Gastronomy & Local Food", icon: "🍜" },
   { key: "vibe.excursions", label: "Regional Excursions & Viewpoints", icon: "🚗" },
   { key: "vibe.shopping", label: "Shopping & Local Boutiques", icon: "🛍️" },
@@ -197,6 +198,7 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
   const [destination, setDestination] = useState("Donostia / San Sebastián, Spain");
   const [groupSize, setGroupSize] = useState<number>(2);
   const [duration, setDuration] = useState<number>(3);
+  const [startDate, setStartDate] = useState<string>("");
   const [pace, setPace] = useState<PaceType>("balanced");
   const [transportModes, setTransportModes] = useState<TransportMode[]>(["public_transit"]);
   const [selectedVibes, setSelectedVibes] = useState<string[]>([
@@ -260,7 +262,43 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
   ]);
   const [arrivalHour, setArrivalHour] = useState("14:00");
   const [departureHour, setDepartureHour] = useState("11:00");
-  const [enableSwiper, setEnableSwiper] = useState(true);
+  const [enableSwiper, setEnableSwiper] = useState(false);
+
+  // Manual specific custom spots/activities requested by user
+  const [manualCustomSpots, setManualCustomSpots] = useState<
+    {
+      id: string;
+      name: string;
+      category?: string;
+      location?: string;
+      coordinates?: Coordinates;
+      isVerified?: boolean;
+      notes?: string;
+    }[]
+  >([]);
+
+  const handleAddCustomSpot = () => {
+    setManualCustomSpots([
+      ...manualCustomSpots,
+      {
+        id: `spot-${Date.now()}`,
+        name: "",
+        category: "sightseeing",
+        location: "",
+        notes: "",
+      },
+    ]);
+  };
+
+  const handleRemoveCustomSpot = (id: string) => {
+    setManualCustomSpots(manualCustomSpots.filter((s) => s.id !== id));
+  };
+
+  const handleUpdateCustomSpot = (id: string, field: string, value: any) => {
+    setManualCustomSpots(
+      manualCustomSpots.map((s) => (s.id === id ? { ...s, [field]: value } : s))
+    );
+  };
 
   const toggleVibe = (vibe: string) => {
     if (selectedVibes.includes(vibe)) {
@@ -360,14 +398,27 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
       }
     }
 
+    const validCustomSpots = manualCustomSpots
+      .filter((s) => s.name.trim().length > 0)
+      .map((s) => ({
+        id: s.id,
+        name: s.name.trim(),
+        category: s.category || "sightseeing",
+        location: s.location?.trim() || undefined,
+        coordinates: s.coordinates,
+        notes: s.notes?.trim() || undefined,
+      }));
+
     if (isMultiDestination) {
       const totalDays = destinations.reduce((sum, d) => sum + d.days, 0);
       const combinedDest = destinations.map((d) => d.city.split(",")[0]).join(" → ");
       onSubmit({
         destination: combinedDest,
         duration: totalDays,
+        startDate: startDate.trim() || undefined,
         pace,
         vibes: selectedVibes,
+        manualCustomSpots: validCustomSpots.length > 0 ? validCustomSpots : undefined,
         budgetTier,
         budgetType,
         exactBudgetPerDay: budgetType === "exact" ? exactBudgetPerDay : undefined,
@@ -389,8 +440,10 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
       onSubmit({
         destination: destination.trim(),
         duration,
+        startDate: startDate.trim() || undefined,
         pace,
         vibes: selectedVibes,
+        manualCustomSpots: validCustomSpots.length > 0 ? validCustomSpots : undefined,
         budgetTier,
         budgetType,
         exactBudgetPerDay: budgetType === "exact" ? exactBudgetPerDay : undefined,
@@ -957,32 +1010,101 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
         {/* 4. Duration & Pace (Single Mode Duration slider) */}
         {!isMultiDestination && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-1">
-            <div className="bg-[#f5f5f0] p-5 rounded-2xl border border-[#e5e5df]">
-              <div className="flex items-center justify-between mb-2.5">
-                <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#5A5A40]" />
-                  {t("vacation.duration", "Trip Duration")}
-                </label>
-                <div className="flex items-center space-x-2">
-                  <span className="font-serif italic font-semibold text-sm text-[#2c2c24] bg-white px-3 py-0.5 rounded-full border border-[#d1d1ca]">
-                    {duration} {duration === 1 ? t("action.day", "Day") : t("action.days", "Days")}
-                  </span>
+            <div className="bg-[#f5f5f0] p-5 rounded-2xl border border-[#e5e5df] space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2.5">
+                  <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#5A5A40]" />
+                    {t("vacation.duration", "Trip Duration")}
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-serif italic font-semibold text-sm text-[#2c2c24] bg-white px-3 py-0.5 rounded-full border border-[#d1d1ca]">
+                      {duration} {duration === 1 ? t("action.day", "Day") : t("action.days", "Days")}
+                    </span>
+                  </div>
+                </div>
+                <input
+                  id="slider-vacation-duration"
+                  type="range"
+                  min="1"
+                  max="14"
+                  value={duration}
+                  onChange={(e) => setDuration(parseInt(e.target.value))}
+                  className="w-full accent-[#5A5A40] cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-[#8a8a7e] font-medium mt-1 font-mono">
+                  <span>1 {t("vacation.dayWord", "Day")}</span>
+                  <span>3-4 {t("vacation.daysWord", "Days")}</span>
+                  <span>7 {t("vacation.daysWord", "Days")}</span>
+                  <span>14 {t("vacation.daysWord", "Days")}</span>
                 </div>
               </div>
-              <input
-                id="slider-vacation-duration"
-                type="range"
-                min="1"
-                max="14"
-                value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value))}
-                className="w-full accent-[#5A5A40] cursor-pointer"
-              />
-              <div className="flex justify-between text-[10px] text-[#8a8a7e] font-medium mt-1 font-mono">
-                <span>1 {t("vacation.dayWord", "Day")}</span>
-                <span>3-4 {t("vacation.daysWord", "Days")}</span>
-                <span>7 {t("vacation.daysWord", "Days")}</span>
-                <span>14 {t("vacation.daysWord", "Days")}</span>
+
+              {/* Trip Start Date Picker & Quick Presets */}
+              <div className="pt-3 border-t border-[#e5e5df]">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1">
+                    <span>📅</span>
+                    <span>Trip Start Date</span>
+                    <span className="text-[9px] text-[#5A5A40] bg-white px-1.5 py-0.2 rounded border border-[#d1d1ca]">
+                      Optional
+                    </span>
+                  </label>
+                  {startDate && (
+                    <button
+                      type="button"
+                      onClick={() => setStartDate("")}
+                      className="text-[10px] text-rose-600 hover:underline font-mono"
+                    >
+                      Clear Date
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-[#d1d1ca] bg-white text-xs font-mono font-medium text-[#2c2c24] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                />
+
+                {/* Quick Date Presets */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[
+                    {
+                      label: "Today",
+                      getDate: () => new Date().toISOString().split("T")[0],
+                    },
+                    {
+                      label: "Tomorrow",
+                      getDate: () => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + 1);
+                        return d.toISOString().split("T")[0];
+                      },
+                    },
+                    {
+                      label: "Next Month",
+                      getDate: () => {
+                        const d = new Date();
+                        d.setMonth(d.getMonth() + 1);
+                        return d.toISOString().split("T")[0];
+                      },
+                    },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setStartDate(preset.getDate())}
+                      className="text-[10px] font-sans bg-white hover:bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] px-2 py-0.5 rounded-lg transition-colors"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-[#8a8a7e] italic mt-1 font-sans">
+                  Adding a date pulls exact weather forecasts & seasonal climate warnings for that travel window.
+                </p>
               </div>
             </div>
 
@@ -1046,6 +1168,109 @@ export const VacationForm: React.FC<VacationFormProps> = ({ onSubmit, isLoading 
               );
             })}
           </div>
+        </div>
+
+        {/* 5b. Manually Requested Must-Visit Places / Activities */}
+        <div className="p-4 bg-[#fbfbfa] rounded-2xl border border-[#d1d1ca] space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-[#5A5A40]" />
+                {t("vacation.customSpots", "Must-Visit Places & Activities (Optional)")}
+              </label>
+              <p className="text-[11px] text-[#6b6b5e] mt-0.5">
+                {t("vacation.customSpotsDesc", "Add specific spots, landmarks, restaurants or activities you want to include in your itinerary")}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAddCustomSpot}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-[#d1d1ca] text-xs font-medium text-[#2c2c24] hover:bg-[#ecece4] transition-colors shadow-2xs shrink-0 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 text-[#5A5A40]" />
+              <span>{t("vacation.addCustomSpot", "Add Specific Spot")}</span>
+            </button>
+          </div>
+
+          {manualCustomSpots.length > 0 && (
+            <div className="space-y-3 pt-2">
+              {manualCustomSpots.map((spot, idx) => (
+                <div
+                  key={spot.id}
+                  className="p-3.5 bg-white rounded-xl border border-[#d1d1ca] shadow-2xs space-y-2.5 relative"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-[#5A5A40] uppercase tracking-wider flex items-center gap-1 font-mono">
+                      <span>📍</span> Spot #{idx + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCustomSpot(spot.id)}
+                      className="text-[#8a8a7e] hover:text-red-600 p-1 transition-colors rounded-lg hover:bg-red-50"
+                      title={t("vacation.customSpotRemove", "Remove spot")}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-2">
+                      <input
+                        type="text"
+                        value={spot.name}
+                        onChange={(e) => handleUpdateCustomSpot(spot.id, "name", e.target.value)}
+                        placeholder={t("vacation.customSpotNamePlaceholder", "Spot name (e.g. Monte Igueldo, Bar Nestor, Guggenheim)")}
+                        className="w-full px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      />
+                    </div>
+                    <div>
+                      <select
+                        value={spot.category || "sightseeing"}
+                        onChange={(e) => handleUpdateCustomSpot(spot.id, "category", e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      >
+                        <option value="sightseeing">🏛️ Sightseeing / Landmark</option>
+                        <option value="food">🍽️ Restaurant / Dining</option>
+                        <option value="cafe">☕ Cafe / Bakery</option>
+                        <option value="nature">🌿 Nature / Viewpoint</option>
+                        <option value="culture">🎨 Museum / Culture</option>
+                        <option value="hidden-gem">💎 Hidden Gem</option>
+                        <option value="nightlife">🍸 Bar / Nightlife</option>
+                        <option value="shopping">🛍️ Shopping / Market</option>
+                        <option value="relaxation">🧘 Relaxation / Beach</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <AccommodationLocationInput
+                      location={spot.location || ""}
+                      isVerified={spot.isVerified}
+                      coordinates={spot.coordinates}
+                      cityContext={destination}
+                      onUpdate={(loc, coords, verified) => {
+                        handleUpdateCustomSpot(spot.id, "location", loc);
+                        if (coords) handleUpdateCustomSpot(spot.id, "coordinates", coords);
+                        if (verified !== undefined) handleUpdateCustomSpot(spot.id, "isVerified", verified);
+                      }}
+                    />
+                    <div className="flex flex-col justify-end">
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-[#6b6b5e] mb-1">
+                        Requirements / Notes
+                      </label>
+                      <input
+                        type="text"
+                        value={spot.notes || ""}
+                        onChange={(e) => handleUpdateCustomSpot(spot.id, "notes", e.target.value)}
+                        placeholder={t("vacation.customSpotNotesPlaceholder", "Notes / requirements (e.g. book sunset table, morning visit)")}
+                        className="w-full px-3 py-1.5 rounded-xl border border-[#d1d1ca] bg-white text-xs text-[#2c2c24] font-medium placeholder:text-[#8a8a7e] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 6. Activity Discovery Swiper Toggle */}

@@ -1,4 +1,5 @@
-import { Coordinates, DestinationStop, PlaceReview, ActivitySpot, CandidateSpot, TransitInfo } from "../types";
+import { Coordinates, DestinationStop, PlaceReview, ActivitySpot, CandidateSpot, TransitInfo, TransportMode } from "../types";
+import { formatSpotForGoogleMaps } from "./transit";
 
 export interface VerifiedDestination {
   id: string;
@@ -1117,19 +1118,11 @@ export function generateGoogleMapsSearchUrl(
   address?: string,
   coordinates?: Coordinates
 ): string {
-  const cleanName = (spotName || "")
-    .replace(/[\(（].*?[\)）]/g, "")
-    .replace(/\s*[-–—:]\s*.*$/, "")
-    .trim();
-
-  const queryParts = [
-    cleanName || spotName,
-    address?.trim(),
-    destination?.trim(),
-  ].filter(Boolean);
-
-  const q = encodeURIComponent(queryParts.join(", "));
-  return `https://www.google.com/maps/search/?api=1&query=${q}`;
+  const queryParam = formatSpotForGoogleMaps(
+    { name: spotName, address, coordinates },
+    destination
+  );
+  return `https://www.google.com/maps/search/?api=1&query=${queryParam}`;
 }
 
 export function generateSampleReviews(spotName: string, rating: number = 4.8): PlaceReview[] {
@@ -1329,11 +1322,24 @@ export function getKnownSpotsForDestination(
 export function calculateTransitLogistics(
   fromSpot: ActivitySpot,
   toSpot: ActivitySpot,
-  destination: string = ""
+  destination: string = "",
+  allowedModes: TransportMode[] = ["public_transit", "walking"]
 ): TransitInfo {
-  // If the spot already has high quality custom transit instructions, use it
+  const modesList = Array.isArray(allowedModes) && allowedModes.length > 0
+    ? allowedModes
+    : ["public_transit", "walking"];
+  const isWalkingOnly = modesList.length === 1 && modesList[0] === "walking";
+  const allowsTransit = modesList.includes("public_transit");
+  const allowsCar = modesList.includes("car");
+  const allowsBicycle = modesList.includes("bicycle");
+
+  // If the spot already has high quality custom transit instructions, check if it obeys transport mode
   if (fromSpot.transitToNext && fromSpot.transitToNext.instructions) {
-    return fromSpot.transitToNext;
+    if (isWalkingOnly && (fromSpot.transitToNext.mode === "transit" || fromSpot.transitToNext.mode === "drive")) {
+      // Override non-walking transit if user strictly requested walking only
+    } else {
+      return fromSpot.transitToNext;
+    }
   }
 
   const fromName = (fromSpot.name || "").toLowerCase();
@@ -1345,7 +1351,7 @@ export function calculateTransitLogistics(
     (fromName.includes("miramar") && (toName.includes("peine") || toName.includes("ondarreta") || toName.includes("igueldo"))) ||
     (fromName.includes("ondarreta") && (toName.includes("peine") || toName.includes("igueldo")))
   ) {
-    if (toName.includes("igueldo") || toName.includes("funicular")) {
+    if ((toName.includes("igueldo") || toName.includes("funicular")) && !isWalkingOnly) {
       return {
         mode: "funicular",
         duration: "4 min ride",
@@ -1355,7 +1361,7 @@ export function calculateTransitLogistics(
     }
     return {
       mode: "walk",
-      duration: "8-12 min stroll",
+      duration: "10-15 min stroll",
       distance: "750m",
       instructions: "Continue along the scenic Ondarreta beach promenade directly towards the rocky headland of Peine del Viento",
     };
@@ -1364,12 +1370,21 @@ export function calculateTransitLogistics(
   if (
     (fromName.includes("peine") && (toName.includes("igueldo") || toName.includes("funicular")))
   ) {
-    return {
-      mode: "funicular",
-      duration: "3 min ride",
-      distance: "250m",
-      instructions: "Walk 2 minutes from the sculptures to the vintage funicular lower station to ascend Monte Igueldo",
-    };
+    if (!isWalkingOnly) {
+      return {
+        mode: "funicular",
+        duration: "3 min ride",
+        distance: "250m",
+        instructions: "Walk 2 minutes from the sculptures to the vintage funicular lower station to ascend Monte Igueldo",
+      };
+    } else {
+      return {
+        mode: "walk",
+        duration: "20-25 min hill walk",
+        distance: "1.1 km",
+        instructions: "Ascend the scenic foot trail winding up the slopes of Monte Igueldo",
+      };
+    }
   }
 
   if (
@@ -1378,7 +1393,7 @@ export function calculateTransitLogistics(
   ) {
     return {
       mode: "walk",
-      duration: "3-5 min walk",
+      duration: "4-6 min walk",
       distance: "250m",
       instructions: "Stroll through the cobblestone pedestrian alleys of Parte Vieja towards Calle 31 de Agosto",
     };
@@ -1390,15 +1405,16 @@ export function calculateTransitLogistics(
   ) {
     return {
       mode: "walk",
-      duration: "6-8 min walk",
+      duration: "8-10 min walk",
       distance: "500m",
       instructions: "Walk along the Zurriola beach boardwalk towards the Sagüés sea wall overlooking the surf break",
     };
   }
 
   if (
-    toName.includes("cider") || toName.includes("sagardo") || toName.includes("astigarraga") ||
-    fromName.includes("cider") || fromName.includes("sagardo") || fromName.includes("astigarraga")
+    (toName.includes("cider") || toName.includes("sagardo") || toName.includes("astigarraga") ||
+    fromName.includes("cider") || fromName.includes("sagardo") || fromName.includes("astigarraga")) &&
+    !isWalkingOnly
   ) {
     return {
       mode: "transit",
@@ -1409,8 +1425,9 @@ export function calculateTransitLogistics(
   }
 
   if (
-    toName.includes("santa clara") || fromName.includes("santa clara") ||
-    toName.includes("motoras") || fromName.includes("motoras")
+    (toName.includes("santa clara") || fromName.includes("santa clara") ||
+    toName.includes("motoras") || fromName.includes("motoras")) &&
+    !isWalkingOnly
   ) {
     return {
       mode: "boat",
@@ -1442,12 +1459,12 @@ export function calculateTransitLogistics(
     if (distanceMeters <= 400) {
       return {
         mode: "walk",
-        duration: "3-5 min walk",
+        duration: "4-6 min walk",
         distance: `${distanceMeters}m`,
         instructions: `Short scenic stroll (${distanceMeters}m) directly to ${toSpot.name}`,
       };
     } else if (distanceMeters <= 1400) {
-      const walkMins = Math.max(5, Math.round(distanceMeters / 75));
+      const walkMins = Math.max(5, Math.round(distanceMeters / 68)); // ~4.1 km/h walking speed with pedestrian crossings
       return {
         mode: "walk",
         duration: `${walkMins} min walk`,
@@ -1456,21 +1473,49 @@ export function calculateTransitLogistics(
       };
     } else {
       const km = (distanceMeters / 1000).toFixed(1);
-      const transitMins = Math.max(8, Math.round(8 + distanceMeters / 350));
-      return {
-        mode: "transit",
-        duration: `${transitMins} min transit / taxi`,
-        distance: `${km} km`,
-        instructions: `Short bus ride or quick taxi (${km} km) to ${toSpot.name}`,
-      };
+
+      if (isWalkingOnly || (!allowsTransit && !allowsCar && !allowsBicycle)) {
+        // Strict walking calculation: ~4.0 km/h = ~15 mins per km + 3 min traffic/crossing cushion
+        const walkMins = Math.max(15, Math.round((distanceMeters / 66)));
+        return {
+          mode: "walk",
+          duration: `${walkMins} min walk`,
+          distance: `${km} km`,
+          instructions: `Scenic walk on foot (${km} km, ~${walkMins} mins) towards ${toSpot.name}`,
+        };
+      } else if (allowsBicycle && !allowsTransit && !allowsCar) {
+        const bikeMins = Math.max(4, Math.round(distanceMeters / 250) + 2); // ~15 km/h
+        return {
+          mode: "bicycle",
+          duration: `${bikeMins} min bike ride`,
+          distance: `${km} km`,
+          instructions: `Cycle along bike lanes (${km} km) to ${toSpot.name}`,
+        };
+      } else if (allowsCar && !allowsTransit) {
+        const driveMins = Math.max(5, Math.round(4 + distanceMeters / 500));
+        return {
+          mode: "drive",
+          duration: `${driveMins} min drive`,
+          distance: `${km} km`,
+          instructions: `Drive (${km} km) to ${toSpot.name}`,
+        };
+      } else {
+        const transitMins = Math.max(8, Math.round(8 + distanceMeters / 350));
+        return {
+          mode: "transit",
+          duration: `${transitMins} min transit / bus`,
+          distance: `${km} km`,
+          instructions: `Local bus or transit ride (${km} km) to ${toSpot.name}`,
+        };
+      }
     }
   }
 
   // Fallback
   return {
     mode: "walk",
-    duration: "6 min walk",
-    distance: "400m",
+    duration: "6-8 min walk",
+    distance: "450m",
     instructions: `Direct walk to ${toSpot.name}`,
   };
 }

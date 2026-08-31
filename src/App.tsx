@@ -7,11 +7,16 @@ import { ItineraryDisplay } from "./components/ItineraryDisplay";
 import { SavedTripsDrawer } from "./components/SavedTripsDrawer";
 import { ActivityHistoryModal } from "./components/ActivityHistoryModal";
 import { ExportModal } from "./components/ExportModal";
+import { GoogleMapsExportModal } from "./components/GoogleMapsExportModal";
 import { ActivitySwiperModal } from "./components/ActivitySwiperModal";
 import { MySpotsModal } from "./components/MySpotsModal";
 import { TasteProfileModal } from "./components/TasteProfileModal";
 import { UserProfileModal } from "./components/UserProfileModal";
+import { GenerationProgressModal } from "./components/GenerationProgressModal";
+import { HelpChatbotModal } from "./components/HelpChatbotModal";
+import { ExploreFeed } from "./components/ExploreFeed";
 import { ToastContainer, ToastMessage } from "./components/Toast";
+import { SyncStatusBanner } from "./components/SyncStatusBanner";
 import { AppMode, ItineraryPlan, VacationPreferences, HometownPreferences, ActivitySpot, CandidateSpot } from "./types";
 import { SAMPLE_VACATION_PLAN, SAMPLE_HOMETOWN_PLAN } from "./utils/curatedData";
 import {
@@ -30,11 +35,34 @@ import {
   saveCurrentSessionPlan,
 } from "./utils/storage";
 import { parseShareableUrl } from "./utils/sharing";
+import { loadAISettings } from "./utils/aiConfig";
 import { getKnownSpotsForDestination } from "./utils/destinations";
-import { Compass } from "lucide-react";
-import { LanguageProvider } from "./context/LanguageContext";
+import { subscribeToSharedTrip, publishSharedTripUpdate } from "./utils/sharedTripService";
+
+async function safeFetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const contentType = res.headers.get("content-type") || "";
+  
+  if (!res.ok || !contentType.includes("application/json")) {
+    const text = await res.text();
+    let errJson: any = null;
+    try {
+      errJson = JSON.parse(text);
+    } catch {}
+    const msg = errJson?.error || (res.ok ? "Server returned non-JSON response" : `Server HTTP ${res.status}`);
+    throw new Error(msg);
+  }
+
+  return (await res.json()) as T;
+}
+import { Compass, Eye, EyeOff, Plane, MapPin } from "lucide-react";
+import { LanguageProvider, useLanguage } from "./context/LanguageContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { PreferencesProvider } from "./context/PreferencesContext";
 
 function AppContent() {
+  const { t } = useLanguage();
+  const { syncUserDataWithCloud } = useAuth();
   const [currentPlan, setCurrentPlan] = useState<ItineraryPlan>(() => {
     const shared = parseShareableUrl();
     if (shared) return shared;
@@ -50,17 +78,20 @@ function AppContent() {
     return "vacation";
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [activeMobileTab, setActiveMobileTab] = useState<"form" | "itinerary">("form");
+  const [activeMobileTab, setActiveMobileTab] = useState<"form" | "itinerary" | "explore" | "saved" | "profile">("form");
+  const [isFormVisible, setIsFormVisible] = useState(false);
 
   // Modals and Drawers
   const [isSavedDrawerOpen, setIsSavedDrawerOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isGoogleMapsExportOpen, setIsGoogleMapsExportOpen] = useState(false);
   const [isMySpotsOpen, setIsMySpotsOpen] = useState(false);
   const [mySpotsCount, setMySpotsCount] = useState(0);
   const [isTasteProfileOpen, setIsTasteProfileOpen] = useState(false);
   const [hasTasteProfile, setHasTasteProfile] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // Swiper Modal State
   const [isSwiperOpen, setIsSwiperOpen] = useState(false);
@@ -97,12 +128,56 @@ function AppContent() {
     }
   }, []);
 
+  // Listen to live cloud sync updates across devices & tabs
+  useEffect(() => {
+    const handleCloudSync = () => {
+      queueMicrotask(() => {
+        const refreshedSaved = getSavedTrips();
+        setSavedTrips(refreshedSaved);
+        setHistoryCount(getActivityHistory().length);
+        setMySpotsCount(getMySpots().length);
+        setHasTasteProfile(getTasteProfile() !== null);
+        const activeSession = getCurrentSessionPlan();
+        if (activeSession) {
+          setCurrentPlan((prev) => {
+            if (!prev || prev.id !== activeSession.id) {
+              setActiveMode(activeSession.mode);
+              return activeSession;
+            }
+            return prev;
+          });
+        }
+      });
+    };
+
+    window.addEventListener("localexplorer_cloud_sync_updated", handleCloudSync);
+    return () => {
+      window.removeEventListener("localexplorer_cloud_sync_updated", handleCloudSync);
+    };
+  }, []);
+
   // Automatically persist current itinerary session whenever it changes
   useEffect(() => {
     if (currentPlan) {
       saveCurrentSessionPlan(currentPlan);
     }
   }, [currentPlan]);
+
+  // Real-time Firestore Sync for Shared Trip Collaboration
+  useEffect(() => {
+    if (!currentPlan?.id) return;
+
+    const unsubscribe = subscribeToSharedTrip(currentPlan.id, (sharedDoc) => {
+      if (sharedDoc && sharedDoc.plan) {
+        setCurrentPlan(sharedDoc.plan);
+        saveCurrentSessionPlan(sharedDoc.plan);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentPlan?.id]);
 
   const addToast = (type: "success" | "error" | "info", message: string) => {
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 5);
@@ -207,10 +282,11 @@ function AppContent() {
       permanentSkips: getPermanentSkipNames(),
       userSpots: getMySpots(),
       tasteProfile: getTasteProfile() || undefined,
+      aiSettings: loadAISettings(),
     };
 
     try {
-      const res = await fetch("/api/generate-plan", {
+      const newPlan = await safeFetchJson<ItineraryPlan>("/api/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -219,18 +295,22 @@ function AppContent() {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server returned status ${res.status}`);
-      }
-
-      const newPlan: ItineraryPlan = await res.json();
       const planWithAccommodation: ItineraryPlan = {
         ...newPlan,
+        vibes: (finalPrefs.vibes && finalPrefs.vibes.length > 0) ? finalPrefs.vibes : (newPlan.vibes || newPlan.tags || []),
+        selectedVibes: finalPrefs.vibes || [],
+        customPace: finalPrefs.pace || newPlan.customPace,
+        budgetTier: finalPrefs.budgetTier || newPlan.budgetTier,
+        transportMode: (finalPrefs.transportModes && finalPrefs.transportModes[0]) || finalPrefs.transportMode || newPlan.transportMode,
+        transportModes: finalPrefs.transportModes || newPlan.transportModes,
         accommodation: newPlan.accommodation || finalPrefs.accommodation,
       };
       setCurrentPlan(planWithAccommodation);
+      saveTrip(planWithAccommodation);
+      setSavedTrips(getSavedTrips());
+      syncUserDataWithCloud(true);
       setActiveMobileTab("itinerary");
-      addToast("success", `Generated ${newPlan.totalDays}-day itinerary for ${newPlan.destinationOrTown}!`);
+      addToast("success", `Generated ${newPlan.totalDays}-day itinerary for ${newPlan.destinationOrTown}! Saved & Synced.`);
 
       // Smooth scroll to display
       setTimeout(() => {
@@ -241,12 +321,16 @@ function AppContent() {
       console.error("Vacation generation error:", err);
       addToast("error", "Could not connect to generator. Loaded curated fallback.");
       // Fallback update
-      setCurrentPlan({
+      const fallbackPlan = {
         ...SAMPLE_VACATION_PLAN,
         destinationOrTown: prefs.destination,
         title: `${prefs.duration}-Day ${prefs.destination} Travel Itinerary`,
         accommodation: prefs.accommodation,
-      });
+      };
+      setCurrentPlan(fallbackPlan);
+      saveTrip(fallbackPlan);
+      setSavedTrips(getSavedTrips());
+      syncUserDataWithCloud(true);
       setActiveMobileTab("itinerary");
     } finally {
       setIsLoading(false);
@@ -257,7 +341,7 @@ function AppContent() {
   const handleGenerateHometown = async (prefs: HometownPreferences) => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/generate-plan", {
+      const newPlan = await safeFetchJson<ItineraryPlan>("/api/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -266,22 +350,18 @@ function AppContent() {
             ...prefs,
             userSpots: getMySpots(),
             tasteProfile: getTasteProfile() || undefined,
+            aiSettings: loadAISettings(),
           },
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server returned status ${res.status}`);
-      }
-
-      const newPlan: ItineraryPlan = await res.json();
       const planWithAccommodation: ItineraryPlan = {
         ...newPlan,
         accommodation: newPlan.accommodation || prefs.accommodation,
       };
       setCurrentPlan(planWithAccommodation);
       setActiveMobileTab("itinerary");
-      addToast("success", `Found local ${prefs.occasion} spots within ${prefs.radiusKm}km of ${prefs.location}!`);
+      addToast("success", `Found local ${prefs.occasion || "neighborhood"} spots within ${prefs.radiusKm}km of ${prefs.location}!`);
 
       setTimeout(() => {
         const el = document.getElementById("itinerary-results-section");
@@ -290,12 +370,13 @@ function AppContent() {
     } catch (err: any) {
       console.error("Hometown generation error:", err);
       addToast("error", "Could not generate local guide. Loaded neighborhood fallback.");
-      setCurrentPlan({
+      const fallbackHometown = {
         ...SAMPLE_HOMETOWN_PLAN,
         destinationOrTown: prefs.location,
         title: `Local Explorer: ${prefs.occasion} in ${prefs.location}`,
         accommodation: prefs.accommodation,
-      });
+      };
+      setCurrentPlan(fallbackHometown);
       setActiveMobileTab("itinerary");
     } finally {
       setIsLoading(false);
@@ -336,7 +417,7 @@ function AppContent() {
         d.activities.map((a) => a.name)
       );
 
-      const res = await fetch("/api/swap-activity", {
+      const newSpot = await safeFetchJson<ActivitySpot>("/api/swap-activity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -362,9 +443,6 @@ function AppContent() {
           customRequirement: options?.customRequirement,
         }),
       });
-
-      if (!res.ok) throw new Error("Swap request failed");
-      const newSpot: ActivitySpot = await res.json();
 
       // Replace the activity inside currentPlan state
       handleUpdatePlan({
@@ -398,20 +476,34 @@ function AppContent() {
       saveTrip(updatedPlan);
       setSavedTrips(getSavedTrips());
     }
+    syncUserDataWithCloud(true);
+
+    // Publish to shared_trips on Firestore for real-time group collaboration
+    publishSharedTripUpdate(updatedPlan);
   };
 
   // Save Trip Toggle Handler
   const handleSaveTrip = () => {
-    saveTrip(currentPlan);
-    const updated = getSavedTrips();
-    setSavedTrips(updated);
-    addToast("success", `Saved "${currentPlan.title}" to My Trips for offline access!`);
+    if (isTripSaved(currentPlan.id)) {
+      deleteSavedTrip(currentPlan.id);
+      const updated = getSavedTrips();
+      setSavedTrips(updated);
+      syncUserDataWithCloud(true);
+      addToast("info", `Removed "${currentPlan.title}" from My Trips.`);
+    } else {
+      saveTrip(currentPlan);
+      const updated = getSavedTrips();
+      setSavedTrips(updated);
+      syncUserDataWithCloud(true);
+      addToast("success", `Saved "${currentPlan.title}" to My Trips! Synced with cloud.`);
+    }
   };
 
   // Delete Saved Trip Handler
   const handleDeleteTrip = (id: string) => {
     deleteSavedTrip(id);
     setSavedTrips(getSavedTrips());
+    syncUserDataWithCloud(true);
     addToast("info", "Removed trip from saved collection.");
   };
 
@@ -428,7 +520,7 @@ function AppContent() {
     if (!currentPlan) return;
     setIsLoading(true);
     try {
-      const res = await fetch("/api/reiterate-plan", {
+      const newPlan = await safeFetchJson<ItineraryPlan>("/api/reiterate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -444,11 +536,6 @@ function AppContent() {
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Server returned status ${res.status}`);
-      }
-
-      const newPlan: ItineraryPlan = await res.json();
       setCurrentPlan(newPlan);
       if (isTripSaved(newPlan.id)) {
         saveTrip(newPlan);
@@ -476,13 +563,37 @@ function AppContent() {
   const isCurrentSaved = isTripSaved(currentPlan.id);
 
   const handleScrollToForm = () => {
+    setIsMySpotsOpen(false);
+    setIsSavedDrawerOpen(false);
+    setIsProfileOpen(false);
     setActiveMobileTab("form");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleScrollToItinerary = () => {
+    setIsMySpotsOpen(false);
+    setIsSavedDrawerOpen(false);
+    setIsProfileOpen(false);
     setActiveMobileTab("itinerary");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleToggleMySpots = () => {
+    setIsSavedDrawerOpen(false);
+    setIsProfileOpen(false);
+    setIsMySpotsOpen((prev) => !prev);
+  };
+
+  const handleToggleSavedTrips = () => {
+    setIsMySpotsOpen(false);
+    setIsProfileOpen(false);
+    setIsSavedDrawerOpen((prev) => !prev);
+  };
+
+  const handleToggleProfile = () => {
+    setIsMySpotsOpen(false);
+    setIsSavedDrawerOpen(false);
+    setIsProfileOpen((prev) => !prev);
   };
 
   return (
@@ -492,6 +603,7 @@ function AppContent() {
         activeMode={activeMode}
         onModeChange={(mode) => {
           setActiveMode(mode);
+          setActiveMobileTab("form");
           if (mode === "vacation" && currentPlan.mode !== "vacation") {
             setCurrentPlan(SAMPLE_VACATION_PLAN);
           } else if (mode === "hometown" && currentPlan.mode !== "hometown") {
@@ -499,7 +611,7 @@ function AppContent() {
           }
         }}
         savedTripsCount={savedTrips.length}
-        onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
+        onOpenSavedTrips={handleToggleSavedTrips}
         historyCount={historyCount}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
         onOpenMySpots={() => setIsMySpotsOpen(true)}
@@ -507,27 +619,93 @@ function AppContent() {
         onOpenTasteProfile={() => setIsTasteProfileOpen(true)}
         hasTasteProfile={hasTasteProfile}
         onOpenExport={() => setIsExportModalOpen(true)}
-        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenProfile={handleToggleProfile}
         hasActiveTrip={!!currentPlan}
+        isExploreOpen={activeMobileTab === "explore"}
+        onOpenExplore={() => {
+          setActiveMobileTab("explore");
+          setIsProfileOpen(false);
+          setIsSavedDrawerOpen(false);
+        }}
       />
+
+      <SyncStatusBanner />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 space-y-6 sm:space-y-8">
         {/* Top Preference Form Section */}
-        <section id="generator-form-section" className={`no-print scroll-mt-18 ${activeMobileTab === "form" ? "block" : "hidden md:block"}`}>
-          {activeMode === "vacation" ? (
-            <VacationForm onSubmit={handleVacationSubmit} isLoading={isLoading} />
-          ) : (
-            <HometownForm
-              onSubmit={handleGenerateHometown}
-              isLoading={isLoading}
-              onOpenHistory={() => setIsHistoryModalOpen(true)}
-            />
-          )}
+        <section id="generator-form-section" className={`no-print scroll-mt-18 space-y-4 ${activeMobileTab === "form" ? "block" : activeMobileTab === "explore" ? "hidden" : "hidden md:block"}`}>
+          {/* Elegant Show/Hide Planner Toggle Card (Only on PC) */}
+          <div className="hidden md:flex items-center justify-between bg-white border border-[#e5e5df] rounded-2xl p-4 shadow-sm">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-[#f5f5f0] rounded-xl border border-[#d1d1ca] text-[#5A5A40] shrink-0">
+                {activeMode === "vacation" ? (
+                  <Plane className="w-4 h-4" />
+                ) : (
+                  <MapPin className="w-4 h-4" />
+                )}
+              </div>
+              <div>
+                <h2 className="font-serif text-sm sm:text-base font-semibold italic text-[#2c2c24] leading-tight">
+                  {activeMode === "vacation" ? t("planner.vacationTitle", "Vacation Itinerary Planner") : t("planner.hometownTitle", "Hometown Local Guide")}
+                </h2>
+                <p className="text-[11px] sm:text-xs text-[#8a8a7e] font-sans mt-0.5">
+                  {isFormVisible
+                    ? t("planner.collapsedDescOpen", "Configure your personal vibes, transport, dates and pace below to craft your custom AI itinerary.")
+                    : t("planner.collapsedDescClosed", "The planner panel is collapsed. Click 'Show Planner' on the right to reveal your preferences.")}
+                </p>
+              </div>
+            </div>
+
+            <button
+              id="btn-toggle-planner"
+              onClick={() => setIsFormVisible(!isFormVisible)}
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-xl border border-[#d1d1ca] hover:border-[#5A5A40] text-xs font-semibold text-[#5a5a4c] hover:text-[#5A5A40] hover:bg-[#f5f5f0] transition-all duration-200 cursor-pointer shadow-3xs"
+            >
+              {isFormVisible ? (
+                <>
+                  <EyeOff className="w-3.5 h-3.5 text-[#5A5A40]" />
+                  <span>{t("planner.hide", "Hide Planner")}</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3.5 h-3.5 text-[#5A5A40]" />
+                  <span>{t("planner.show", "Show Planner")}</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className={`${isFormVisible ? "block" : "md:hidden"}`}>
+            {activeMode === "vacation" ? (
+              <VacationForm onSubmit={handleVacationSubmit} isLoading={isLoading} />
+            ) : (
+              <HometownForm
+                onSubmit={handleGenerateHometown}
+                isLoading={isLoading}
+                onOpenHistory={() => setIsHistoryModalOpen(true)}
+              />
+            )}
+          </div>
+        </section>
+
+        {/* Community Explore Feed Section */}
+        <section id="explore-community-section" className={`scroll-mt-18 ${activeMobileTab === "explore" ? "block" : "hidden"}`}>
+          <ExploreFeed
+            currentPlan={currentPlan}
+            onSelectTrip={(clonedPlan) => {
+              setCurrentPlan(clonedPlan);
+              setActiveMode(clonedPlan.mode);
+              setActiveMobileTab("itinerary");
+              setSavedTrips(getSavedTrips()); // Refresh saved trips list
+            }}
+            onUpdatePlan={handleUpdatePlan}
+            onShowToast={addToast}
+          />
         </section>
 
         {/* Results / Active Itinerary Section */}
-        <section id="itinerary-results-section" className={`scroll-mt-18 ${activeMobileTab === "itinerary" ? "block" : "hidden md:block"}`}>
+        <section id="itinerary-results-section" className={`scroll-mt-18 ${activeMobileTab === "itinerary" ? "block" : activeMobileTab === "explore" ? "hidden" : "hidden md:block"}`}>
           <ItineraryDisplay
             plan={currentPlan}
             isSaved={isCurrentSaved}
@@ -540,6 +718,51 @@ function AppContent() {
             onVisitedChanged={handleVisitedChanged}
           />
         </section>
+
+        {/* Saved Journeys Section (Inline on Mobile) */}
+        <section id="saved-section-inline" className={`no-print scroll-mt-18 ${activeMobileTab === "saved" ? "block" : "hidden"}`}>
+          <SavedTripsDrawer
+            isInline={true}
+            savedTrips={savedTrips}
+            onSelectTrip={(trip) => {
+              handleSelectSavedTrip(trip);
+              setActiveMobileTab("itinerary");
+            }}
+            onDeleteTrip={handleDeleteTrip}
+          />
+        </section>
+
+        {/* User Profile & Settings Section (Inline on Mobile) */}
+        <section id="profile-section-inline" className={`no-print scroll-mt-18 ${activeMobileTab === "profile" ? "block" : "hidden"}`}>
+          <UserProfileModal
+            isInline={true}
+            onOpenTasteProfile={() => setIsTasteProfileOpen(true)}
+            onOpenMySpots={() => setIsMySpotsOpen(true)}
+            onOpenSavedTrips={() => setActiveMobileTab("saved")}
+            onOpenHistory={() => setIsHistoryModalOpen(true)}
+            onSelectTrip={(trip) => {
+              setCurrentPlan(trip);
+              setActiveMode(trip.mode);
+              setActiveMobileTab("itinerary");
+            }}
+            onDataChanged={() => {
+              setSavedTrips(getSavedTrips());
+              setHistoryCount(getActivityHistory().length);
+              setMySpotsCount(getMySpots().length);
+              setHasTasteProfile(getTasteProfile() !== null);
+            }}
+            activeMode={activeMode}
+            onModeChange={(mode) => {
+              setActiveMode(mode);
+              setActiveMobileTab("form");
+              if (mode === "vacation" && currentPlan.mode !== "vacation") {
+                setCurrentPlan(SAMPLE_VACATION_PLAN);
+              } else if (mode === "hometown" && currentPlan.mode !== "hometown") {
+                setCurrentPlan(SAMPLE_HOMETOWN_PLAN);
+              }
+            }}
+          />
+        </section>
       </main>
 
       {/* Footer */}
@@ -548,21 +771,21 @@ function AppContent() {
           <div className="flex items-center space-x-2.5">
             <Compass className="w-4 h-4 text-[#5A5A40]" />
             <span className="font-serif italic font-medium text-sm text-[#2c2c24]">LocalExplorer AI</span>
-            <span>— Cross-Platform Trip Planner & Cultural Guide</span>
+            <span>— {t("nav.subtitle", "Cultural Trip Planner & Hometown Guide")}</span>
           </div>
           <div className="flex items-center space-x-4 text-[#8a8a7e] font-serif italic text-xs">
             <span>Powered by Gemini & OpenStreetMap</span>
             <span>•</span>
-            <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-[#2c2c24] underline transition-colors">
-              30-Day History ({historyCount})
+            <button onClick={() => setIsHistoryModalOpen(true)} className="hover:text-[#2c2c24] underline transition-colors cursor-pointer">
+              {t("nav.history", "30-Day History")} ({historyCount})
             </button>
             <span>•</span>
-            <button onClick={() => setIsSavedDrawerOpen(true)} className="hover:text-[#2c2c24] underline transition-colors">
-              Saved Journeys ({savedTrips.length})
+            <button onClick={() => setIsSavedDrawerOpen(true)} className="hover:text-[#2c2c24] underline transition-colors cursor-pointer">
+              {t("nav.savedTrips", "Saved Trips")} ({savedTrips.length})
             </button>
             <span>•</span>
-            <button onClick={() => setIsProfileOpen(true)} className="hover:text-[#2c2c24] underline transition-colors">
-              Profile & Settings
+            <button onClick={() => setIsProfileOpen(true)} className="hover:text-[#2c2c24] underline transition-colors cursor-pointer">
+              {t("profile.title", "Profile & Settings")}
             </button>
           </div>
         </div>
@@ -583,12 +806,32 @@ function AppContent() {
         }}
         onScrollToForm={handleScrollToForm}
         onScrollToItinerary={handleScrollToItinerary}
+        onScrollToExplore={() => {
+          setActiveMobileTab("explore");
+          setIsSavedDrawerOpen(false);
+          setIsProfileOpen(false);
+        }}
         hasActiveTrip={!!currentPlan}
         savedTripsCount={savedTrips.length}
-        onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
+        isSavedOpen={activeMobileTab === "saved"}
+        onOpenSavedTrips={() => {
+          setActiveMobileTab("saved");
+          setIsSavedDrawerOpen(false);
+          setIsProfileOpen(false);
+          setIsMySpotsOpen(false);
+          setIsTasteProfileOpen(false);
+        }}
         mySpotsCount={mySpotsCount}
-        onOpenMySpots={() => setIsMySpotsOpen(true)}
-        onOpenProfile={() => setIsProfileOpen(true)}
+        isMySpotsOpen={false}
+        onOpenMySpots={() => {}}
+        isProfileOpen={activeMobileTab === "profile"}
+        onOpenProfile={() => {
+          setActiveMobileTab("profile");
+          setIsSavedDrawerOpen(false);
+          setIsProfileOpen(false);
+          setIsMySpotsOpen(false);
+          setIsTasteProfileOpen(false);
+        }}
         hasTasteProfile={hasTasteProfile}
       />
 
@@ -610,6 +853,13 @@ function AppContent() {
       <ExportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
+        plan={currentPlan}
+        onOpenGoogleMapsExport={() => setIsGoogleMapsExportOpen(true)}
+      />
+
+      <GoogleMapsExportModal
+        isOpen={isGoogleMapsExportOpen}
+        onClose={() => setIsGoogleMapsExportOpen(false)}
         plan={currentPlan}
       />
 
@@ -638,6 +888,12 @@ function AppContent() {
         onOpenMySpots={() => setIsMySpotsOpen(true)}
         onOpenSavedTrips={() => setIsSavedDrawerOpen(true)}
         onOpenHistory={() => setIsHistoryModalOpen(true)}
+        onSelectTrip={(trip) => {
+          setCurrentPlan(trip);
+          setActiveMode(trip.mode);
+          setActiveMobileTab("itinerary");
+          setIsProfileOpen(false);
+        }}
         onDataChanged={() => {
           setSavedTrips(getSavedTrips());
           setHistoryCount(getActivityHistory().length);
@@ -671,8 +927,34 @@ function AppContent() {
         />
       )}
 
+      {/* Live AI Generation Progress Modal */}
+      <GenerationProgressModal
+        isOpen={isLoading && !isSwiperOpen}
+        destination={pendingVacationPrefs?.destination || currentPlan?.destinationOrTown || "Destination"}
+        days={pendingVacationPrefs?.duration || currentPlan?.totalDays || 3}
+        mode={activeMode}
+      />
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
+
+      {/* Floating Help & Guide Chatbot Button */}
+      {!isHelpOpen && (
+        <div className="fixed bottom-20 md:bottom-6 right-6 z-40 no-print">
+          <button
+            onClick={() => setIsHelpOpen(true)}
+            className="bg-[#5A5A40] hover:bg-[#4a4a34] text-white p-3.5 rounded-full shadow-xl hover:shadow-2xl transition-all flex items-center justify-center gap-2 group cursor-pointer border border-white/20"
+            title="Help & Guide Assistant"
+          >
+            <span className="w-5 h-5 flex items-center justify-center font-bold text-sm">?</span>
+            <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 ease-in-out whitespace-nowrap text-xs font-medium px-0 group-hover:px-1">
+              Help & Guide
+            </span>
+          </button>
+        </div>
+      )}
+
+      {/* Help Chatbot Modal */}
+      <HelpChatbotModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }
@@ -680,7 +962,11 @@ function AppContent() {
 export default function App() {
   return (
     <LanguageProvider>
-      <AppContent />
+      <AuthProvider>
+        <PreferencesProvider>
+          <AppContent />
+        </PreferencesProvider>
+      </AuthProvider>
     </LanguageProvider>
   );
 }

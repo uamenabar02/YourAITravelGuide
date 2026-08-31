@@ -1,5 +1,60 @@
-import { ActivitySpot, TransitInfo } from "../types";
+import { ActivitySpot, TransitInfo, TransportMode } from "../types";
 import { perfCache } from "./performanceCache";
+
+/**
+ * Formats an ActivitySpot into a clean, precise location query parameter for Google Maps.
+ * Cleans titles (removing "(Option A)", subtitle extensions, etc.), includes full street address & city,
+ * so Google Maps opens the exact POI / venue listing rather than a raw or snapped off-center GPS coordinate.
+ */
+export function formatSpotForGoogleMaps(
+  spot: ActivitySpot | { name?: string; address?: string; coordinates?: { lat: number; lng: number } },
+  destination: string
+): string {
+  if (!spot) return encodeURIComponent(destination || "");
+
+  const rawName = spot.name || "";
+  const address = spot.address || "";
+
+  // Clean title: remove parentheticals like "(Option A)", "(Famous for...)"
+  // and subtitle extensions after " - " or " : "
+  const cleanName = rawName
+    .replace(/[\(（].*?[\)）]/g, "")
+    .replace(/\s*[-–—:]\s*.*$/, "")
+    .trim();
+
+  // Check if name is generic (e.g. "Custom Pin", "Selected Spot", "Map Point")
+  const isGenericName =
+    !cleanName ||
+    /^(custom|selected|pinned|map|location|point|gps|marker)\b/i.test(cleanName);
+
+  // If generic name and coordinates exist, use lat,lng
+  if (isGenericName && spot.coordinates?.lat && spot.coordinates?.lng) {
+    return `${spot.coordinates.lat},${spot.coordinates.lng}`;
+  }
+
+  const parts: string[] = [];
+  if (cleanName) {
+    parts.push(cleanName);
+  }
+
+  if (address && address.trim()) {
+    const cleanAddr = address.trim();
+    if (!cleanName.toLowerCase().includes(cleanAddr.toLowerCase())) {
+      parts.push(cleanAddr);
+    }
+  }
+
+  if (destination && destination.trim()) {
+    const cleanDest = destination.trim();
+    const fullTextSoFar = parts.join(" ").toLowerCase();
+    if (!fullTextSoFar.includes(cleanDest.toLowerCase())) {
+      parts.push(cleanDest);
+    }
+  }
+
+  const queryText = parts.join(", ");
+  return encodeURIComponent(queryText);
+}
 
 /**
  * Haversine formula to compute distance in kilometers between two lat/lng points.
@@ -40,78 +95,99 @@ export interface DynamicRouteInfo extends TransitInfo {
 export function getRouteInfoBetweenSpots(
   fromSpot: ActivitySpot,
   toSpot: ActivitySpot,
-  destination: string
+  destination: string,
+  allowedModes?: TransportMode[]
 ): DynamicRouteInfo {
-  const cacheKey = `route_${fromSpot.id || fromSpot.name}_${toSpot.id || toSpot.name}_${destination}`;
+  const modesList = Array.isArray(allowedModes) && allowedModes.length > 0
+    ? allowedModes
+    : ["public_transit", "walking"];
+  const isWalkingOnly = modesList.length === 1 && modesList[0] === "walking";
+  const allowsTransit = modesList.includes("public_transit");
+  const allowsCar = modesList.includes("car");
+  const allowsBicycle = modesList.includes("bicycle");
+
+  const cacheKey = `route_${fromSpot.id || fromSpot.name}_${toSpot.id || toSpot.name}_${destination}_${modesList.join("_")}`;
   const cachedRoute = perfCache.get<DynamicRouteInfo>(cacheKey);
   if (cachedRoute) return cachedRoute;
+
+  const originParam = formatSpotForGoogleMaps(fromSpot, destination);
+  const destParam = formatSpotForGoogleMaps(toSpot, destination);
 
   const originLat = fromSpot.coordinates?.lat;
   const originLng = fromSpot.coordinates?.lng;
   const destLat = toSpot.coordinates?.lat;
   const destLng = toSpot.coordinates?.lng;
 
-  let originParam = "";
-  if (originLat && originLng) {
-    originParam = `${originLat},${originLng}`;
-  } else {
-    originParam = encodeURIComponent(`${fromSpot.name}, ${destination}`);
-  }
-
-  let destParam = "";
-  if (destLat && destLng) {
-    destParam = `${destLat},${destLng}`;
-  } else {
-    destParam = encodeURIComponent(`${toSpot.name}, ${destination}`);
-  }
-
   // Pre-calculated or custom transit if available
   if (fromSpot.transitToNext) {
-    const travelmode =
-      fromSpot.transitToNext.mode === "walk"
-        ? "walking"
-        : fromSpot.transitToNext.mode === "transit"
-        ? "transit"
-        : "driving";
+    if (isWalkingOnly && (fromSpot.transitToNext.mode === "transit" || fromSpot.transitToNext.mode === "drive")) {
+      // Ignore motorized transit for walking-only
+    } else {
+      const travelmode =
+        fromSpot.transitToNext.mode === "walk"
+          ? "walking"
+          : fromSpot.transitToNext.mode === "transit"
+          ? "transit"
+          : fromSpot.transitToNext.mode === "bicycle"
+          ? "bicycling"
+          : "driving";
 
-    return {
-      ...fromSpot.transitToNext,
-      googleMapsDirectionsUrl: `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=${travelmode}`,
-    };
+      return {
+        ...fromSpot.transitToNext,
+        googleMapsDirectionsUrl: `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=${travelmode}`,
+      };
+    }
   }
 
   // Fallback: Compute dynamic distance & travel mode
   if (originLat && originLng && destLat && destLng) {
     const distKm = calculateDistanceKm(originLat, originLng, destLat, destLng);
 
-    let mode: "walk" | "transit" | "drive" | "taxi" = "walk";
+    let mode: "walk" | "transit" | "drive" | "bicycle" = "walk";
     let durationMins = 0;
     let distanceStr = "";
     let travelmodeParam = "walking";
 
-    if (distKm <= 1.2) {
+    if (distKm <= 1.4) {
       mode = "walk";
       travelmodeParam = "walking";
-      durationMins = Math.max(3, Math.round((distKm / 4.8) * 60)); // ~4.8 km/h walking speed
+      durationMins = Math.max(4, Math.round((distKm / 4.1) * 60)); // ~4.1 km/h walking speed
       distanceStr = distKm < 1 ? `${Math.round(distKm * 1000)}m` : `${distKm.toFixed(1)} km`;
-    } else if (distKm <= 5.0) {
+    } else if (isWalkingOnly || (!allowsTransit && !allowsCar && !allowsBicycle)) {
+      mode = "walk";
+      travelmodeParam = "walking";
+      durationMins = Math.max(15, Math.round((distKm / 4.0) * 60));
+      distanceStr = `${distKm.toFixed(1)} km`;
+    } else if (allowsBicycle && !allowsTransit && !allowsCar) {
+      mode = "bicycle";
+      travelmodeParam = "bicycling";
+      durationMins = Math.max(4, Math.round((distKm / 15) * 60) + 2);
+      distanceStr = `${distKm.toFixed(1)} km`;
+    } else if (distKm <= 5.0 && allowsTransit) {
       mode = "transit";
       travelmodeParam = "transit";
       durationMins = Math.max(8, Math.round((distKm / 18) * 60) + 4);
       distanceStr = `${distKm.toFixed(1)} km`;
-    } else {
+    } else if (allowsCar && !allowsTransit) {
       mode = "drive";
       travelmodeParam = "driving";
-      durationMins = Math.max(10, Math.round((distKm / 35) * 60) + 5);
+      durationMins = Math.max(8, Math.round((distKm / 35) * 60) + 4);
+      distanceStr = `${distKm.toFixed(1)} km`;
+    } else {
+      mode = allowsTransit ? "transit" : "drive";
+      travelmodeParam = allowsTransit ? "transit" : "driving";
+      durationMins = Math.max(10, Math.round((distKm / (allowsTransit ? 20 : 35)) * 60) + 5);
       distanceStr = `${distKm.toFixed(1)} km`;
     }
 
     const durationStr =
       mode === "walk"
         ? `${durationMins} min walk`
+        : mode === "bicycle"
+        ? `${durationMins} min bike ride`
         : mode === "transit"
         ? `${durationMins} min transit`
-        : `${durationMins} min drive/taxi`;
+        : `${durationMins} min drive`;
 
     const result: DynamicRouteInfo = {
       mode,
@@ -147,27 +223,16 @@ export function getEntireDayRouteGoogleMapsUrl(
   
   if (activities.length === 1) {
     const spot = activities[0];
-    const coords = spot.coordinates;
-    if (coords && coords.lat && coords.lng) {
-      return `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
-    }
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${spot.name}, ${destination}`)}`;
+    const spotParam = formatSpotForGoogleMaps(spot, destination);
+    return `https://www.google.com/maps/search/?api=1&query=${spotParam}`;
   }
 
-  const formatSpotParam = (spot: ActivitySpot): string => {
-    if (spot.coordinates && spot.coordinates.lat && spot.coordinates.lng) {
-      return `${spot.coordinates.lat},${spot.coordinates.lng}`;
-    }
-    return encodeURIComponent(`${spot.name}, ${destination}`);
-  };
-
-  const origin = formatSpotParam(activities[0]);
-  const destinationParam = formatSpotParam(activities[activities.length - 1]);
+  const origin = formatSpotForGoogleMaps(activities[0], destination);
+  const destinationParam = formatSpotForGoogleMaps(activities[activities.length - 1], destination);
 
   let waypointsParam = "";
   if (activities.length > 2) {
-    // Google Maps supports up to 9 waypoints in standard query mode, which is plenty.
-    const waypoints = activities.slice(1, -1).map(formatSpotParam);
+    const waypoints = activities.slice(1, -1).map((spot) => formatSpotForGoogleMaps(spot, destination));
     waypointsParam = `&waypoints=${waypoints.join("|")}`;
   }
 

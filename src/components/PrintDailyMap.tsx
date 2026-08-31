@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import L from "leaflet";
 import { DailyPlan } from "../types";
+import { TranslatedText } from "./TranslatedText";
 
 interface PrintDailyMapProps {
   day: DailyPlan;
@@ -135,7 +136,7 @@ export const PrintDailyMap: React.FC<PrintDailyMapProps> = ({ day, destinationOr
     <div className="print-map-container" style={{ position: "relative" }}>
       <div ref={containerRef} className="w-full h-full bg-[#f5f5f0]" />
       <div className="absolute top-1.5 right-2 z-10 bg-white/95 text-[7px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded border border-[#d1d1ca] text-[#5A5A40] pointer-events-none font-sans no-print">
-        Route Map • Day {day.dayNumber}
+        <TranslatedText text={`Route Map • Day ${day.dayNumber}`} />
       </div>
     </div>
   );

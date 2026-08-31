@@ -264,7 +264,7 @@ async function geminiGeocode(spots: { name: string; address?: string; category?:
   if (!ai || spots.length === 0) return [];
   const townCenter = await checkKnownLandmarks(town) || await geocodeViaNominatim(town);
   const prompt = `Geolocate these real places in or near ${town}. Return exact GPS coordinates and real street addresses in ${town} or its immediate region: ${spots.map((s) => `${s.name}${s.address ? ` (${s.address})` : ""}`).join("; ")}.`;
-  for (const model of ["gemini-3.5-flash-lite", "gemini-3.5-flash"]) {
+  for (const model of ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.5-flash"]) {
     try {
       const response = await ai.models.generateContent({
         model,
@@ -343,9 +343,9 @@ export async function resolveActivityCoordinates(
   modelCoordinates?: { lat?: number; lng?: number },
   _maxRadiusKm = 35
 ): Promise<{ lat: number; lng: number }> {
+  if (validCoordinates(modelCoordinates)) return modelCoordinates;
   const found = await geocodeSpot(spotName, townContext, address);
   if (found) return { lat: found.lat, lng: found.lng };
-  if (validCoordinates(modelCoordinates)) return modelCoordinates;
   // A dynamically geocoded town centre is the only fallback; there is no city database.
   const townCenter = await geocodeViaNominatim(townContext) || await geocodeViaPhoton(townContext);
   if (townCenter) return { lat: townCenter.lat, lng: townCenter.lng };
@@ -354,13 +354,14 @@ export async function resolveActivityCoordinates(
 
 export async function enrichActivitiesWithDynamicAI(activities: ActivitySpot[], destinationContext: string): Promise<void> {
   if (!activities.length) return;
-  const all = activities.flatMap((activity) => [activity, ...(activity.alternativeOptions || []), ...(activity.allOptions || [])]);
-
-  // Resolve town center for sanity check
-  const townCenter = await checkKnownLandmarks(destinationContext) || await geocodeViaNominatim(destinationContext);
+  const all = activities.flatMap((activity) => [
+    activity,
+    ...(activity.alternativeOptions || []),
+    ...(activity.allOptions || []),
+  ]);
 
   for (const spot of all) {
-    // 1. Check known landmark database
+    // 1. Check verified known landmark database first
     const known = checkKnownLandmarks(spot.name) || (spot.address ? checkKnownLandmarks(spot.address) : null);
     if (known) {
       spot.coordinates = { lat: known.lat, lng: known.lng };
@@ -369,20 +370,21 @@ export async function enrichActivitiesWithDynamicAI(activities: ActivitySpot[], 
       continue;
     }
 
-    // 2. If spot already has valid coordinates close to town center (<= 8km), keep them unless we get a high-confidence match
-    const existingValid = validCoordinates(spot.coordinates);
-    const existingDistance = existingValid && townCenter ? haversineDistKm(townCenter.lat, townCenter.lng, spot.coordinates.lat, spot.coordinates.lng) : 999;
+    // 2. If spot already has valid coordinates (from Gemini or prior resolution), keep them immediately!
+    if (validCoordinates(spot.coordinates)) {
+      spot.googleMapsUrl = generateGoogleMapsSearchUrl(spot.name, destinationContext, spot.address, spot.coordinates);
+      continue;
+    }
 
-    const match = await deterministicGeocode(spot.name, destinationContext, spot.address);
-    if (match) {
-      spot.coordinates = { lat: match.lat, lng: match.lng };
-      if (match.address) spot.address = match.address;
-    } else if (!existingValid || existingDistance > 12) {
-      try {
-        spot.coordinates = await resolveActivityCoordinates(spot.name, destinationContext, spot.address, spot.coordinates);
-      } catch (error) {
-        console.warn((error as Error).message);
+    // 3. Fallback: geocode ONLY if coordinates are missing or invalid
+    try {
+      const match = await deterministicGeocode(spot.name, destinationContext, spot.address);
+      if (match) {
+        spot.coordinates = { lat: match.lat, lng: match.lng };
+        if (match.address) spot.address = match.address;
       }
+    } catch (e) {
+      console.warn(`Geocoding fallback failed for ${spot.name}:`, (e as Error).message);
     }
 
     spot.googleMapsUrl = generateGoogleMapsSearchUrl(spot.name, destinationContext, spot.address, spot.coordinates);

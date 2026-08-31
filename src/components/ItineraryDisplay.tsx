@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ItineraryPlan, ActivitySpot, DailyPlan } from "../types";
 import { DayCard } from "./DayCard";
 import { InteractiveMap } from "./InteractiveMap";
@@ -8,6 +8,12 @@ import { ActivityDetailModal } from "./ActivityDetailModal";
 import { OfflinePocketModal } from "./OfflinePocketModal";
 import { GroupCollaborationModal } from "./GroupCollaborationModal";
 import { ScheduleAdjusterModal } from "./ScheduleAdjusterModal";
+import { RouteOptimizerModal } from "./RouteOptimizerModal";
+import { SwapSpotModal } from "./SwapSpotModal";
+import { TravelWalletHub } from "./TravelWalletHub";
+import { DayCompanionMode } from "./DayCompanionMode";
+import { CollaboratorPresence } from "./CollaboratorPresence";
+import { AIModelStatusBanner } from "./AIModelStatusBanner";
 import {
   Bookmark,
   BookmarkCheck,
@@ -26,14 +32,27 @@ import {
   Clock,
   CheckCircle2,
   Compass,
+  Wallet,
+  Navigation,
+  Luggage,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { parseTimeToHours } from "../utils/time";
-import { LiveNavigatorBar } from "./LiveNavigatorBar";
 import { getRouteInfoBetweenSpots } from "../utils/transit";
 import { PrintDailyMap } from "./PrintDailyMap";
 import { formatCleanTripTitle, formatConciseWeather } from "../utils/formatters";
+import { WeatherForecastCard } from "./WeatherForecastCard";
 import { useLanguage } from "../context/LanguageContext";
+import { useAuth } from "../context/AuthContext";
+import { IdentifyMemberModal } from "./IdentifyMemberModal";
+import { PublishTripModal } from "./PublishTripModal";
+import { PublishSpotModal } from "./PublishSpotModal";
+import { getUserPermissions, publishSharedTripUpdate, subscribeToSharedTrip } from "../utils/sharedTripService";
+import { TranslatedText } from "./TranslatedText";
+import { translateEntireItineraryPlan } from "../utils/translator";
 
 interface ItineraryDisplayProps {
   plan: ItineraryPlan;
@@ -65,19 +84,82 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
   onVisitedChanged,
 }) => {
   const { t, formatCurrency, language } = useLanguage();
+  const { user, activeEmail } = useAuth();
   const [activeDayNumber, setActiveDayNumber] = useState<number | "all">("all");
   const [selectedSpotId, setSelectedSpotId] = useState<string | null>(null);
-  const [itinerarySubTab, setItinerarySubTab] = useState<"itinerary" | "group" | "offline">("itinerary");
+  const [itinerarySubTab, setItinerarySubTab] = useState<"itinerary" | "companion" | "group" | "wallet" | "offline">("itinerary");
+
+  const userPerms = getUserPermissions(plan, undefined, activeEmail || user?.email);
 
   // Modals state
   const [editingActivity, setEditingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
   const [addingDayNumber, setAddingDayNumber] = useState<number | null>(null);
   const [detailedActivity, setDetailedActivity] = useState<{ spot: ActivitySpot; dayNumber?: number } | null>(null);
+  const [swappingActivity, setSwappingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
+  const [publishingActivity, setPublishingActivity] = useState<{ activity: ActivitySpot; dayNumber: number } | null>(null);
+  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
+  const [isHighlightsExpanded, setIsHighlightsExpanded] = useState(false);
 
-  // New Feature Modals state
+  const handleSaveSwap = (newSpot: ActivitySpot, dayNumber: number) => {
+    const updatedDays = plan.days.map((day) => {
+      if (day.dayNumber === dayNumber) {
+        const activities = day.activities.map((act) => {
+          if (act.id === swappingActivity?.activity.id) {
+            return {
+              ...newSpot,
+              id: act.id, // Keep original ID if preferred or generate fresh
+            };
+          }
+          return act;
+        });
+        return { ...day, activities };
+      }
+      return day;
+    });
+    onUpdatePlan({ ...plan, days: updatedDays });
+    setSwappingActivity(null);
+  };
+
+  const handleSwapWithExisting = (
+    activityA: ActivitySpot,
+    dayNumA: number,
+    activityB: ActivitySpot,
+    dayNumB: number
+  ) => {
+    const updatedDays = plan.days.map((day) => {
+      let activities = [...day.activities];
+      if (day.dayNumber === dayNumA) {
+        activities = activities.map((act) => {
+          if (act.id === activityA.id) {
+            return { ...activityB, time: activityA.time };
+          }
+          return act;
+        });
+      }
+      if (day.dayNumber === dayNumB) {
+        activities = activities.map((act) => {
+          if (act.id === activityB.id) {
+            return { ...activityA, time: activityB.time };
+          }
+          return act;
+        });
+      }
+      return { ...day, activities };
+    });
+    onUpdatePlan({ ...plan, days: updatedDays });
+    setSwappingActivity(null);
+  };
+
+  // Feature Modals state
   const [showOfflineModal, setShowOfflineModal] = useState(false);
   const [showCollabModal, setShowCollabModal] = useState(false);
+  const [collabInitialTab, setCollabInitialTab] = useState<"votes" | "packing" | "shopping" | "expenses" | "members">("votes");
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showRouteOptimizerModal, setShowRouteOptimizerModal] = useState(false);
+  const [optimizingDayNumber, setOptimizingDayNumber] = useState<number>(1);
+  const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+  const [showPackingModal, setShowPackingModal] = useState(false);
   const [adjustingDayNumber, setAdjustingDayNumber] = useState<number>(1);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
 
@@ -96,6 +178,33 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
     });
   };
 
+  const handleApplyOptimizedDayActivities = (dayNumber: number, orderedActivities: ActivitySpot[]) => {
+    const updatedDays = plan.days.map((d) => {
+      if (d.dayNumber === dayNumber) {
+        return {
+          ...d,
+          activities: orderedActivities,
+        };
+      }
+      return d;
+    });
+
+    onUpdatePlan({
+      ...plan,
+      days: updatedDays,
+    });
+    showToast(`Day ${dayNumber} route optimized for travel efficiency!`, "success");
+  };
+
+  // Auto-translate itinerary in background when language changes
+  useEffect(() => {
+    if (language !== "en" && plan) {
+      translateEntireItineraryPlan(plan, language).catch((err) => {
+        console.warn("Background translation:", err);
+      });
+    }
+  }, [plan, language]);
+
   // Reiteration modal state
   const [showReiterateModal, setShowReiterateModal] = useState(false);
   const [reiterateInstructions, setReiterateInstructions] = useState("");
@@ -108,6 +217,16 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
       await onReiteratePlan(reiterateInstructions);
       setShowReiterateModal(false);
       setReiterateInstructions("");
+    } finally {
+      setIsReiterating(false);
+    }
+  };
+
+  const handleTriggerReDo = async () => {
+    if (!onReiteratePlan) return;
+    setIsReiterating(true);
+    try {
+      await onReiteratePlan("Re-Do entire itinerary: Regenerate all activities with fresh local recommendations and re-optimized route logistics while preserving user preferences.");
     } finally {
       setIsReiterating(false);
     }
@@ -174,10 +293,6 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
       const acts = [...day.activities];
       if (toIndex < 0 || toIndex >= acts.length) return day;
 
-      // Capture the original time slots, then reassign them positionally so the
-      // schedule stays chronologically ascending after the move. Build NEW
-      // objects instead of mutating the existing ones (which would not trigger
-      // a React re-render reliably).
       const originalTimes = acts.map((a) => a.time);
       const [moved] = acts.splice(fromIndex, 1);
       acts.splice(toIndex, 0, moved);
@@ -190,6 +305,59 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
       return { ...day, activities: reassigned };
     });
     onUpdatePlan({ ...plan, days: newDays });
+  };
+
+  // Activity Reorder Across Days Handler
+  const handleMoveActivityAcrossDays = (
+    fromDayNumber: number,
+    fromIndex: number,
+    toDayNumber: number,
+    toIndex: number
+  ) => {
+    if (fromDayNumber === toDayNumber) {
+      handleMoveActivity(fromDayNumber, fromIndex, toIndex);
+      return;
+    }
+
+    const fromDay = plan.days.find((d) => d.dayNumber === fromDayNumber);
+    const toDay = plan.days.find((d) => d.dayNumber === toDayNumber);
+    if (!fromDay || !toDay) return;
+
+    const movedActivity = fromDay.activities[fromIndex];
+    if (!movedActivity) return;
+
+    // Remove from source day & reassign remaining times
+    const newFromActivities = [...fromDay.activities];
+    const originalFromTimes = newFromActivities.map((a) => a.time);
+    newFromActivities.splice(fromIndex, 1);
+    const reassignedFrom = newFromActivities.map((act, idx) => ({
+      ...act,
+      time: originalFromTimes[idx] || act.time,
+    }));
+
+    // Insert into target day & reassign times
+    const newToActivities = [...toDay.activities];
+    const safeInsertIndex = Math.min(Math.max(0, toIndex), newToActivities.length);
+    newToActivities.splice(safeInsertIndex, 0, movedActivity);
+
+    const defaultTimeSlots = ["09:00 AM", "11:00 AM", "01:30 PM", "04:00 PM", "07:00 PM", "09:00 PM"];
+    const reassignedTo = newToActivities.map((act, idx) => ({
+      ...act,
+      time: toDay.activities[idx]?.time || defaultTimeSlots[idx] || act.time,
+    }));
+
+    const newDays = plan.days.map((day) => {
+      if (day.dayNumber === fromDayNumber) {
+        return { ...day, activities: reassignedFrom };
+      }
+      if (day.dayNumber === toDayNumber) {
+        return { ...day, activities: reassignedTo };
+      }
+      return day;
+    });
+
+    onUpdatePlan({ ...plan, days: newDays });
+    showToast(`Moved "${movedActivity.title}" to Day ${toDayNumber}`, "success");
   };
 
   // Alternative Option Selection (Multiple Choice toggle) - Fixed immutable state
@@ -330,64 +498,117 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
       <div className="print:hidden space-y-6">
         {/* Additional Segmented Sub-Navigation Menu for Itinerary (Sticky at top below navbar) */}
         <div className="sticky top-14 sm:top-18 z-20 bg-[#f5f5f0]/95 backdrop-blur-md py-3 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 no-print border-b border-[#e5e5df]/50 transition-all">
-          <div className="bg-white p-1 rounded-2xl border border-[#e5e5df] max-w-lg mx-auto w-full flex shadow-2xs">
+          <div className="bg-white p-1 rounded-2xl border border-[#e5e5df] max-w-3xl mx-auto w-full grid grid-cols-5 gap-0.5 sm:gap-1 shadow-2xs">
             <button
+              id="nav-sub-itinerary"
               onClick={() => setItinerarySubTab("itinerary")}
-              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+              className={`flex flex-col sm:flex-row items-center justify-center space-y-0.5 sm:space-y-0 sm:space-x-1.5 py-1.5 sm:py-2.5 px-0.5 sm:px-2.5 rounded-xl text-[10px] sm:text-xs font-semibold tracking-tight transition-all cursor-pointer text-center w-full min-w-0 ${
                 itinerarySubTab === "itinerary"
                   ? "bg-[#5A5A40] text-white shadow-xs font-bold"
                   : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
               }`}
             >
-              <Compass className="w-4 h-4" />
-              <span>{t("nav.dailyPlan", "Daily Plan")}</span>
+              <Compass className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden text-[10px] truncate max-w-full"><TranslatedText text="Plan" /></span>
+              <span className="hidden sm:inline"><TranslatedText text="Daily Plan" /></span>
+            </button>
+            <button
+              id="nav-sub-companion"
+              onClick={() => setItinerarySubTab("companion")}
+              className={`flex flex-col sm:flex-row items-center justify-center space-y-0.5 sm:space-y-0 sm:space-x-1.5 py-1.5 sm:py-2.5 px-0.5 sm:px-2.5 rounded-xl text-[10px] sm:text-xs font-semibold tracking-tight transition-all cursor-pointer text-center relative w-full min-w-0 ${
+                itinerarySubTab === "companion"
+                  ? "bg-[#5A5A40] text-white shadow-xs font-bold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
+              }`}
+            >
+              <Navigation className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden text-[10px] truncate max-w-full"><TranslatedText text="Live AI" /></span>
+              <span className="hidden sm:inline"><TranslatedText text="Live Companion" /></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse absolute top-1 right-1" />
+            </button>
+            <button
+              id="nav-sub-wallet"
+              onClick={() => setItinerarySubTab("wallet")}
+              className={`flex flex-col sm:flex-row items-center justify-center space-y-0.5 sm:space-y-0 sm:space-x-1.5 py-1.5 sm:py-2.5 px-0.5 sm:px-2.5 rounded-xl text-[10px] sm:text-xs font-semibold tracking-tight transition-all cursor-pointer text-center w-full min-w-0 ${
+                itinerarySubTab === "wallet"
+                  ? "bg-[#5A5A40] text-white shadow-xs font-bold"
+                  : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden text-[10px] truncate max-w-full"><TranslatedText text="Wallet" /></span>
+              <span className="hidden sm:inline"><TranslatedText text="Travel Wallet" /></span>
             </button>
             <button
               id="nav-sub-group"
               onClick={() => setItinerarySubTab("group")}
-              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+              className={`flex flex-col sm:flex-row items-center justify-center space-y-0.5 sm:space-y-0 sm:space-x-1.5 py-1.5 sm:py-2.5 px-0.5 sm:px-2.5 rounded-xl text-[10px] sm:text-xs font-semibold tracking-tight transition-all cursor-pointer text-center w-full min-w-0 ${
                 itinerarySubTab === "group"
                   ? "bg-[#5A5A40] text-white shadow-xs font-bold"
                   : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
               }`}
             >
-              <Users className="w-4 h-4" />
-              <span>{t("action.groupHub", "Group Hub")}</span>
+              <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden text-[10px] truncate max-w-full"><TranslatedText text="Group" /></span>
+              <span className="hidden sm:inline"><TranslatedText text="Group Hub" /></span>
             </button>
             <button
               id="nav-sub-offline"
               onClick={() => setItinerarySubTab("offline")}
-              className={`flex-1 flex items-center justify-center space-x-2 py-2.5 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+              className={`flex flex-col sm:flex-row items-center justify-center space-y-0.5 sm:space-y-0 sm:space-x-1.5 py-1.5 sm:py-2.5 px-0.5 sm:px-2.5 rounded-xl text-[10px] sm:text-xs font-semibold tracking-tight transition-all cursor-pointer text-center w-full min-w-0 ${
                 itinerarySubTab === "offline"
                   ? "bg-[#5A5A40] text-white shadow-xs font-bold"
                   : "text-[#6b6b5e] hover:text-[#2c2c24] hover:bg-[#f5f5f0]"
               }`}
             >
-              <Smartphone className="w-4 h-4" />
-              <span>{t("action.pocketGuide", "Offline Pocket")}</span>
+              <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span className="sm:hidden text-[10px] truncate max-w-full"><TranslatedText text="Offline" /></span>
+              <span className="hidden sm:inline"><TranslatedText text="Offline Pocket" /></span>
             </button>
           </div>
         </div>
 
         {itinerarySubTab === "itinerary" && (
           <>
+            {/* AI Model Generation & Verification Status Banner */}
+            <div className="hidden sm:block">
+              <AIModelStatusBanner meta={plan.generationMeta} />
+            </div>
+
             {/* Header Banner Card */}
             <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#e5e5df] shadow-sm relative overflow-hidden space-y-6">
-        {/* Top Badges & Clean Visual Toolbar Row */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-5 border-b border-[#e5e5df]">
-          {/* Metadata Badges */}
+        {/* Top Badges & Clean Visual Toolbar Section (Improved Layout for PC & Mobile) */}
+        <div className="flex flex-col gap-4 sm:gap-5 pb-5 border-b border-[#e5e5df]">
+          {/* Row 1: Metadata Badges (Full Width, No Squishing on PC, Hidden items on Mobile) */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca]">
-              {plan.mode === "vacation" ? `✈️ ${plan.totalDays} Days` : "📍 Native Hometown Guide"}
+            <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-semibold bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] items-center gap-1">
+              <span>{plan.mode === "vacation" ? "✈️" : "📍"}</span>
+              <span>{plan.mode === "vacation" ? `${plan.totalDays} Days` : "Native Hometown Guide"}</span>
             </span>
+
+            {plan.startDate && (
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-semibold bg-[#5A5A40] text-white border border-[#4a4a35] items-center gap-1 shadow-2xs">
+                <span>📅</span>
+                <span>
+                  {plan.mode === "hometown" ? (
+                    <>
+                      <TranslatedText text="Outing Date:" />{" "}
+                      {new Date((plan.startDate || new Date().toISOString().split("T")[0]) + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                    </>
+                  ) : (
+                    new Date((plan.startDate || new Date().toISOString().split("T")[0]) + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                  )}
+                </span>
+              </span>
+            )}
 
             {/* Short Weather Badge with Tooltip */}
             {conciseWeather && (
               <div className="relative group/weather">
-                <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs cursor-help">
+                <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs cursor-help">
                   <span>{conciseWeather.emoji}</span>
                   <span className="font-bold">{conciseWeather.temp}</span>
-                  <span className="text-amber-800 font-normal hidden sm:inline">• {conciseWeather.shortDesc}</span>
+                  <span className="hidden sm:inline text-amber-800 font-normal">• {conciseWeather.shortDesc}</span>
                 </span>
                 {conciseWeather.fullText && (
                   <div className="absolute top-full left-0 mt-1.5 w-64 p-2.5 bg-[#2c2c24] text-white text-[11px] rounded-xl shadow-xl z-30 opacity-0 group-hover/weather:opacity-100 transition-opacity pointer-events-none border border-[#4a4a35]">
@@ -399,123 +620,133 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
             )}
 
             {plan.customPace && (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#6b6b5e] border border-[#e5e5df]">
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#6b6b5e] border border-[#e5e5df]">
                 Pace: {plan.customPace}
               </span>
             )}
 
             {plan.groupSize && plan.groupSize > 0 && (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
-                👥 {plan.groupSize} Traveler{plan.groupSize > 1 ? "s" : ""}
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
+                👥 {plan.groupSize}<span className="hidden sm:inline"> Traveler{plan.groupSize > 1 ? "s" : ""}</span>
               </span>
             )}
 
             {plan.budgetType === "exact" && plan.exactBudgetPerDay ? (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#5A5A40] border border-[#d1d1ca] font-serif italic">
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#5A5A40] border border-[#d1d1ca] font-serif italic">
                 💰 {plan.currency || "€"}{plan.exactBudgetPerDay} / day
               </span>
             ) : plan.budgetTier ? (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#6b6b5e] border border-[#e5e5df]">
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-medium bg-[#f5f5f0] text-[#6b6b5e] border border-[#e5e5df]">
                 Budget: {plan.budgetTier}
               </span>
             ) : null}
 
             {plan.arrivalHour && (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
                 🛬 {plan.arrivalHour}
               </span>
             )}
 
             {plan.departureHour && (
-              <span className="px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
+              <span className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-medium bg-[#ecece4] text-[#2c2c24] border border-[#d1d1ca]">
                 🛫 {plan.departureHour}
               </span>
             )}
           </div>
 
-          {/* Action Buttons Toolbar - Visual & Simple */}
-          <div className="flex flex-wrap items-center gap-2 shrink-0 no-print">
+          {/* Row 2: Action Buttons Toolbar (Polished full-width dashboard bar on PC, horizontal wrap on Mobile) */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 no-print lg:bg-[#fcfcfb] lg:p-3 lg:rounded-2xl lg:border lg:border-[#ecece5] w-full">
+            {/* Member Identity / Access Badge */}
+            {!userPerms.isClaimed ? (
+              <button
+                type="button"
+                onClick={() => setShowIdentifyModal(true)}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-sans font-semibold text-[11px] sm:text-xs border border-amber-300 transition-all shadow-2xs animate-pulse"
+                title="Claim your member identity in this group itinerary"
+              >
+                <Users className="w-3 h-3 text-amber-800" />
+                <span>Claim</span>
+              </button>
+            ) : (
+              <span className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] sm:text-xs font-semibold">
+                <span>{userPerms.isOrganizer ? "👑" : userPerms.isContributor ? "✏️" : "👁️"}</span>
+                <span className="hidden sm:inline">{userPerms.isOrganizer ? " Organizer" : userPerms.isContributor ? " Contributor" : " Viewer"}</span>
+                <span className="sm:hidden">{userPerms.isOrganizer ? "Org" : userPerms.isContributor ? "Edit" : "View"}</span>
+              </span>
+            )}
+
+            {/* Active Partners / Collaborator Presence */}
+            <div className="hidden sm:block">
+              <CollaboratorPresence />
+            </div>
+
             {/* Primary: Save Trip */}
             <button
               id="btn-save-itinerary"
               onClick={handleSaveClick}
-              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl font-serif italic text-xs sm:text-sm transition-all shadow-xs ${
+              className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg font-sans font-semibold text-[11px] sm:text-xs transition-all shadow-sm ${
                 isSaved
                   ? "bg-[#ecece4] text-[#5A5A40] border border-[#5A5A40]"
-                  : "bg-[#5A5A40] text-white hover:bg-[#4a4a35] active:scale-95"
+                  : "bg-[#2c2c24] text-white hover:bg-[#3d3d32] active:scale-95"
               }`}
             >
               {isSaved ? (
                 <>
-                  <BookmarkCheck className="w-4 h-4 text-[#5A5A40]" />
+                  <BookmarkCheck className="w-3.5 h-3.5 text-[#5A5A40]" />
                   <span>{t("action.saved", "Saved")}</span>
                 </>
               ) : (
                 <>
-                  <Bookmark className="w-4 h-4" />
-                  <span>{t("action.saveTrip", "Save Trip")}</span>
+                  <Bookmark className="w-3.5 h-3.5" />
+                  <span>{t("action.saveTrip", "Save")}</span>
                 </>
               )}
-            </button>
-
-            {/* Group Collaboration Hub */}
-            <button
-              id="btn-group-hub"
-              onClick={() => setItinerarySubTab("group")}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
-              title="Group Hub: Manage travelers, day votes, personal packing & Tricount splits"
-            >
-              <Users className="w-3.5 h-3.5 text-[#5A5A40]" />
-              <span>{t("action.groupHub", "Group Hub")}</span>
-            </button>
-
-            {/* Live Schedule Adjuster */}
-            <button
-              id="btn-adjust-schedule"
-              onClick={() => {
-                setAdjustingDayNumber(typeof activeDayNumber === "number" ? activeDayNumber : 1);
-                setShowScheduleModal(true);
-              }}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
-              title="Shift or adjust day schedule if running late or ahead of time"
-            >
-              <Clock className="w-3.5 h-3.5 text-[#5A5A40]" />
-              <span>{t("action.adjustSchedule", "Adjust Schedule")}</span>
-            </button>
-
-            {/* Offline Pocket Companion */}
-            <button
-              id="btn-offline-pocket"
-              onClick={() => setItinerarySubTab("offline")}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
-              title="Open Offline Pocket Companion & Standalone Guide"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-[#5A5A40]" />
-              <span>{t("action.pocketGuide", "Offline Pocket")}</span>
             </button>
 
             {/* Export / Share */}
             <button
               id="btn-export-itinerary"
               onClick={onOpenExport}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-xs sm:text-sm border border-[#d1d1ca] transition-colors shadow-2xs"
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-[#f5f5f0] hover:bg-[#ecece4] text-[#2c2c24] font-sans font-medium text-[11px] sm:text-xs border border-[#d1d1ca] transition-colors shadow-2xs"
               title="Export PDF, Apple / Google Wallet, or Share Link"
             >
               <Share2 className="w-3.5 h-3.5 text-[#5A5A40]" />
-              <span>{t("action.export", "Export / Share")}</span>
+              <span>{t("action.export", "Export")}</span>
             </button>
 
-            {/* Auto-Fill with AI (if available) */}
+            {/* Publish to Explore */}
+            <button
+              id="btn-publish-to-explore"
+              onClick={() => setIsPublishModalOpen(true)}
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 font-sans font-medium text-[11px] sm:text-xs border border-emerald-200 transition-colors shadow-2xs"
+              title="Publish this itinerary to the Community Explore Feed"
+            >
+              <Compass className="w-3 h-3 text-emerald-700" />
+              <span><TranslatedText text="Publish" /></span>
+            </button>
+
+            {/* Auto-Fill with AI & Re-Do (if available) */}
             {onReiteratePlan && (
-              <button
-                id="btn-reiterate-itinerary"
-                onClick={() => setShowReiterateModal(true)}
-                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-xl bg-[#f5f5f0] hover:bg-[#ecece4] text-[#2c2c24] font-serif italic text-xs sm:text-sm border border-[#5A5A40] transition-all shadow-2xs"
-                title="Auto-Fill empty slots with AI recommendations"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-[#5A5A40]" />
-                <span>Auto-Fill AI</span>
-              </button>
+              <div className="flex items-center space-x-1.5">
+                <button
+                  id="btn-reiterate-itinerary"
+                  onClick={() => setShowReiterateModal(true)}
+                  className="hidden sm:flex items-center space-x-1 px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-900 font-sans font-medium text-xs border border-purple-200 transition-colors shadow-2xs cursor-pointer"
+                  title="Auto-Fill empty slots with AI recommendations"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-700" />
+                  <span>Auto-Fill AI</span>
+                </button>
+                <button
+                  id="btn-redo-itinerary"
+                  onClick={() => handleTriggerReDo()}
+                  className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 font-sans font-medium text-[11px] sm:text-xs border border-amber-200 transition-colors shadow-2xs cursor-pointer"
+                  title="Re-Do itinerary: generate fresh local recommendations"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Re-Do</span>
+                </button>
+              </div>
             )}
 
             {/* Print */}
@@ -523,22 +754,22 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               id="btn-print-itinerary"
               onClick={() => window.print()}
               title="Print Itinerary"
-              className="p-2 rounded-xl bg-white hover:bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] transition-colors shadow-2xs"
+              className="hidden sm:flex p-1.5 rounded-lg bg-white hover:bg-[#f5f5f0] text-[#5A5A40] border border-[#d1d1ca] transition-colors shadow-2xs"
             >
-              <Printer className="w-4 h-4" />
+              <Printer className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
         {/* Full-Width Clean Short Trip Title, Location & Accommodations */}
         <div className="space-y-4 w-full">
-          <h1 className="font-serif text-3xl sm:text-4xl md:text-5xl font-normal italic text-[#2c2c24] leading-tight tracking-tight">
-            {cleanTripTitle}
+          <h1 className="font-serif text-2xl sm:text-4xl md:text-5xl font-normal italic text-[#2c2c24] leading-tight tracking-tight">
+            <TranslatedText text={cleanTripTitle} />
           </h1>
 
           <div className="flex items-center space-x-1.5 text-xs font-bold uppercase tracking-wider text-[#8a8a7e]">
             <MapPin className="w-4 h-4 text-[#5A5A40] shrink-0" />
-            <span>{plan.destinationOrTown}</span>
+            <span><TranslatedText text={plan.destinationOrTown} /></span>
           </div>
 
           {((plan.accommodations && plan.accommodations.length > 0)
@@ -557,9 +788,9 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
                 </div>
                 <div className="min-w-0">
                   <div className="font-semibold text-[#2c2c24] truncate flex items-center gap-1.5 flex-wrap">
-                    <span>{acc.name}</span>
+                    <span><TranslatedText text={acc.name} /></span>
                     {acc.location && (
-                      <span className="font-normal text-[#6b6b5e] font-sans"> • {acc.location}</span>
+                      <span className="font-normal text-[#6b6b5e] font-sans"> • <TranslatedText text={acc.location} /></span>
                     )}
                     {(acc.isVerified || acc.coordinates) && (
                       <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
@@ -569,7 +800,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
                   </div>
                   {acc.description && (
                     <p className="text-[11px] text-[#8a8a7e] font-sans italic mt-0.5 truncate">
-                      {acc.description}
+                      <TranslatedText text={acc.description} />
                     </p>
                   )}
                 </div>
@@ -588,30 +819,73 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         </div>
 
         {/* Summary Description */}
-        <p className="text-sm sm:text-base text-[#2c2c24] mt-4 leading-relaxed font-sans max-w-4xl">
-          {plan.summary}
-        </p>
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setIsDescExpanded(!isDescExpanded)}
+            className="flex items-center justify-between w-full text-left py-2 border-b border-[#e5e5df]/50 text-sm sm:text-base font-serif italic text-[#5A5A40] hover:text-[#2c2c24] transition-colors cursor-pointer"
+          >
+            <span>{t("itinerary.descriptionTitle", "Itinerary General Description")}</span>
+            {isDescExpanded ? (
+              <ChevronUp className="w-4 h-4 text-[#8a8a7e]" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-[#8a8a7e]" />
+            )}
+          </button>
+          
+          {isDescExpanded && (
+            <p className="text-sm sm:text-base text-[#2c2c24] mt-2.5 leading-relaxed font-sans max-w-4xl animate-fadeIn">
+              <TranslatedText text={plan.summary} />
+            </p>
+          )}
+        </div>
 
         {/* Highlights Pills */}
         {plan.highlights && plan.highlights.length > 0 && (
           <div className="mt-5 pt-4 border-t border-[#e5e5df]">
-            <span className="text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] block mb-2">
-              Curated Highlights & Signatures
-            </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {plan.highlights.map((h, i) => (
-                <div
-                  key={i}
-                  className="flex items-start space-x-2 text-xs text-[#2c2c24] bg-[#f5f5f0] p-2.5 rounded-xl border border-[#e5e5df]"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] shrink-0 mt-0.5" />
-                  <span className="font-sans leading-snug">{h}</span>
-                </div>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsHighlightsExpanded(!isHighlightsExpanded)}
+              className="flex items-center justify-between w-full text-left py-2 text-[10px] uppercase tracking-widest font-bold text-[#8a8a7e] hover:text-[#2c2c24] transition-colors cursor-pointer"
+            >
+              <span>Curated Highlights & Signatures</span>
+              {isHighlightsExpanded ? (
+                <ChevronUp className="w-4 h-4 text-[#8a8a7e] normal-case" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-[#8a8a7e] normal-case" />
+              )}
+            </button>
+
+            {isHighlightsExpanded && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 animate-fadeIn">
+                {plan.highlights.map((h, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start space-x-2 text-xs text-[#2c2c24] bg-[#f5f5f0] p-2.5 rounded-xl border border-[#e5e5df]"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#5A5A40] shrink-0 mt-0.5" />
+                    <span className="font-sans leading-snug">
+                      <TranslatedText text={h} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Live Weather Forecast & Seasonality Warnings */}
+      <WeatherForecastCard
+        weatherForecast={plan.weatherForecast}
+        destination={plan.destinationOrTown}
+        totalDays={plan.totalDays}
+        startDate={plan.startDate}
+        onOpenPackingModal={() => {
+          setCollabInitialTab("packing");
+          setShowCollabModal(true);
+        }}
+      />
 
       {/* Interactive Map */}
       <div className="bg-white rounded-3xl p-6 sm:p-8 border border-[#e5e5df] shadow-sm">
@@ -683,13 +957,23 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setShowReiterateModal(true)}
-            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#5A5A40] text-white hover:bg-[#4a4a35] font-serif italic shrink-0 transition-colors shadow-2xs text-xs sm:text-sm"
-          >
-            <Wand2 className="w-3.5 h-3.5" />
-            <span>Auto-Fill Empty Slots</span>
-          </button>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={() => setShowReiterateModal(true)}
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-[#5A5A40] text-white hover:bg-[#4a4a35] font-serif italic transition-colors shadow-2xs text-xs sm:text-sm cursor-pointer"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span>Auto-Fill Empty Slots</span>
+            </button>
+            <button
+              onClick={() => handleTriggerReDo()}
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-serif italic transition-colors shadow-2xs text-xs sm:text-sm cursor-pointer"
+              title="Re-Do itinerary: generate fresh local recommendations"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Re-Do</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -703,38 +987,70 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               day={day}
               selectedSpotId={selectedSpotId}
               onSelectSpot={handleSelectSpot}
-              onSwapActivity={onSwapActivity}
+              onSwapActivity={(act, dNum) => setSwappingActivity({ activity: act, dayNumber: dNum })}
               onEditActivity={(act, dNum) => setEditingActivity({ activity: act, dayNumber: dNum })}
               onDeleteActivity={handleDeleteActivity}
               onMoveActivity={handleMoveActivity}
+              onMoveActivityAcrossDays={handleMoveActivityAcrossDays}
               onSelectAlternativeOption={handleSelectAlternativeOption}
               onOpenAddActivity={(dNum) => setAddingDayNumber(dNum)}
               onDeleteDay={plan.days.length > 1 ? handleDeleteDay : undefined}
               onUpdateDayHeader={handleUpdateDayHeader}
               onSkipPermanently={onSkipPermanently}
               onOpenDetails={(act, dNum) => setDetailedActivity({ spot: act, dayNumber: dNum })}
+              onPublishActivity={(act, dNum) => setPublishingActivity({ activity: act, dayNumber: dNum })}
               onVisitedChanged={onVisitedChanged}
               onOpenScheduleAdjuster={(dNum) => {
                 setAdjustingDayNumber(dNum);
                 setShowScheduleModal(true);
               }}
+              onOpenRouteOptimizer={(dNum) => {
+                setOptimizingDayNumber(dNum);
+                setShowRouteOptimizerModal(true);
+              }}
               destinationOrTown={plan.destinationOrTown}
+              canEdit={userPerms.canEdit}
             />
           ))}
       </div>
 
       {/* Add Extra Day Button */}
-      <div className="pt-2 no-print">
-        <button
-          type="button"
-          onClick={handleAddNewDay}
-          className="w-full py-3.5 px-6 rounded-3xl border border-dashed border-[#5A5A40]/40 hover:border-[#5A5A40] bg-white hover:bg-[#ecece4]/60 text-[#5A5A40] font-serif italic text-sm flex items-center justify-center space-x-2 transition-all shadow-xs"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Extend Trip (+ Add Day {plan.days.length + 1})</span>
-        </button>
-      </div>
+      {userPerms.canEdit && (
+        <div className="pt-2 no-print">
+          <button
+            type="button"
+            onClick={handleAddNewDay}
+            className="w-full py-3.5 px-6 rounded-3xl border border-dashed border-[#5A5A40]/40 hover:border-[#5A5A40] bg-white hover:bg-[#ecece4]/60 text-[#5A5A40] font-serif italic text-sm flex items-center justify-center space-x-2 transition-all shadow-xs"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Extend Trip (+ Add Day {plan.days.length + 1})</span>
+          </button>
+        </div>
+      )}
           </>
+        )}
+
+        {itinerarySubTab === "companion" && (
+          <div className="animate-in fade-in-20 duration-200">
+            <DayCompanionMode
+              plan={plan}
+              onUpdatePlan={onUpdatePlan}
+              onSwapActivity={onSwapActivity}
+              onVisitedChanged={onVisitedChanged}
+              onOpenSpotDetail={(spot) => setDetailedActivity({ spot })}
+              onOpenWallet={() => setItinerarySubTab("wallet")}
+            />
+          </div>
+        )}
+
+        {itinerarySubTab === "wallet" && (
+          <div className="animate-in fade-in-20 duration-200">
+            <TravelWalletHub
+              plan={plan}
+              onShowToast={showToast}
+              onSwitchTab={(tab) => setItinerarySubTab(tab as any)}
+            />
+          </div>
         )}
 
         {itinerarySubTab === "group" && (
@@ -1039,6 +1355,20 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         />
       )}
 
+      {/* Swap Activity Modal */}
+      {swappingActivity && (
+        <SwapSpotModal
+          isOpen={true}
+          onClose={() => setSwappingActivity(null)}
+          activity={swappingActivity.activity}
+          dayNumber={swappingActivity.dayNumber}
+          plan={plan}
+          onSaveSwap={handleSaveSwap}
+          onSwapWithExisting={handleSwapWithExisting}
+          onShowToast={showToast}
+        />
+      )}
+
       {/* Edit Activity Modal */}
       {editingActivity && (
         <EditActivityModal
@@ -1099,48 +1429,53 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
               />
             </div>
 
-            <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-[#ecece4]">
+            <div className="flex items-center justify-between pt-2 border-t border-[#ecece4]">
               <button
                 type="button"
-                onClick={() => setShowReiterateModal(false)}
+                onClick={() => {
+                  setShowReiterateModal(false);
+                  handleTriggerReDo();
+                }}
                 disabled={isReiterating}
-                className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium text-[#6b6b5e] hover:text-[#2c2c24] transition-colors"
+                className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 font-serif italic text-xs hover:bg-amber-100 disabled:opacity-50 transition-colors shadow-2xs"
+                title="Regenerate all activities with fresh recommendations"
               >
-                Cancel
+                <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                <span>Re-Do Entire Plan</span>
               </button>
-              <button
-                type="button"
-                onClick={handleConfirmReiterate}
-                disabled={isReiterating}
-                className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#5A5A40] text-white font-serif italic text-sm hover:bg-[#4a4a35] disabled:opacity-50 transition-colors shadow-xs"
-              >
-                {isReiterating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Reiterating & Auto-Filling...</span>
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="w-4 h-4" />
-                    <span>Fill Empty Slots with AI</span>
-                  </>
-                )}
-              </button>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReiterateModal(false)}
+                  disabled={isReiterating}
+                  className="px-4 py-2.5 rounded-xl text-xs sm:text-sm font-medium text-[#6b6b5e] hover:text-[#2c2c24] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmReiterate}
+                  disabled={isReiterating}
+                  className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-[#5A5A40] text-white font-serif italic text-sm hover:bg-[#4a4a35] disabled:opacity-50 transition-colors shadow-xs"
+                >
+                  {isReiterating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Reiterating & Auto-Filling...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4" />
+                      <span>Fill Empty Slots with AI</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Pocket Guide Navigator & Rainy Swap Widget */}
-      <LiveNavigatorBar
-        plan={plan}
-        activeDayNumber={activeDayNumber}
-        onSelectSpot={(spot) => setSelectedSpotId(spot.id)}
-        onSwapForIndoor={(activity, dayNum) =>
-          onSwapActivity(activity, dayNum, { isIndoorOnly: true })
-        }
-        destinationOrTown={plan.destinationOrTown}
-      />
 
       {/* Feature 1: Offline Pocket Companion Modal */}
       <OfflinePocketModal
@@ -1156,6 +1491,7 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         isOpen={showCollabModal}
         onClose={() => setShowCollabModal(false)}
         onShowToast={showToast}
+        initialTab={collabInitialTab}
       />
 
       {/* Feature 3: Live Schedule Adjuster & Delay Recalibration Modal */}
@@ -1167,6 +1503,55 @@ export const ItineraryDisplay: React.FC<ItineraryDisplayProps> = ({
         onApplyUpdatedDay={handleApplyAdjustedDay}
         onShowToast={showToast}
       />
+
+      {/* Feature 4: Smart Route & Multi-Modal Transit Optimizer Modal */}
+      {showRouteOptimizerModal && (
+        <RouteOptimizerModal
+          isOpen={showRouteOptimizerModal}
+          onClose={() => setShowRouteOptimizerModal(false)}
+          dayNumber={optimizingDayNumber}
+          activities={
+            plan.days.find((d) => d.dayNumber === optimizingDayNumber)?.activities || []
+          }
+          initialTransportMode={plan.mode === "vacation" ? "public_transit" : "public_transit"}
+          onApplyOptimizedRoute={(newActs) => {
+            handleApplyOptimizedDayActivities(optimizingDayNumber, newActs);
+          }}
+        />
+      )}
+
+      {/* Identify Member Modal for Shared Trips */}
+      <IdentifyMemberModal
+        plan={plan}
+        isOpen={showIdentifyModal}
+        onClose={() => setShowIdentifyModal(false)}
+        onSuccess={(claimedName) => {
+          showToast(`Successfully claimed identity as ${claimedName}!`, "success");
+        }}
+      />
+
+      {/* Publish Trip to Explore Modal */}
+      <PublishTripModal
+        trip={plan}
+        isOpen={isPublishModalOpen}
+        onClose={() => setIsPublishModalOpen(false)}
+        onShowToast={(msg, type) => showToast(msg, type || "success")}
+      />
+
+      {/* Publish Single Activity to Explore Modal */}
+      {publishingActivity && (
+        <PublishSpotModal
+          isOpen={Boolean(publishingActivity)}
+          onClose={() => setPublishingActivity(null)}
+          defaultCity={plan.destinationOrTown}
+          initialActivity={publishingActivity.activity}
+          onPublished={() => {
+            setPublishingActivity(null);
+            showToast("Activity successfully published to Community Explore!", "success");
+          }}
+          onShowToast={(msg, type) => showToast(msg, type || "success")}
+        />
+      )}
 
       {/* Floating Toast Notification */}
       {toastMessage && (

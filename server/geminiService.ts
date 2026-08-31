@@ -14,8 +14,12 @@ import {
   ActivityDeepDetails,
   SubSpotPin,
   AnecdoteItem,
+  AccommodationDetails,
+  WeatherForecastData,
+  TransportMode,
 } from "../src/types.js";
 import { geocodeSpot, resolveActivityCoordinates, enrichActivitiesWithDynamicAI } from "./geocoder.js";
+import { executeAICompletion } from "./aiExecutor.js";
 import { getRealPhotosForSpot } from "./photoService.js";
 import {
   getCuratedPhotosForSpot,
@@ -26,6 +30,8 @@ import {
   getKnownSpotCoordinates,
 } from "../src/utils/destinations.js";
 import { normalizeTimeSlot, parseTimeToHours, formatHoursTo12 } from "../src/utils/time.js";
+import { fetchMultiDayForecast } from "../src/utils/weather.js";
+import { optimizeDayRoute } from "../src/utils/routeOptimizer.js";
 
 function parseTimeInterval(timeStr: string): { start: number; end: number } {
   if (!timeStr) return { start: 9.0, end: 10.5 };
@@ -110,14 +116,14 @@ export function deoverlapDayActivities(
 
 // ---------------------------------------------------------------------------
 // Gemini model configuration.
-// Model IDs are validated against the Gemini API catalog:
-//  - gemini-3.5-flash is the primary and creative model.
-//  - gemini-3.5-flash-lite is the resilient fallback and tertiary model.
+// Model IDs are validated against the active Gemini API catalog:
+//  - gemini-3.6-flash is the primary fast text model.
+//  - gemini-3.5-flash-lite is a resilient fallback.
 // Override via env if needed.
 // ---------------------------------------------------------------------------
-const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.5-flash";
+const PRIMARY_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.6-flash";
 const FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.5-flash-lite";
-const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-3.5-flash";
+const CREATIVE_MODEL = process.env.GEMINI_CREATIVE_MODEL || "gemini-3.6-flash";
 const TERTIARY_TEXT_MODEL = "gemini-3.5-flash-lite";
 
 // Lazy-initialized Gemini client
@@ -176,6 +182,112 @@ const CONTEXT_AWARE_DINING_RULES = `CONTEXT-AWARE DINING PAIRING: Every bar/caf�
 - Morning slots → coffee/bakery-style stops aligned with their drink preferences.
 - Evening slots → aligned with their preferred drinks (wine bar vs cocktails vs craft beer vs cider).
 Never suggest a dining venue in isolation from the day's flow.`;
+
+export interface ContextAndLogisticsParams {
+  destination: string;
+  startDate?: string;
+  durationDays?: number;
+  accommodation?: AccommodationDetails;
+  accommodations?: AccommodationDetails[];
+  weatherForecast?: WeatherForecastData;
+  transportModes?: (TransportMode | string)[];
+  transportMode?: TransportMode | string;
+  arrivalHour?: string;
+  departureHour?: string;
+}
+
+export function buildContextAndLogisticsPromptInstructions(params: ContextAndLogisticsParams): string {
+  const parts: string[] = [];
+
+  // 1. ACCOMMODATION ANCHOR
+  const acc = params.accommodation || (params.accommodations && params.accommodations[0]);
+  if (acc && (acc.name || acc.location || acc.address)) {
+    const accName = acc.name || "Selected Accommodation";
+    const locStr = acc.address || acc.location;
+    const accAddr = locStr ? ` (${locStr})` : "";
+    const checkIn = acc.checkInHour ? ` | Check-in: ${acc.checkInHour}` : "";
+    const checkOut = acc.checkOutHour ? ` | Check-out: ${acc.checkOutHour}` : "";
+    const notes = acc.notes ? `\n- Accommodation Notes: ${acc.notes}` : "";
+
+    parts.push(`1. ACCOMMODATION ANCHOR & BASE HUB:
+   - Lodging Name: ${accName}${accAddr}${checkIn}${checkOut}${notes}
+   - DAY 1 START: Activities on Day 1 MUST start AFTER arrival/check-in time at ${accName} (or incorporate a bag drop / check-in stop).
+   - DAILY START ANCHOR: Every full day MUST originate from ${accName} in the morning.
+   - DAILY END ANCHOR: The final evening activity or dining spot of every day MUST be in reasonable geographic proximity to ${accName} or naturally lead back to it.`);
+  } else {
+    parts.push(`1. ACCOMMODATION ANCHOR & BASE HUB:
+   - No specific accommodation provided. Treat a central hotel/lodging in ${params.destination} as the mandatory morning start location and night return point for all days.`);
+  }
+
+  // 2. TRIP DATES & CALENDAR SENSITIVITY
+  if (params.startDate && params.startDate.trim().length > 0) {
+    const daysCount = params.durationDays || 3;
+    const dateList: string[] = [];
+    try {
+      const start = new Date(params.startDate);
+      for (let i = 0; i < daysCount; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        const dayName = d.toLocaleDateString("en-US", { weekday: "long" });
+        const dateStr = d.toISOString().split("T")[0];
+        dateList.push(`Day ${i + 1}: ${dayName} (${dateStr})`);
+      }
+    } catch (e) {
+      dateList.push(`Start Date: ${params.startDate}`);
+    }
+
+    parts.push(`2. TRIP DATES & CALENDAR SENSITIVITY:
+   - Trip Start Date: ${params.startDate}
+   - Day-by-Day Schedule:
+     ${dateList.join("\n     ")}
+   - VENUE CLOSURE GUARD: Calculate exact day of the week for every day. Verify venue opening schedules. DO NOT propose museums, castles, galleries, or attractions on days when they are traditionally closed (e.g. many European art galleries/museums are closed on Mondays; churches restrict tourist visits on Sunday morning).
+   - EVENT & MARKET ALIGNMENT: Prioritize local weekly markets or traditional market days (e.g. Wednesday morning market, Saturday artisan market) that occur specifically on these calendar dates.`);
+  }
+
+  // 3. WEATHER FORECAST AT TRIP DATES
+  if (params.weatherForecast && params.weatherForecast.dailyForecast && params.weatherForecast.dailyForecast.length > 0) {
+    const wf = params.weatherForecast;
+    const dailySummaries = wf.dailyForecast.map((d) => 
+      `Day ${d.dayNumber} (${d.dateStr || d.dayOfWeek}): ${d.condition}, High ${d.tempHighC}°C / Low ${d.tempLowC}°C, Rain Prob: ${d.precipitationChance}%, UV: ${d.uvIndex || 5}/10. ${d.activityTip || ""}`
+    ).join("\n     ");
+
+    parts.push(`3. WEATHER AT TRIP DATES & CLIMATE ADAPTATION:
+   - Destination Forecast Summary: ${wf.summary}
+   ${wf.seasonalityWarnings && wf.seasonalityWarnings.length > 0 ? `- Seasonality Warnings: ${wf.seasonalityWarnings.join("; ")}` : ""}
+   - Day-by-Day Forecast:
+     ${dailySummaries}
+   - RAIN & STORM RULE: On any day with >35% precipitation probability, outdoor activities (beaches, mountain hikes, open boat tours) MUST be replaced with covered or indoor alternatives (museums, food halls, wine cellars, thermal spas, historic cathedrals, art galleries).
+   - PEAK HEAT / UV RULE: On days with high temperatures or UV index >= 6, schedule intensive outdoor walking/hiking for early morning or golden hour, reserving mid-day (12:00 PM - 03:30 PM) for indoor dining, shaded parks, or air-conditioned venues.`);
+  }
+
+  // 4. LOGISTICS & STRICT TRANSPORT CONTINUITY
+  const rawModes = params.transportModes && params.transportModes.length > 0
+    ? params.transportModes
+    : (params.transportMode ? [params.transportMode] : ["public_transit"]);
+  const modes = Array.from(new Set(rawModes.map((m) => String(m))));
+  const isWalkingOnly = modes.length === 1 && modes[0] === "walking";
+
+  parts.push(`4. STRICT TRANSPORT LOGISTICS & VEHICLE CONTINUITY (CRITICAL LOGISTICS ENGINE):
+   - Transport Modes Available: [${modes.join(", ")}]${isWalkingOnly ? `
+   - STRICT EXCLUSIVE "WALKING / ON FOOT" CONSTRAINT (ABSOLUTE MANDATE):
+     * The traveler explicitly selected ONLY "walking".
+     * PUBLIC TRANSIT (BUSES, TRAINS, METROS), CARS, TAXIS, AND BOATS ARE STRICTLY FORBIDDEN.
+     * Every single activity and transit connection MUST be completed entirely on foot.
+     * GEOGRAPHIC BOUNDARY: Do NOT schedule spots in neighboring municipalities or distant outskirts (e.g. if in San Sebastián / Donostia, do NOT schedule spots in Pasaia, Hondarribia, Astigarraga, or distant mountain ranges) because walking round-trip to another municipality takes multiple hours and requires bus/train.
+     * Keep all recommendations strictly within realistic, continuous pedestrian loops (<3.5 km radius) from the starting point and returning to the end point.` : ""}
+   - VEHICLE INHERITANCE CONTINUITY (ABSOLUTE MANDATE):
+     * CAR INHERITANCE: If the traveler uses a PERSONAL or RENTAL CAR to travel from Point A to Point B, the car is physically parked at Point B.
+     * FORBIDDEN SWITCH: The traveler CANNOT take public transit, a taxi, a train, or a bicycle for the next leg (Point B ➔ Point C) leaving their car behind, UNLESS the route explicitly brings them BACK to Point A (or accommodation parking) first!
+     * REQUIRED: All subsequent transfers during that excursion or out-of-town leg MUST use "drive" or short "walk" (from the parked vehicle).
+     * LOGICAL RETURN: If a day trip or excursion is taken by car, the return leg to the accommodation MUST be by car ("drive"). IF THE TRAVELER WENT BY CAR, THEY MUST COME BACK BY CAR!
+   - GEOGRAPHIC SEQUENCING & ZERO BACKTRACKING:
+     * Activities within each day MUST form a smooth, logical spatial corridor (Accommodation ➔ Spot 1 ➔ Spot 2 ➔ Spot 3 ➔ Accommodation).
+     * NEVER propose a "ping-pong" order (e.g. North town ➔ South town ➔ North town). Group neighboring activities together in a single continuous route.
+   - ACCURATE TRANSIT OBJECTS:
+     * Provide realistic transit details between consecutive spots with duration, distance, and transit mode strictly matching the current vehicle location and available transport modes.`);
+
+  return parts.join("\n\n");
+}
 
 // Coordinate & Destination Knowledge Base
 const DESTINATION_COORDINATES: Record<string, { lat: number; lng: number; country: string }> = {
@@ -1189,6 +1301,18 @@ export async function enforceVacationConstraintsAndPhotos(
     // High-precision dynamic AI geocoding pass for all venues in the day's destination
     await enrichActivitiesWithDynamicAI(day.activities, dayDest);
 
+    // Automatic Day Route & Transit Optimization Pass
+    if (day.activities.length >= 3) {
+      const primaryTransport = (prefs.transportModes && prefs.transportModes[0]) || prefs.transportMode || "public_transit";
+      const optResult = optimizeDayRoute(day.activities, {
+        transportMode: primaryTransport,
+        preserveMealTimes: true,
+      });
+      if (optResult.isImproved && optResult.orderedActivities.length === day.activities.length) {
+        day.activities = optResult.orderedActivities;
+      }
+    }
+
     // Sort activities strictly chronologically by start time
     day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
 
@@ -1248,10 +1372,21 @@ export async function enforceVacationConstraintsAndPhotos(
     }
   }
 
+  const startDate = prefs.startDate || plan.startDate;
+  const weatherForecast = await fetchMultiDayForecast(
+    plan.mapCenter?.lat || 43.3183,
+    plan.mapCenter?.lng || -1.9812,
+    dest,
+    requestedDays,
+    startDate
+  );
+
   return {
     ...plan,
-    title: `${requestedDays}-Day ${dest} ${prefs.vibes.length ? prefs.vibes.join(" & ") : "Cultural"} Journey`,
+    title: `${requestedDays}-Day ${dest} ${prefs.vibes && prefs.vibes.length ? prefs.vibes.join(" & ") : "Cultural"} Journey`,
     totalDays: requestedDays,
+    startDate,
+    weatherForecast,
     days: updatedDays,
     tags: prefs.vibes && prefs.vibes.length > 0 ? prefs.vibes : plan.tags,
     customPace: prefs.pace || plan.customPace,
@@ -1265,6 +1400,28 @@ export async function generateVacationItinerary(prefs: VacationPreferences): Pro
   const ai = getAiClient();
   const daysCount = Math.min(Math.max(Number(prefs.duration) || 3, 1), 30);
   const baseCoords = lookupKnownCoordinates(prefs.destination);
+
+  // Fetch or resolve weather forecast if not present
+  const weatherForecast = prefs.weatherForecast || await fetchMultiDayForecast(
+    baseCoords.lat,
+    baseCoords.lng,
+    prefs.destination,
+    daysCount,
+    prefs.startDate
+  );
+
+  const logisticsDirectives = buildContextAndLogisticsPromptInstructions({
+    destination: prefs.destination,
+    startDate: prefs.startDate,
+    durationDays: daysCount,
+    accommodation: prefs.accommodation,
+    accommodations: prefs.accommodations,
+    weatherForecast,
+    transportModes: prefs.transportModes,
+    transportMode: prefs.transportMode,
+    arrivalHour: prefs.arrivalHour,
+    departureHour: prefs.departureHour,
+  });
 
   const paceDescription =
     prefs.pace === "relaxed"
@@ -1300,6 +1457,12 @@ export async function generateVacationItinerary(prefs: VacationPreferences): Pro
     skippedSpotsInstruction = `\n- USER SWIPER REJECTED SPOTS MANDATE: The user explicitly swiped LEFT / REJECTED / SKIPPED these places in the candidate swiper: [${prefs.skippedSpots.map(s => s.name).join(", ")}]. YOU ARE STRICTLY FORBIDDEN FROM INCLUDING ANY OF THESE SKIPPED SPOTS OR THEIR DIRECT EQUIVALENTS ANYWHERE IN THE ITINERARY OR ALTERNATIVES!`;
   }
 
+  // User manually requested spots to visit
+  let manualSpotsInstruction = "";
+  if (prefs.manualCustomSpots && prefs.manualCustomSpots.length > 0) {
+    manualSpotsInstruction = `\n- USER MANDATORY CUSTOM SPOTS / ATTRACTIONS TO VISIT: The user explicitly requested to visit the following specific places/spots: [${prefs.manualCustomSpots.map(s => `${s.name}${s.category ? ` (${s.category})` : ""}${s.location ? ` in ${s.location}` : ""}${s.notes ? ` - ${s.notes}` : ""}`).join("; ")}]. YOU MUST INCLUDE AND SCHEDULE ALL OF THESE REQUESTED SPOTS into the appropriate days of the itinerary! Geographically integrate them logically with surrounding activities.`;
+  }
+
   const paceTarget = prefs.pace === "relaxed"
     ? "EXACTLY 3 to 4 well-spaced activities"
     : prefs.pace === "action-packed"
@@ -1322,7 +1485,10 @@ export async function generateVacationItinerary(prefs: VacationPreferences): Pro
     transportNotes.push("PRIVATE / RENTAL CAR AVAILABLE: Highly encourage scenic coastal drives, elevated mountain lookouts, and regional day trip excursions to surrounding towns & villages within 20-60km (e.g. Getaria, Hondarribia, Zarautz, Pasaia, Tolosa)!");
   }
   if (modes.includes("public_transit")) {
-    transportNotes.push("PUBLIC TRANSIT & WALKING: Group urban spots into walkable neighborhood clusters or along direct bus/train corridors.");
+    transportNotes.push("PUBLIC TRANSIT: Group urban spots along direct bus, metro, tram, or train corridors.");
+  }
+  if (modes.includes("walking")) {
+    transportNotes.push("WALKING / ON FOOT ONLY: Design the route exclusively on foot! Every activity spot MUST be within short, comfortable walking distance of each other (typically under 1.5 - 2 km apart) along scenic pedestrian streets, neighborhood alleys, or park paths.");
   }
   if (modes.includes("bicycle")) {
     transportNotes.push("BICYCLE / E-BIKE: Include bike-friendly greenways, seaside promenade paths, and scenic urban cycle routes.");
@@ -1337,6 +1503,7 @@ export async function generateVacationItinerary(prefs: VacationPreferences): Pro
   if (prefs.vibes && prefs.vibes.length > 0) {
     vibesInstruction = `\n- TRAVEL VIBES & INTERESTS MANDATE: The traveler explicitly selected these vibes: [${prefs.vibes.join(", ")}].
 At least 70% of scheduled activities MUST directly reflect these selected vibes!
+* If 'Beaches & Swim Spots' is selected: prioritize iconic sand beaches, natural swim coves, tide pools, seaside promenades, oceanfront decks, and coastal swim spots!
 * If 'Regional Excursions & Viewpoints' is selected: prioritize day trips to scenic surrounding towns/villages, coastal drives, high pacing, panoramic lookouts, and viewpoints. Reduce time spent in slow museums/sit-down dining!
 * If 'Shopping & Local Boutiques' is selected: prioritize premier shopping avenues, fashion districts, local artisan boutiques, markets, and craft shops.
 * If 'Scenic & Outdoors' is selected: prioritize coastal promenades, cliff walks, viewpoints, nature trails, and beaches.
@@ -1351,6 +1518,10 @@ At least 70% of scheduled activities MUST directly reflect these selected vibes!
   let durationInstruction = `\n- TRIP DURATION MANDATE: The requested trip duration is STRICTLY ${daysCount} days. You MUST output EXACTLY ${daysCount} objects in the "days" array (Day 1 through Day ${daysCount}).`;
 
   const systemInstruction = `You are LocalExplorer AI, an elite travel curator and local cultural insider.
+
+=== MANDATORY CONTEXT, ACCOMMODATION & STRICT TRANSPORT LOGISTICS ===
+${logisticsDirectives}
+
 CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
 1. STRICT MULTI-DAY DEDUPLICATION: NEVER repeat the same activity, landmark, or excursion town (e.g. Hondarribia, Getaria, or Pasaia) across different days! Every single day in the itinerary must feature completely unique, non-repeating attractions and establishments. An excursion to a neighboring town like Hondarribia, Getaria, or Pasaia can ONLY happen ONCE in the entire multi-day trip.
 2. GEOGRAPHIC CLUSTERING & REGIONAL EXCURSION TIME ALLOCATION:
@@ -1367,21 +1538,21 @@ CRITICAL ACCURACY, SPECIFICITY & LOGISTICS RULES:
    * EVENING SLOTS (~07:30 PM - 10:30 PM) MUST STRICTLY be reserved for evening-appropriate experiences: sit-down dinners, pintxo/tapas crawls, wine & cocktail lounges, illuminated old town strolls, sunset lookout points with a drink, or evening acoustic music.
 4. ALWAYS provide EXACT, REAL, NAMED ESTABLISHMENTS, historic landmarks, and specific venues with real names. NEVER give generic descriptions.
 5. GEOGRAPHIC COORDINATES ACCURACY: You MUST provide real-world latitude and longitude for ${prefs.destination}.
-6. MULTIPLE CHOICE OPTIONS: For EACH scheduled activity slot, provide 1-2 curated "alternativeOptions" with full details (name, category, description, insiderTip, approxCost, coordinates) so the user can easily toggle between options!
-7. ACTIONABLE INSIDER TIPS: Write high-value, precise insider tips.
-8. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 03:30 PM -> Evening 07:30 PM). NEVER place an evening activity before a morning activity.
-9. SCHEDULE TIME AWARENESS: ${timeScheduleInstructions}
+6. ACTIONABLE INSIDER TIPS: Write high-value, precise insider tips.
+7. STRICT CHRONOLOGICAL ORDER MANDATE: All activities within each day MUST be listed in strict ascending chronological order by start time (e.g., Morning 09:00 AM -> Midday 12:30 PM -> Afternoon 03:30 PM -> Evening 07:30 PM). NEVER place an evening activity before a morning activity.
+8. SCHEDULE TIME AWARENESS: ${timeScheduleInstructions}
 9. ${durationInstruction}
 10. ${paceInstruction}
 11. ${vibesInstruction}
 12. ${transportInstruction}
 13. ${skippedSpotsInstruction}
 14. ${likedSpotsInstruction}
+15. ${manualSpotsInstruction}
 ${(() => {
   const tasteLine = buildTasteInstruction(prefs.tasteProfile);
-  return tasteLine ? `15. TRAVELER TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
+  return tasteLine ? `16. TRAVELER TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
 })()}
-14. DINING FROM THE TRAVELER'S OWN PLACES: ${(prefs.userSpots && prefs.userSpots.length > 0)
+17. DINING FROM THE TRAVELER'S OWN PLACES: ${(prefs.userSpots && prefs.userSpots.length > 0)
     ? `the traveler provided their own favorite places: [${prefs.userSpots.map((sp) => `${sp.name} (${sp.category}${sp.town ? ", " + sp.town : ""})`).join("; ")}]. For any bar/café/restaurant slot in the destination matching their towns, prefer THESE places. `
     : ""}Bars, cafés and restaurants must be real, named, currently-operating venues (from your knowledge or search) — never generic placeholders.`;
 
@@ -1394,149 +1565,101 @@ Vibes & Interests: ${prefs.vibes.join(", ") || "Gastronomy, Culture, Scenic, Hid
 ${prefs.customNotes ? `Special Traveler Requests: ${prefs.customNotes}` : ""}
 ${likedSpotsInstruction}
 ${skippedSpotsInstruction}
+${manualSpotsInstruction}
 
-Ensure every single spot has exact coordinates in ${prefs.destination}, realistic costs, authentic insider tips, logical walking/transit logistics, zero duplicates across days, no skipped spots, and multiple choice alternatives. Output strictly valid JSON.`;
+Ensure every single spot has exact coordinates in ${prefs.destination}, realistic costs, authentic insider tips, logical walking/transit logistics, and zero duplicates across days. Output strictly valid JSON.`;
 
-  if (!ai) {
-    console.warn("GEMINI_API_KEY not configured. Generating curated rich vacation plan.");
-    return generateFallbackVacation(prefs);
-  }
-
-  const generateWithModel = async (modelName: string) => {
-    return await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      destinationOrTown: { type: Type.STRING },
+      summary: { type: Type.STRING },
+      highlights: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+      },
+      mapCenter: {
+        type: Type.OBJECT,
+        properties: {
+          lat: { type: Type.NUMBER },
+          lng: { type: Type.NUMBER },
+        },
+        required: ["lat", "lng"],
+      },
+      mapZoom: { type: Type.NUMBER },
+      weatherSummary: { type: Type.STRING },
+      days: {
+        type: Type.ARRAY,
+        items: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING },
-            destinationOrTown: { type: Type.STRING },
+            dayNumber: { type: Type.INTEGER },
+            dayTitle: { type: Type.STRING },
+            theme: { type: Type.STRING },
             summary: { type: Type.STRING },
-            highlights: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-            },
-            mapCenter: {
-              type: Type.OBJECT,
-              properties: {
-                lat: { type: Type.NUMBER },
-                lng: { type: Type.NUMBER },
-              },
-              required: ["lat", "lng"],
-            },
-            mapZoom: { type: Type.NUMBER },
-            weatherSummary: { type: Type.STRING },
-            days: {
+            estimatedTotalBudget: { type: Type.STRING },
+            destinationName: { type: Type.STRING },
+            activities: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  dayNumber: { type: Type.INTEGER },
-                  dayTitle: { type: Type.STRING },
-                  theme: { type: Type.STRING },
-                  summary: { type: Type.STRING },
-                  estimatedTotalBudget: { type: Type.STRING },
-                  destinationName: { type: Type.STRING },
-                  activities: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        id: { type: Type.STRING },
-                        time: { type: Type.STRING },
-                        name: { type: Type.STRING },
-                        category: {
-                          type: Type.STRING,
-                          description: "food, nature, culture, sightseeing, hidden-gem, shopping, relaxation, nightlife, cafe",
-                        },
-                        description: { type: Type.STRING },
-                        insiderTip: { type: Type.STRING },
-                        approxCost: { type: Type.STRING },
-                        rating: { type: Type.NUMBER },
-                        coordinates: {
-                          type: Type.OBJECT,
-                          properties: {
-                            lat: { type: Type.NUMBER },
-                            lng: { type: Type.NUMBER },
-                          },
-                          required: ["lat", "lng"],
-                        },
-                        address: { type: Type.STRING },
-                        durationMinutes: { type: Type.INTEGER },
-                        alternativeOptions: {
-                          type: Type.ARRAY,
-                          items: {
-                            type: Type.OBJECT,
-                            properties: {
-                              id: { type: Type.STRING },
-                              time: { type: Type.STRING },
-                              name: { type: Type.STRING },
-                              category: { type: Type.STRING },
-                              description: { type: Type.STRING },
-                              insiderTip: { type: Type.STRING },
-                              approxCost: { type: Type.STRING },
-                              rating: { type: Type.NUMBER },
-                              coordinates: {
-                                type: Type.OBJECT,
-                                properties: {
-                                  lat: { type: Type.NUMBER },
-                                  lng: { type: Type.NUMBER },
-                                },
-                                required: ["lat", "lng"],
-                              },
-                              address: { type: Type.STRING },
-                            },
-                            required: ["id", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
-                          },
-                        },
-                      },
-                      required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
-                    },
+                  id: { type: Type.STRING },
+                  time: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  category: {
+                    type: Type.STRING,
+                    description: "food, nature, culture, sightseeing, hidden-gem, shopping, relaxation, nightlife, cafe",
                   },
+                  description: { type: Type.STRING },
+                  insiderTip: { type: Type.STRING },
+                  approxCost: { type: Type.STRING },
+                  rating: { type: Type.NUMBER },
+                  coordinates: {
+                    type: Type.OBJECT,
+                    properties: {
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                    },
+                    required: ["lat", "lng"],
+                  },
+                  address: { type: Type.STRING },
+                  durationMinutes: { type: Type.INTEGER },
                 },
-                required: ["dayNumber", "dayTitle", "theme", "summary", "activities"],
+                required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
               },
             },
           },
-          required: ["title", "destinationOrTown", "summary", "highlights", "mapCenter", "days"],
+          required: ["dayNumber", "dayTitle", "theme", "summary", "activities"],
         },
       },
-    });
+    },
+    required: ["title", "destinationOrTown", "summary", "highlights", "mapCenter", "days"],
   };
 
   try {
-    let response;
-    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
-    let lastError: any = null;
-    let parsed: any = null;
+    const { data: parsed, meta: generationMeta } = await executeAICompletion<any>({
+      aiSettings: prefs.aiSettings,
+      taskCategory: "itinerary",
+      prompt,
+      systemInstruction,
+      responseSchema,
+      fallbackGenerator: () => generateFallbackVacation(prefs),
+    });
 
-    for (const modelName of modelsToTry) {
-      try {
-        response = await generateWithModel(modelName);
-        const text = response.text;
-        if (text) {
-          parsed = JSON.parse(text);
-          if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
-            break;
-          }
-        }
-      } catch (err) {
-        console.warn(`Vacation model ${modelName} failed:`, (err as any)?.message || err);
-        lastError = err;
-      }
+    const daysArray = parsed?.days || parsed?.itinerary?.days || parsed?.plan?.days || parsed?.data?.days;
+    if (Array.isArray(daysArray) && daysArray.length > 0) {
+      parsed.days = daysArray;
     }
 
     if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
-      throw lastError || new Error("All Gemini models failed for vacation itinerary");
+      console.warn("[generateVacationItinerary] AI response missing days array, loading fallback");
+      const fallback = await generateFallbackVacation(prefs);
+      fallback.generationMeta = generationMeta;
+      return fallback;
     }
 
-    // Shape validation: never ship a plan without usable days/activities
-    if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
-      throw new Error("Gemini response missing days array");
-    }
     parsed.days.forEach((day: any) => {
       if (!Array.isArray(day.activities)) day.activities = [];
     });
@@ -1559,12 +1682,25 @@ Ensure every single spot has exact coordinates in ${prefs.destination}, realisti
       destinations: prefs.destinations,
       arrivalHour: prefs.arrivalHour,
       departureHour: prefs.departureHour,
+      generationMeta,
     };
 
-    return await enforceVacationConstraintsAndPhotos(rawPlan, prefs);
+    const finalPlan = await enforceVacationConstraintsAndPhotos(rawPlan, prefs);
+    finalPlan.generationMeta = generationMeta;
+    return finalPlan;
   } catch (error) {
-    console.error("Error generating vacation itinerary with Gemini:", error);
-    return generateFallbackVacation(prefs);
+    console.error("Error generating vacation itinerary with AI Executor:", error);
+    const fallback = await generateFallbackVacation(prefs);
+    fallback.generationMeta = {
+      usedModelId: "offline-fallback",
+      usedModelName: "Curated Engine (Offline Fallback)",
+      usedProvider: "system_gemini",
+      isFallbackUsed: true,
+      attemptedModels: [],
+      hasWarnings: true,
+      warnings: [`Generation failed: ${(error as any)?.message || error}. Loaded offline fallback.`],
+    };
+    return fallback;
   }
 }
 
@@ -1576,6 +1712,10 @@ export interface ReiterateExtraContext {
   transportModes?: string[];
   arrivalHour?: string;
   departureHour?: string;
+  accommodation?: AccommodationDetails;
+  accommodations?: AccommodationDetails[];
+  startDate?: string;
+  weatherForecast?: WeatherForecastData;
 }
 
 export async function reiterateItineraryPlan(
@@ -1586,16 +1726,40 @@ export async function reiterateItineraryPlan(
   const ai = getAiClient();
   const dest = existingPlan.destinationOrTown;
   const daysCount = existingPlan.totalDays || existingPlan.days.length;
+  const baseCoords = existingPlan.mapCenter || lookupKnownCoordinates(dest);
 
   const arrHour = extraContext?.arrivalHour || existingPlan.arrivalHour;
   const depHour = extraContext?.departureHour || existingPlan.departureHour;
+  const startDate = extraContext?.startDate || existingPlan.startDate;
+  const accommodation = extraContext?.accommodation || existingPlan.accommodation;
+  const accommodations = extraContext?.accommodations || existingPlan.accommodations;
+  const transportModes = extraContext?.transportModes || existingPlan.transportModes || [];
+
+  const weatherForecast = extraContext?.weatherForecast || existingPlan.weatherForecast || await fetchMultiDayForecast(
+    baseCoords.lat,
+    baseCoords.lng,
+    dest,
+    daysCount,
+    startDate
+  );
+
+  const logisticsDirectives = buildContextAndLogisticsPromptInstructions({
+    destination: dest,
+    startDate,
+    durationDays: daysCount,
+    accommodation,
+    accommodations,
+    weatherForecast,
+    transportModes,
+    arrivalHour: arrHour,
+    departureHour: depHour,
+  });
 
   const lockedNamesAllDays = existingPlan.days.flatMap((d) => d.activities.map((a) => a.name));
   const excludedPlaces = extraContext?.excludedPlaces || [];
   const permanentSkips = extraContext?.permanentSkips || [];
   const tasteProfile = extraContext?.tasteProfile;
   const userSpots = extraContext?.userSpots || [];
-  const transportModes = extraContext?.transportModes || existingPlan.transportModes || [];
 
   const allBlacklistRaw = Array.from(
     new Set([
@@ -1628,6 +1792,9 @@ export async function reiterateItineraryPlan(
 
   const systemInstruction = `You are LocalExplorer AI, an expert travel curator and local insider.
 The user has customized their travel itinerary for ${dest}. They have adjusted, deleted, or allocated extra time to specific activities, creating empty schedule slots that now need to be filled with new, complementary activities.
+
+=== MANDATORY CONTEXT, ACCOMMODATION & STRICT TRANSPORT LOGISTICS ===
+${logisticsDirectives}
 
 CRITICAL MANDATES FOR REITERATION & AUTO-FILL:
 1. PRESERVE LOCKED ACTIVITIES (ABSOLUTE COMPULSORY MANDATE):
@@ -1758,7 +1925,7 @@ Ensure all locked activities remain 100% intact while open slots are seamlessly 
         });
 
         if (response.text) {
-          parsed = JSON.parse(response.text);
+          parsed = repairAndParseJson(response.text);
           if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
             break;
           }
@@ -1839,23 +2006,104 @@ Ensure all locked activities remain 100% intact while open slots are seamlessly 
   return await enforceVacationConstraintsAndPhotos(rawPlan, prefs, { isReiteration: true });
 }
 
-function cleanAndParseJson<T>(text: string): T {
+function repairAndParseJson<T>(text: string): T {
+  if (!text) return {} as T;
   let cleaned = text.trim();
   cleaned = cleaned.replace(/^```(?:json)?\s*/i, "");
   cleaned = cleaned.replace(/\s*```$/i, "");
   cleaned = cleaned.trim();
 
+  // Step 1: Direct JSON parse attempt
   try {
     return JSON.parse(cleaned);
-  } catch (err) {
-    const startIdx = cleaned.indexOf("{");
-    const endIdx = cleaned.lastIndexOf("}");
-    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-      const jsonSub = cleaned.substring(startIdx, endIdx + 1);
-      return JSON.parse(jsonSub);
-    }
-    throw err;
+  } catch {
+    // Continue
   }
+
+  // Step 2: Attempt between outer braces / brackets
+  const startObj = cleaned.indexOf("{");
+  const startArr = cleaned.indexOf("[");
+  let startIdx = -1;
+  if (startObj !== -1 && startArr !== -1) {
+    startIdx = Math.min(startObj, startArr);
+  } else if (startObj !== -1) {
+    startIdx = startObj;
+  } else if (startArr !== -1) {
+    startIdx = startArr;
+  }
+
+  if (startIdx !== -1) {
+    cleaned = cleaned.substring(startIdx);
+    const endObj = cleaned.lastIndexOf("}");
+    const endArr = cleaned.lastIndexOf("]");
+    const endIdx = Math.max(endObj, endArr);
+    if (endIdx > 0) {
+      try {
+        return JSON.parse(cleaned.substring(0, endIdx + 1));
+      } catch {
+        // Continue
+      }
+    }
+  }
+
+  // Step 3: Progressive string repair for truncated output
+  for (let len = cleaned.length; len > 0; len -= 5) {
+    let chunk = cleaned.substring(0, len);
+
+    // Track unclosed quotes and brackets/braces
+    let inString = false;
+    let escaped = false;
+    const stack: string[] = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const char = chunk[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (char === "{" || char === "[") {
+          stack.push(char);
+        } else if (char === "}") {
+          if (stack.length > 0 && stack[stack.length - 1] === "{") stack.pop();
+        } else if (char === "]") {
+          if (stack.length > 0 && stack[stack.length - 1] === "[") stack.pop();
+        }
+      }
+    }
+
+    if (inString) {
+      chunk += '"';
+    }
+
+    chunk = chunk.replace(/,\s*$/, "");
+
+    while (stack.length > 0) {
+      const open = stack.pop();
+      if (open === "{") chunk += "}";
+      else if (open === "[") chunk += "]";
+    }
+
+    try {
+      return JSON.parse(chunk);
+    } catch {
+      // Step back and try shorter slice
+    }
+  }
+
+  throw new Error(`Failed to parse or repair JSON text (length ${text.length})`);
+}
+
+function cleanAndParseJson<T>(text: string): T {
+  return repairAndParseJson<T>(text);
 }
 
 function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -1872,11 +2120,11 @@ function haversineDistanceKm(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
-function enforceHometownRadiusAndCoordinates(
+async function enforceHometownRadiusAndCoordinates(
   plan: ItineraryPlan,
   prefs: HometownPreferences,
   baseCoords: { lat: number; lng: number }
-): ItineraryPlan {
+): Promise<ItineraryPlan> {
   const verified = findVerifiedDestination(prefs.location);
   const maxRadius = prefs.radiusKm;
   const locName = verified?.name || prefs.location;
@@ -1889,6 +2137,12 @@ function enforceHometownRadiusAndCoordinates(
   const safeLocalSpots = (verified?.popularSpots || []).filter(
     (spot) => !isExcludedName(spot) && !isDiningName(spot)
   );
+
+  const rawModes = prefs.transportModes && prefs.transportModes.length > 0
+    ? prefs.transportModes
+    : (prefs.transportMode ? [prefs.transportMode] : ["walking"]);
+  const isWalkingOnly = rawModes.length === 1 && rawModes[0] === "walking";
+  const maxWalkRadius = prefs.timeAvailable === "quick" ? 2.5 : prefs.timeAvailable === "full-day" ? 4.5 : 3.5;
 
   for (const day of plan.days || []) {
     for (const [idx, act] of (day.activities || []).entries()) {
@@ -1906,19 +2160,33 @@ function enforceHometownRadiusAndCoordinates(
         !/donostia|san sebasti[aá]n/.test(locName.toLowerCase()) &&
         /donostia|san sebasti[aá]n|concha|gros|parte vieja|bilbao/.test(text);
 
+      // Check if spot is out-of-town when walking only is requested (e.g. Pasaia, San Pedro, Astigarraga)
+      const isOutOfWalkBounds = isWalkingOnly && (
+        distance > maxWalkRadius ||
+        text.includes("pasaia") ||
+        text.includes("pasai san pedro") ||
+        text.includes("pasai donibane") ||
+        text.includes("puntas de pasai") ||
+        text.includes("astigarraga") ||
+        text.includes("hernani") ||
+        text.includes("errenteria") ||
+        text.includes("hondarribia") ||
+        text.includes("zarautz")
+      );
+
       // A legitimate place just beyond the requested radius keeps its real pin.
-      // Replace only an unmistakably wrong-city result; never fabricate/jitter coordinates.
-      if (namesAnotherCity || distance > maxRadius * 2) {
+      // Replace an unmistakably wrong-city or walking-infeasible result with an authentic walkable local spot.
+      if (namesAnotherCity || distance > maxRadius * 2 || isOutOfWalkBounds) {
         const replacement = safeLocalSpots[idx % Math.max(safeLocalSpots.length, 1)];
         if (replacement) {
           act.name = replacement;
-          act.description = `Authentic local highlight in ${locName} within your ${maxRadius}km radius.`;
-          act.insiderTip = `A favorite local spot right here in ${locName}.`;
+          act.description = `Authentic, walkable local highlight in ${locName} within your ${isWalkingOnly ? maxWalkRadius + "km walking zone" : maxRadius + "km radius"}.`;
+          act.insiderTip = `A favorite local spot easily reachable on foot in ${locName}.`;
           act.coordinates = getKnownSpotCoordinates(locName, replacement) || baseCoords;
         } else {
           act.name = `${locName} Town Centre`;
-          act.description = `Explore the real town centre of ${locName}.`;
-          act.insiderTip = `Start in the centre and follow locally signposted points of interest.`;
+          act.description = `Explore the charming town centre of ${locName} on foot.`;
+          act.insiderTip = `Start in the centre and follow pedestrian promenades to explore comfortably.`;
           act.coordinates = baseCoords;
         }
       }
@@ -1927,12 +2195,201 @@ function enforceHometownRadiusAndCoordinates(
 
   plan.mapCenter = baseCoords;
   plan.destinationOrTown = locName;
+  plan.startDate = prefs.startDate || plan.startDate;
+  plan.weatherForecast = await fetchMultiDayForecast(
+    baseCoords.lat,
+    baseCoords.lng,
+    locName,
+    plan.totalDays || 1,
+    plan.startDate
+  );
+  return plan;
+}
+
+function toTransitMode(mode?: TransportMode | string): 'walk' | 'transit' | 'drive' | 'funicular' | 'boat' | 'taxi' | 'bicycle' {
+  if (mode === 'walking' || mode === 'walk') return 'walk';
+  if (mode === 'car' || mode === 'drive') return 'drive';
+  if (mode === 'public_transit' || mode === 'transit') return 'transit';
+  if (mode === 'taxi') return 'taxi';
+  if (mode === 'bicycle') return 'bicycle';
+  if (mode === 'funicular') return 'funicular';
+  if (mode === 'boat') return 'boat';
+  return 'walk';
+}
+
+export function enforceScheduleFeasibility(
+  plan: ItineraryPlan,
+  prefs: {
+    startTime?: string;
+    endTime?: string;
+    startLocation?: string;
+    endLocation?: string;
+    location?: string;
+    transportModes?: TransportMode[];
+    transportMode?: TransportMode;
+    startLocationCoordinates?: { lat: number; lng: number };
+    endLocationCoordinates?: { lat: number; lng: number };
+  }
+): ItineraryPlan {
+  if (!plan || !Array.isArray(plan.days)) return plan;
+
+  const startMins = prefs.startTime ? Math.round(parseTimeToHours(prefs.startTime) * 60) : null;
+  const endMins = prefs.endTime ? Math.round(parseTimeToHours(prefs.endTime) * 60) : null;
+  const returnLocName = prefs.endLocation || prefs.location || "destination";
+  const rawModes: TransportMode[] = prefs.transportModes && prefs.transportModes.length > 0
+    ? prefs.transportModes
+    : (prefs.transportMode ? [prefs.transportMode] : ["walking"]);
+  const isWalkingOnly = rawModes.length === 1 && rawModes[0] === "walking";
+
+  const returnCoords = prefs.endLocationCoordinates ||
+    (prefs.endLocation ? lookupKnownCoordinates(prefs.endLocation) : lookupKnownCoordinates(prefs.location || ""));
+
+  for (const day of plan.days) {
+    if (!Array.isArray(day.activities) || day.activities.length === 0) continue;
+
+    // Filter out activities that start AT or AFTER endMins (if endMins specified)
+    if (endMins !== null) {
+      day.activities = day.activities.filter((act) => {
+        const actStart = Math.round(parseTimeToHours(act.time) * 60);
+        return actStart < endMins - 5;
+      });
+    }
+
+    if (day.activities.length === 0) continue;
+
+    let cursorMins = startMins !== null ? startMins : Math.round(parseTimeToHours(day.activities[0].time) * 60);
+    const totalActs = day.activities.length;
+
+    for (let idx = 0; idx < day.activities.length; idx++) {
+      const act = day.activities[idx];
+      const isLast = idx === totalActs - 1;
+
+      let proposedStart = Math.round(parseTimeToHours(act.time) * 60);
+      let actStart = Math.max(cursorMins, proposedStart);
+
+      if (endMins !== null && actStart >= endMins - 10) {
+        actStart = Math.max(startMins || 540, endMins - 25);
+      }
+
+      let duration = act.durationMinutes || 45;
+      const actNameLower = (act.name || "").toLowerCase();
+      const actDescLower = (act.description || "").toLowerCase();
+
+      const isWalkOrHikeRoute =
+        actNameLower.includes("walk") ||
+        actNameLower.includes("promenade") ||
+        actNameLower.includes("paseo") ||
+        actNameLower.includes("trail") ||
+        actNameLower.includes("hike") ||
+        actNameLower.includes("lookout") ||
+        actNameLower.includes("viewpoint") ||
+        actNameLower.includes("fuerte") ||
+        actNameLower.includes("monte") ||
+        actDescLower.includes("coastal walk") ||
+        actDescLower.includes("stroll") ||
+        actDescLower.includes("hike");
+
+      // Realistic minimum duration for scenic walking routes / lookouts: 45-75 mins
+      if (isWalkOrHikeRoute && duration < 45 && !isLast) {
+        duration = Math.max(duration, 50);
+      }
+
+      const isHeavyExcursion =
+        actNameLower.includes("hike") ||
+        actNameLower.includes("fuerte") ||
+        actNameLower.includes("fort") ||
+        actNameLower.includes("mountain") ||
+        actNameLower.includes("climb") ||
+        actNameLower.includes("trek") ||
+        actDescLower.includes("3-hour") ||
+        actDescLower.includes("strenuous");
+
+      // Calculate realistic return transit/walk time to endLocation
+      let returnTransitMins = 12;
+      let returnDistStr = "1.0 km";
+      if (act.coordinates && returnCoords) {
+        const distKm = haversineDistanceKm(act.coordinates.lat, act.coordinates.lng, returnCoords.lat, returnCoords.lng);
+        returnDistStr = distKm < 1 ? `${Math.round(distKm * 1000)}m` : `${distKm.toFixed(1)} km`;
+        if (isWalkingOnly) {
+          returnTransitMins = Math.max(6, Math.round((distKm / 4.0) * 60)); // ~4 km/h walking speed
+        } else {
+          returnTransitMins = Math.max(6, Math.round((distKm / 15.0) * 60) + 4);
+        }
+      }
+
+      if (endMins !== null) {
+        const transitCushionToReturn = isLast ? (returnTransitMins + 4) : 15;
+        const latestAllowedEnd = endMins - transitCushionToReturn;
+        const availableMins = latestAllowedEnd - actStart;
+
+        if (isLast) {
+          if (availableMins < 15 || isHeavyExcursion || actStart >= 21 * 60 + 30) {
+            act.name = `Farewell & Relaxed Viewpoint near ${returnLocName}`;
+            act.category = "relaxation";
+            act.description = `A comfortable, brief scenic stop to wrap up your outing before your ${prefs.endTime} return at ${returnLocName}.`;
+            act.insiderTip = `Located right near ${returnLocName} for effortless on-time departure.`;
+            duration = Math.min(30, Math.max(15, availableMins));
+          } else if (duration > availableMins) {
+            duration = Math.max(15, availableMins);
+          }
+        } else {
+          if (actStart + duration > latestAllowedEnd) {
+            duration = Math.max(20, latestAllowedEnd - actStart - (totalActs - 1 - idx) * 20);
+          }
+        }
+      }
+
+      const actEnd = actStart + Math.max(10, duration);
+      act.durationMinutes = Math.max(10, duration);
+
+      const fmtH = (mins: number) => {
+        const norm = ((Math.round(mins) % 1440) + 1440) % 1440;
+        const h = Math.floor(norm / 60);
+        const m = norm % 60;
+        return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+      };
+
+      act.time = `${fmtH(actStart)} - ${fmtH(actEnd)}`;
+      cursorMins = actEnd + (isWalkingOnly ? 15 : 10);
+
+      if (isLast && prefs.endTime && returnLocName) {
+        const arrTimeStr = fmtH(Math.min(endMins, actEnd + returnTransitMins));
+        act.transitToNext = {
+          mode: isWalkingOnly ? "walk" : toTransitMode(rawModes[0]),
+          duration: `${returnTransitMins} min ${isWalkingOnly ? "walk" : "transit"}`,
+          distance: returnDistStr,
+          instructions: `Walk on foot (${returnDistStr}, ~${returnTransitMins} mins) to conclude your outing at ${returnLocName} by ${prefs.endTime} (estimated arrival ${arrTimeStr}).`,
+        };
+      }
+    }
+  }
+
   return plan;
 }
 
 export async function generateHometownItinerary(prefs: HometownPreferences): Promise<ItineraryPlan> {
   const ai = getAiClient();
-  const baseCoords = lookupKnownCoordinates(prefs.location);
+  const safeLoc = (prefs?.location || "Donostia-San Sebastián").trim();
+  const baseCoords = lookupKnownCoordinates(safeLoc);
+
+  const weatherForecast = prefs.weatherForecast || await fetchMultiDayForecast(
+    baseCoords.lat,
+    baseCoords.lng,
+    safeLoc,
+    1,
+    prefs.startDate
+  );
+
+  const logisticsDirectives = buildContextAndLogisticsPromptInstructions({
+    destination: safeLoc,
+    startDate: prefs.startDate,
+    durationDays: 1,
+    accommodation: prefs.accommodation,
+    accommodations: prefs.accommodations,
+    weatherForecast,
+    transportModes: prefs.transportModes,
+    transportMode: prefs.transportMode,
+  });
 
   const timeDescription =
     prefs.timeAvailable === "quick"
@@ -1944,7 +2401,7 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
   // --- Resident exclusion & "already known sights" intelligence ---
   const permanentSkips = prefs.permanentSkips || [];
   const excludedRecent = prefs.excludedPlaces || [];
-  const verifiedTown = findVerifiedDestination(prefs.location);
+  const verifiedTown = findVerifiedDestination(safeLoc);
   const knownTouristSights = verifiedTown?.popularSpots || [];
 
   const exclusionBlocks: string[] = [];
@@ -1955,7 +2412,7 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
     exclusionBlocks.push(`PERMANENT EXCLUSION RULE (absolute, highest priority): The resident has PERMANENTLY banned these places. NEVER suggest them or their direct equivalents under any circumstances: [${permanentSkips.join(", ")}].`);
   }
   if (knownTouristSights.length > 0) {
-    exclusionBlocks.push(`ALREADY-KNOWN SIGHTS RULE: This resident has already seen ALL classic sights of ${verifiedTown?.name || prefs.location}. Do NOT propose ordinary tourist visits to: [${knownTouristSights.join(", ")}]. The only exception is ONE item that re-experiences such a place in a genuinely unusual micro-way (empty opening hour, night illumination, low tide, seasonal/temporary event).`);
+    exclusionBlocks.push(`ALREADY-KNOWN SIGHTS RULE: This resident has already seen ALL classic sights of ${verifiedTown?.name || safeLoc}. Do NOT propose ordinary tourist visits to: [${knownTouristSights.join(", ")}]. The only exception is ONE item that re-experiences such a place in a genuinely unusual micro-way (empty opening hour, night illumination, low tide, seasonal/temporary event).`);
   }
   const exclusions = exclusionBlocks.join("\n");
 
@@ -1972,37 +2429,93 @@ export async function generateHometownItinerary(prefs: HometownPreferences): Pro
         .join("; ")}]. Whenever the occasion fits (especially for bars/cafés/restaurants), weave these into the plan and/or alternatives. They must NEVER be excluded or filtered out.`
     : `The resident has NOT provided their own places. Bars, cafés and restaurants MUST come from your live Google Search results ONLY — never invent or reuse dining venues from memory.`;
 
-  const systemInstruction = `You are LocalExplorer AI in Hometown Local Guide Mode, empowered with Google Search to discover real-time live events, concerts, street food markets, sports races, food truck rallies, pop-up artisan markets, temporary art exhibits, and local festivals.
-THE USER IS A LONG-TIME RESIDENT OF ${prefs.location.toUpperCase()} — NOT A TOURIST. They already know every famous sight, landmark and "top 10" recommendation. Your value is revealing their own town through angles they have not lived yet.
+  const rawModes = prefs.transportModes && prefs.transportModes.length > 0
+    ? prefs.transportModes
+    : (prefs.transportMode ? [prefs.transportMode] : ["walking"]);
+  const isWalkingOnly = rawModes.length === 1 && rawModes[0] === "walking";
 
-RESIDENT-FIRST CURATION RULES:
-1. REAL & VERIFIED PLACES ONLY: Every recommendation MUST be a real, named, currently-existing place or event within ${prefs.radiusKm} km of ${prefs.location}. USE GOOGLE SEARCH to discover real local businesses, trails, viewpoints and happenings (the actual independent bakery, the actual trailhead, the actual market happening this week). Invented or placeholder places ("Artisan Coffee Roastery", "Cozy Local Cafe") are STRICTLY FORBIDDEN.
-2. HYPER-LOCAL & EPHEMERAL OVER FAMOUS: Prioritize what only residents can enjoy — quiet-hour revisits, tide- or sunset-dependent spots, today's market lineup, this week's concerts/races/pop-ups, seasonal produce, the bench locals actually use, the counter with the daily special.
-3. NO TOURIST AGENDA: Never frame anything as a sightseeing visit to a famous landmark${knownTouristSights.length > 0 ? ` — the resident has already seen: [${knownTouristSights.join(", ")}]` : ""}.
-4. CENTER LOCATION: ${prefs.location} (Exact Lat: ${baseCoords.lat.toFixed(4)}, Lng: ${baseCoords.lng.toFixed(4)}).
-5. MAXIMUM ALLOWED DISTANCE: ${prefs.radiusKm} km from ${prefs.location}. Every single activity, restaurant, coffee shop, and event MUST be physically located within this radius (adjacent villages are fine only if inside the radius).
-6. For any spot that is an active live event, set "isLiveEvent": true and populate "eventDetails": { "eventType": "Concert" | "Market" | "Race" | "Festival" | "Exhibition", "dates": "e.g. Aug 21-23 or Tonight 8 PM", "venue": "Venue Name" }.
-7. STRICTLY AVOID generic tourist traps, commercial chains, and anything a travel blog would list as a "must-see".
-8. Adapt specifically to current weather: "${prefs.weatherCondition}" (${prefs.currentTemp ? prefs.currentTemp + "°C" : ""}) — if wet or cold, favor indoor, covered, or cozy experiences.
-9. Fit into the timeframe: ${timeDescription}.
-10. Coordinates must be accurate real-world lat/lng within ${prefs.radiusKm} km of (${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
-11. Provide alternative choices for each activity spot.
-12. ${exclusions}
-13. ${likedSpotsInstruction}
-14. ${userSpotsInstruction}
+  const transportDirectiveInstruction = isWalkingOnly
+    ? `CRITICAL "WALKING / ON FOOT ONLY" HARD CONSTRAINT:
+- The resident explicitly selected ONLY "Walking / On foot".
+- ALL PUBLIC TRANSIT (buses, metro, trains, ferries) AND MOTORIZED VEHICLES (cars, taxis) ARE STRICTLY FORBIDDEN.
+- Every single activity and transition MUST be feasible purely by walking on foot.
+- DURATION REALISM: Walking routes take real human time (pace ~4 km/h plus stopping to enjoy views, photograph, and rest). An exploration walk, seaside promenade, or hilltop path is 45-90 minutes.
+- GEOGRAPHIC PROXIMITY: All selected spots MUST be clustered in a natural walking loop within 3.5 km of "${prefs.startLocation || safeLoc}" and returning on foot to "${prefs.endLocation || safeLoc}". Do NOT send the resident to neighboring towns (like Pasaia, Astigarraga, Hernani) that cannot be walked round-trip in the allotted time without taking a bus.`
+    : `TRANSPORTATION MODES: Available transport: [${rawModes.join(", ")}]. Calculate realistic travel times and modes matching these options.`;
+
+  const selectedOccasions = (prefs.occasions && prefs.occasions.length > 0)
+    ? prefs.occasions.join(", ")
+    : (prefs.occasion || "Solo Chill & Read");
+  const isSunsetSunrise = (selectedOccasions || "").toLowerCase().includes("sunset") || (selectedOccasions || "").toLowerCase().includes("sunrise") || (selectedOccasions || "").includes("sunsetsunrise");
+
+  const startTimeInstruction = prefs.startTime
+    ? `OUTING START TIME: The resident explicitly specified an outing start time of "${prefs.startTime}". You MUST start the first activity's time slot at ${prefs.startTime} (e.g., "${prefs.startTime} - 10:30 AM") and schedule all subsequent activities chronologically.`
+    : `OUTING START TIME: Optional. Start at a natural time matching ${timeDescription} (e.g. 09:30 or 10:00 for full-day, 14:00 for half-day afternoon).`;
+
+  const startLocationInstruction = prefs.startLocation
+    ? `STARTING LOCATION / DEPARTURE POINT: The resident is setting off directly from: "${prefs.startLocation}"${prefs.startLocationCoordinates ? ` (Coordinates: lat ${prefs.startLocationCoordinates.lat.toFixed(4)}, lng ${prefs.startLocationCoordinates.lng.toFixed(4)})` : ""}. The first activity MUST be located nearby or easily accessible on foot from this departure address, and all initial route calculations start from here.`
+    : `STARTING LOCATION: Optional. Departure centered around ${safeLoc}.`;
+
+  const endTimeInstruction = prefs.endTime
+    ? `CRITICAL OUTING END TIME LOGISTICS & TIMING HARD CONSTRAINT:
+- Outing END TIME is strictly "${prefs.endTime}"${prefs.endLocation ? ` terminating at "${prefs.endLocation}"` : ""}.
+- ALL activities and return transit MUST BE FULLY CONCLUDED before or at ${prefs.endTime}.
+- STRICT LOGISTICAL FEASIBILITY RULE: Calculate remaining time before ${prefs.endTime} for every activity.
+- ABSOLUTELY DO NOT schedule 2-3 hour hikes, mountain fortresses (e.g. Fuerte de Mompás, Mount Ulia), or distant excursions late in the schedule or near the end time.
+- REALISTIC ROUTE DURATIONS: Walking routes, coastal paths, and park lookouts take 50 to 90 minutes. Do NOT compress long hikes into unrealistic 15-minute slots.
+- If an activity is scheduled near the end time, it MUST be light, short (15-30 mins), and geographically adjacent to "${prefs.endLocation || safeLoc}", leaving ample walking time to arrive at "${prefs.endLocation || "the return point"}" strictly before ${prefs.endTime}.`
+    : `OUTING END TIME: Optional. Wrap up naturally based on time duration (${timeDescription}).`;
+
+  const endLocationInstruction = prefs.endLocation
+    ? `FINAL LOCATION / RETURN POINT: The resident wishes to finish the outing at: "${prefs.endLocation}"${prefs.endLocationCoordinates ? ` (Coordinates: lat ${prefs.endLocationCoordinates.lat.toFixed(4)}, lng ${prefs.endLocationCoordinates.lng.toFixed(4)})` : ""}. The last activity or transit leg MUST lead directly to or terminate near this return location.`
+    : `FINAL LOCATION: Optional. Finish at a pleasant local spot or return toward starting area.`;
+
+  const sunsetSunriseInstruction = isSunsetSunrise
+    ? `SUNSET & SUNRISE SPOTS DIRECTIVE: The resident explicitly requested sunset or sunrise spot finding. You MUST include at least one outstanding golden-hour viewpoint, coastal headland, rooftop terrace, elevated hill lookout, or dawn walk spot naturally timed around sunrise or sunset.`
+    : "";
+
+  const systemInstruction = `You are LocalExplorer AI in Hometown Local Guide Mode, empowered with Google Search to discover real-time live events, concerts, street food markets, sports races, food truck rallies, pop-up artisan markets, temporary art exhibits, and local festivals.
+THE USER IS A LONG-TIME RESIDENT OF ${safeLoc.toUpperCase()} — NOT A TOURIST. They already know every famous sight, landmark and "top 10" recommendation. Your value is revealing their own town through angles they have not lived yet.
+
+=== MANDATORY CONTEXT, ACCOMMODATION & STRICT TRANSPORT LOGISTICS ===
+${logisticsDirectives}
+
+RESIDENT-FIRST CURATION & HIDDEN GEMS DIRECTIVE:
+1. REAL & VERIFIED PLACES ONLY: Every recommendation MUST be a real, named, currently-existing place or event within ${prefs.radiusKm} km of ${prefs.location}. USE GOOGLE SEARCH to discover real local businesses, trails, viewpoints and happenings. Invented or placeholder places are STRICTLY FORBIDDEN.
+2. HIDDEN GEMS OVER FAMOUS LANDMARKS: The user ALREADY knows main tourist spots. Focus heavily on HIDDEN GEMS, off-the-beaten-path neighborhood spots, secret courtyards, local artisan workshops, quiet viewpoints, independent micro-cafes, and places known almost exclusively to local residents. Tag activities as "hidden-gem" with insider tips explaining why it is a true local secret.
+3. CURRENT LOCAL EVENTS & LIVE HAPPENINGS: Use Google Search to find active local events, live concerts, street food markets, sports races, or pop-ups happening currently in ${prefs.location} matching the vibe "${selectedOccasions}". For any spot that is an active live event, set "isLiveEvent": true and populate "eventDetails": { "eventType": "Concert" | "Market" | "Race" | "Festival" | "Exhibition", "dates": "...", "venue": "..." }.
+4. ${transportDirectiveInstruction}
+5. ${startTimeInstruction}
+6. ${startLocationInstruction}
+7. ${endTimeInstruction}
+8. ${endLocationInstruction}
+${sunsetSunriseInstruction ? `9. ${sunsetSunriseInstruction}` : ""}
+10. CENTER LOCATION & RADIUS: ${prefs.location} (Exact Lat: ${baseCoords.lat.toFixed(4)}, Lng: ${baseCoords.lng.toFixed(4)}). Maximum allowed distance is ${prefs.radiusKm} km.
+11. STRICTLY AVOID generic tourist traps, commercial chains, and anything a travel blog would list as a "must-see".
+12. Adapt specifically to current weather: "${prefs.weatherCondition}" (${prefs.currentTemp ? prefs.currentTemp + "°C" : ""}).
+13. Fit into the timeframe: ${timeDescription}.
+14. Coordinates must be accurate real-world lat/lng within ${prefs.radiusKm} km of (${baseCoords.lat.toFixed(4)}, ${baseCoords.lng.toFixed(4)}).
+15. Provide alternative choices for each activity spot.
+16. ${exclusions}
+17. ${likedSpotsInstruction}
+18. ${userSpotsInstruction}
 ${(() => {
   const tasteLine = buildTasteInstruction(prefs.tasteProfile);
-  return tasteLine ? `15. RESIDENT TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
+  return tasteLine ? `19. RESIDENT TASTE PROFILE: ${tasteLine}.\n${CONTEXT_AWARE_DINING_RULES}` : "";
 })()}`;
 
-  const prompt = `The requester is a LONG-TIME RESIDENT of ${prefs.location}, not a visitor: they have already seen every tourist sight and standard recommendation. Surprise them with real places and happenings they plausibly have not experienced yet.
+  const prompt = `The requester is a LONG-TIME RESIDENT of ${prefs.location}, not a visitor: they have already seen every tourist sight and standard recommendation. Surprise them with real places, hidden gems, and happenings they plausibly have not experienced yet.
 Perform a live web search for active events, live concerts, street food markets, sports races, and cultural pop-ups happening right now or this week near ${prefs.location} (within a ${prefs.radiusKm}km radius of lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}).
 Build a custom local plan incorporating live events discovered during search alongside top neighborhood hidden gems strictly within ${prefs.radiusKm} km of ${prefs.location}.
 
 Location: ${prefs.location}
+${prefs.startLocation ? `Departure Point: ${prefs.startLocation}` : ""}
+${prefs.startTime ? `Desired Outing Start Time: ${prefs.startTime}` : ""}
+${prefs.endTime ? `Desired Outing End Time: ${prefs.endTime}` : ""}
+${prefs.endLocation ? `Final Return Point: ${prefs.endLocation}` : ""}
 Coordinates: lat ${baseCoords.lat.toFixed(4)}, lng ${baseCoords.lng.toFixed(4)}
 Radius: ${prefs.radiusKm} km (Strict boundary enforced)
-Occasion / Vibe: ${prefs.occasion}
+Occasion / Desired Vibe(s): ${selectedOccasions}
 Available Time: ${prefs.timeAvailable} (${timeDescription})
 Weather: ${prefs.weatherCondition} (${prefs.currentTemp ? prefs.currentTemp + "°C" : ""})
 ${prefs.customNotes ? `Resident Notes: ${prefs.customNotes}` : ""}
@@ -2061,63 +2574,88 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
   ]
 }`;
 
-  if (!ai) {
-    console.warn("GEMINI_API_KEY not configured. Generating curated hometown plan.");
-    return generateFallbackHometown(prefs);
-  }
+  const hometownSchema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      destinationOrTown: { type: Type.STRING },
+      summary: { type: Type.STRING },
+      highlights: { type: Type.ARRAY, items: { type: Type.STRING } },
+      mapCenter: {
+        type: Type.OBJECT,
+        properties: {
+          lat: { type: Type.NUMBER },
+          lng: { type: Type.NUMBER },
+        },
+        required: ["lat", "lng"],
+      },
+      weatherSummary: { type: Type.STRING },
+      days: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            dayNumber: { type: Type.NUMBER },
+            dayTitle: { type: Type.STRING },
+            theme: { type: Type.STRING },
+            summary: { type: Type.STRING },
+            estimatedTotalBudget: { type: Type.STRING },
+            activities: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  time: { type: Type.STRING },
+                  name: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  insiderTip: { type: Type.STRING },
+                  approxCost: { type: Type.STRING },
+                  rating: { type: Type.NUMBER },
+                  isLiveEvent: { type: Type.BOOLEAN },
+                  coordinates: {
+                    type: Type.OBJECT,
+                    properties: {
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                    },
+                    required: ["lat", "lng"],
+                  },
+                  address: { type: Type.STRING },
+                  durationMinutes: { type: Type.NUMBER },
+                },
+                required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
+              },
+            },
+          },
+          required: ["dayNumber", "dayTitle", "theme", "summary", "activities"],
+        },
+      },
+    },
+    required: ["title", "destinationOrTown", "summary", "highlights", "mapCenter", "days"],
+  };
 
   try {
-    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
-    let parsed: any = null;
-    let lastError: any = null;
+    const { data: parsed, meta: generationMeta } = await executeAICompletion<any>({
+      aiSettings: prefs.aiSettings,
+      taskCategory: "itinerary",
+      prompt,
+      systemInstruction,
+      responseSchema: hometownSchema,
+      fallbackGenerator: () => generateFallbackHometown(prefs),
+    });
 
-    for (const modelName of modelsToTry) {
-      // 1. Try with Google Search tool first for live local discoveries
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }],
-          },
-        });
-        const text = response.text;
-        if (text) {
-          parsed = cleanAndParseJson<any>(text);
-          if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
-            break;
-          }
-        }
-      } catch (errSearch) {
-        console.warn(`Hometown live search on ${modelName} encountered issue, trying direct structured mode:`, (errSearch as any)?.message || errSearch);
-        // 2. Immediate fallback: same model with JSON mode (no external search rate limit)
-        try {
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: prompt,
-            config: {
-              systemInstruction,
-              responseMimeType: "application/json",
-            },
-          });
-          const text = response.text;
-          if (text) {
-            parsed = cleanAndParseJson<any>(text);
-            if (parsed && Array.isArray(parsed.days) && parsed.days.length > 0) {
-              break;
-            }
-          }
-        } catch (errJson) {
-          console.warn(`Hometown structured generation failed on ${modelName}:`, (errJson as any)?.message || errJson);
-          lastError = errJson;
-        }
-      }
+    const daysArray = parsed?.days || parsed?.itinerary?.days || parsed?.plan?.days || parsed?.data?.days;
+    if (Array.isArray(daysArray) && daysArray.length > 0) {
+      parsed.days = daysArray;
     }
 
-    // Shape validation: never ship a plan without usable days/activities
     if (!parsed || !Array.isArray(parsed.days) || parsed.days.length === 0) {
-      throw lastError || new Error("All Gemini models failed for hometown itinerary");
+      console.warn("[generateHometownItinerary] AI response missing days array, loading fallback");
+      const fallback = await generateFallbackHometown(prefs);
+      fallback.generationMeta = generationMeta;
+      return fallback;
     }
     parsed.days.forEach((day: any) => {
       if (!Array.isArray(day.activities)) day.activities = [];
@@ -2133,9 +2671,14 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
       mode: "hometown",
       totalDays: 1,
       createdAt: new Date().toISOString(),
+      startDate: prefs.startDate || parsed?.startDate || new Date().toISOString().split("T")[0],
       tags: [prefs.occasion, `${prefs.radiusKm}km radius`, prefs.weatherCondition],
       mapCenter,
       mapZoom: parsed.mapZoom || (prefs.radiusKm <= 10 ? 14 : prefs.radiusKm <= 25 ? 12 : 11),
+      startTime: prefs.startTime,
+      startLocation: prefs.startLocation,
+      startLocationCoordinates: prefs.startLocationCoordinates,
+      generationMeta,
     };
 
     // Resident exclusion filter: strip permanently-banned / recently-seen spots from the model output
@@ -2166,10 +2709,61 @@ Your response MUST be ONLY a raw valid JSON object (no conversational text outsi
       await enrichActivitiesWithDynamicAI(day.activities, prefs.location);
     }
 
-    return enforceHometownRadiusAndCoordinates(planResult, prefs, baseCoords);
+    const finalPlan = await enforceHometownRadiusAndCoordinates(planResult, prefs, baseCoords);
+
+    // Multi-Modal Algorithmic Route Optimization Pass for Hometown Mode
+    for (const day of finalPlan.days || []) {
+      if (Array.isArray(day.activities) && day.activities.length >= 2) {
+        const primaryTransport = (prefs.transportModes && prefs.transportModes[0]) || prefs.transportMode || "public_transit";
+        const optResult = optimizeDayRoute(day.activities, {
+          transportMode: primaryTransport,
+          preserveMealTimes: true,
+        });
+        if (optResult.isImproved && optResult.orderedActivities.length === day.activities.length) {
+          day.activities = optResult.orderedActivities;
+        }
+        day.activities.sort((a, b) => parseTimeToHours(a.time) - parseTimeToHours(b.time));
+      }
+    }
+
+    enforceScheduleFeasibility(finalPlan, prefs);
+
+    const effectiveTransportModes: TransportMode[] = (
+      prefs.transportModes && prefs.transportModes.length > 0
+        ? prefs.transportModes
+        : (prefs.transportMode ? [prefs.transportMode] : ["walking"])
+    ) as TransportMode[];
+
+    for (const day of finalPlan.days || []) {
+      if (Array.isArray(day.activities)) {
+        for (let i = 0; i < day.activities.length - 1; i++) {
+          const currentAct = day.activities[i];
+          const nextAct = day.activities[i + 1];
+          currentAct.transitToNext = calculateTransitLogistics(
+            currentAct,
+            nextAct,
+            safeLoc,
+            effectiveTransportModes
+          );
+        }
+      }
+    }
+
+    finalPlan.generationMeta = generationMeta;
+    return finalPlan;
   } catch (error) {
-    console.error("Error generating hometown itinerary with search grounding:", error);
-    return generateFallbackHometown(prefs);
+    console.error("Error generating hometown itinerary with AI Executor:", error);
+    const fallback = await generateFallbackHometown(prefs);
+    fallback.generationMeta = {
+      usedModelId: "offline-fallback",
+      usedModelName: "Curated Engine (Offline Fallback)",
+      usedProvider: "system_gemini",
+      isFallbackUsed: true,
+      attemptedModels: [],
+      hasWarnings: true,
+      warnings: [`Generation failed: ${(error as any)?.message || error}. Loaded offline fallback.`],
+    };
+    return fallback;
   }
 }
 
@@ -2363,6 +2957,17 @@ export async function swapActivitySpot(req: SwapActivityRequest): Promise<Activi
 
   const tasteInstruction = buildTasteInstruction(req.tasteProfile);
 
+  const logisticsDirectives = buildContextAndLogisticsPromptInstructions({
+    destination: req.destinationOrTown,
+    startDate: req.startDate,
+    durationDays: 1,
+    accommodation: req.accommodation,
+    accommodations: req.accommodations,
+    weatherForecast: req.weatherForecast,
+    transportModes: req.transportModes,
+    transportMode: req.meansOfTransport,
+  });
+
   const indoorInstruction = req.isIndoorOnly
     ? "RAINY DAY / COVERED SPOT MANDATE: The replacement spot MUST be completely covered or indoors (e.g. historic covered market, world-class museum, artisan roastery, tea house, art gallery, indoor spa/baths, or historic arcade). DO NOT suggest outdoor parks, open trails, or uncovered viewpoints."
     : req.customRequirement
@@ -2371,6 +2976,9 @@ export async function swapActivitySpot(req: SwapActivityRequest): Promise<Activi
 
   const systemInstruction = `You are LocalExplorer AI, an expert local travel curator.
 Your task is to propose ONE single replacement spot for "${req.currentActivityName}" in ${req.destinationOrTown}.
+
+=== MANDATORY CONTEXT, ACCOMMODATION & STRICT TRANSPORT LOGISTICS ===
+${logisticsDirectives}
 
 CRITICAL MANDATES FOR SWAPPING:
 1. ABSOLUTE DEDUPLICATION & BLACKLIST (STRICTEST PRIORITY):
@@ -2487,6 +3095,234 @@ Output strictly valid JSON.`;
   } catch (error) {
     console.error("Error swapping activity:", error);
     return generateFallbackSwap(req, blacklist);
+  }
+}
+
+export async function swapActivitySpotAlternatives(req: SwapActivityRequest): Promise<ActivitySpot[]> {
+  const ai = getAiClient();
+  const blacklistRaw = [
+    ...(req.allItineraryActivityNames || []),
+    ...(req.excludedPlaces || []),
+    ...(req.permanentSkips || []),
+    ...(req.excludedNames || []),
+    req.currentActivityName,
+  ].filter(Boolean);
+
+  const blacklist = Array.from(new Set(blacklistRaw.map((x) => x.trim().toLowerCase())));
+
+  const priorSummary = req.priorActivity
+    ? `'${req.priorActivity.name}' [Category: ${req.priorActivity.category}, Time: ${req.priorActivity.time}, Address: ${req.priorActivity.address || req.destinationOrTown}, Description: ${req.priorActivity.description}]`
+    : "None (This is the first activity of the day)";
+
+  const posteriorSummary = req.posteriorActivity
+    ? `'${req.posteriorActivity.name}' [Category: ${req.posteriorActivity.category}, Time: ${req.posteriorActivity.time}, Address: ${req.posteriorActivity.address || req.destinationOrTown}, Description: ${req.posteriorActivity.description}]`
+    : "None (This is the last activity of the day)";
+
+  const tasteInstruction = buildTasteInstruction(req.tasteProfile);
+
+  const logisticsDirectives = buildContextAndLogisticsPromptInstructions({
+    destination: req.destinationOrTown,
+    startDate: req.startDate,
+    durationDays: 1,
+    accommodation: req.accommodation,
+    accommodations: req.accommodations,
+    weatherForecast: req.weatherForecast,
+    transportModes: req.transportModes,
+    transportMode: req.meansOfTransport,
+  });
+
+  const reasons: string[] = [];
+  if (req.isIndoorOnly || req.swapReason?.toLowerCase().includes("rain") || req.swapReason?.toLowerCase().includes("weather")) {
+    reasons.push("RAIN CONTINGENCY / INDOOR MANDATE: The user is swapping this spot due to rain or bad weather. ALL proposed replacement spots MUST be 100% INDOOR or fully covered (e.g. covered markets, art galleries, museums, indoor thermal baths, wine cellars, historic arcades, indoor food halls, cozy artisan workshops). ABSOLUTELY ZERO outdoor walks, open parks, or uncovered coastal trails.");
+  }
+  if (req.swapReason?.toLowerCase().includes("exhausting") || req.swapReason?.toLowerCase().includes("tired") || req.swapReason?.toLowerCase().includes("energy") || req.swapReason?.toLowerCase().includes("relax")) {
+    reasons.push("LOW ENERGY / RELAXATION MANDATE: The traveler is tired or looking for a calm, low-effort experience. Propose peaceful tea houses, scenic sit-down cafes, thermal baths, quiet gardens, or slow-paced museums with minimal walking.");
+  }
+  if (req.swapReason?.toLowerCase().includes("expensive") || req.swapReason?.toLowerCase().includes("budget") || req.swapReason?.toLowerCase().includes("cost")) {
+    reasons.push("BUDGET-FRIENDLY MANDATE: The user wants a free or inexpensive alternative. Prioritize free landmarks, free parks, inexpensive tastings, or budget-friendly local highlights.");
+  }
+  if (req.swapReason?.toLowerCase().includes("kid") || req.swapReason?.toLowerCase().includes("family") || req.swapReason?.toLowerCase().includes("child")) {
+    reasons.push("FAMILY & KID-FRIENDLY MANDATE: Propose engaging, safe, accessible spots suitable and delightful for travelers with kids/family.");
+  }
+  if (req.swapReason?.toLowerCase().includes("dining") || req.swapReason?.toLowerCase().includes("food") || req.swapReason?.toLowerCase().includes("eat") || req.swapReason?.toLowerCase().includes("cafe")) {
+    reasons.push("GASTRONOMY & LOCAL FOOD MANDATE: The user specifically wants a delicious authentic local food spot, pintxos bar, specialty bakery, or cafe in this time slot.");
+  }
+  if (req.swapReason?.toLowerCase().includes("time") || req.swapReason?.toLowerCase().includes("quick") || req.swapReason?.toLowerCase().includes("short")) {
+    reasons.push("SHORT DURATION MANDATE: The user has limited time. Propose quick 30-45 minute stops that do not require long queues or advance tickets.");
+  }
+  if (req.swapReason?.toLowerCase().includes("closed") || req.swapReason?.toLowerCase().includes("booked") || req.swapReason?.toLowerCase().includes("sold out")) {
+    reasons.push("WALK-IN / HIGH AVAILABILITY MANDATE: The original spot is closed or sold out. Propose reliable places with open access or high walk-in availability.");
+  }
+  if (req.swapReason?.toLowerCase().includes("hidden") || req.swapReason?.toLowerCase().includes("unique") || req.swapReason?.toLowerCase().includes("secret") || req.swapReason?.toLowerCase().includes("vibe")) {
+    reasons.push("HIDDEN GEM / UNIQUE VIBE MANDATE: Propose off-the-beaten-path, distinctive neighborhood secrets that mainstream tourists miss.");
+  }
+  if (req.customRequirement) {
+    reasons.push(`USER SPECIFIC REQUIREMENT: "${req.customRequirement}". Fulfill this exact instruction!`);
+  }
+  if (req.swapReason && !reasons.some(r => r.includes(req.swapReason!))) {
+    reasons.push(`USER SWAP REASON CONTEXT: "${req.swapReason}". Tailor recommendations directly to address this reason.`);
+  }
+
+  const indoorInstruction = reasons.length > 0
+    ? reasons.map(r => `- ${r}`).join("\n")
+    : "";
+
+  const systemInstruction = `You are LocalExplorer AI, an expert local travel curator.
+Your task is to propose exactly THREE (3) distinct and fresh alternative replacement spots for "${req.currentActivityName}" in ${req.destinationOrTown}.
+
+=== MANDATORY CONTEXT, ACCOMMODATION & STRICT TRANSPORT LOGISTICS ===
+${logisticsDirectives}
+
+CRITICAL MANDATES FOR ALTERNATIVES GENERATION:
+1. ABSOLUTE DEDUPLICATION & BLACKLIST (STRICTEST PRIORITY):
+   The proposed replacement spots MUST NOT be any of the following places. They are ALREADY scheduled in the itinerary across all days, visited in 30-day memory, or permanently skipped:
+   [${blacklistRaw.join(", ")}].
+   You MUST propose completely distinct, non-repeating, authentic local spots. All 3 suggested spots must also be distinct from each other!
+
+2. TIME SLOT & CATEGORY FLEXIBILITY:
+   - Target Time Slot: ${req.timeSlot || "Flexible"}
+   - Original Category: ${req.category}
+   - CATEGORY FLEXIBILITY MANDATE: You are fully ENCOURAGED to suggest spots of ANY appropriate category (e.g. culture, food, nature, sightseeing, hidden-gem, shopping, relaxation, nightlife, cafe, entertainment, etc.) that would fit gracefully into this time slot. Do NOT restrict recommendations to only the original category '${req.category}'. Select whatever category makes the most sense logistically, matches the user's general trip vibes/interests, and works perfectly for the time of day and effort level.
+   - User Pace: ${req.pace || "balanced"}
+   ${indoorInstruction ? `- ${indoorInstruction}` : ""}
+
+3. PRIOR & POSTERIOR ACTIVITY HARMONY (EFFORT LEVEL & LOCATION FLOW):
+   - Immediately PRIOR Activity: ${priorSummary}
+   - Immediately POSTERIOR Activity: ${posteriorSummary}
+   - EFFORT & LOCATION INSTRUCTION: Ensure each replacement spot is geographically reachable from the prior spot and smoothly bridges to the posterior spot. Match physical exertion levels.
+
+4. USER TASTE PROFILE (IF DINING / BAR / CAFE / FOOD):
+   ${["food", "cafe", "nightlife"].includes(req.category) && tasteInstruction ? `- Taste Profile: ${tasteInstruction}` : "- Ensure high authentic local quality."}
+
+5. TRAVEL INPUT PREFERENCES:
+   - Budget Tier: ${req.budgetTier || "mid-range"}
+   - Selected Vibes: ${(req.vibes || req.tripVibes || []).join(", ") || "Authentic local"}
+   - Transport Mode: ${req.meansOfTransport || "public transit / walking"}
+   - Group Size: ${req.groupSize || 1}
+
+Output strictly valid JSON matching the specified schema, containing an object with an array under the "alternatives" key.`;
+
+  const prompt = `Propose 3 fresh, unique replacement spots in ${req.destinationOrTown} to replace "${req.currentActivityName}" during ${req.timeSlot || "Flexible"}.
+Ensure they are NOT in the blacklist [${blacklistRaw.slice(0, 15).join(", ")}], fit between the prior and posterior activities, respect taste profile/budget/transport/pace, and match the general trip vibes and time slot (you are free and encouraged to recommend any categories and not just '${req.category}').
+Output strictly valid JSON with 3 distinct spots.`;
+
+  const fallbackResponse = async () => {
+    const s1 = await generateFallbackSwap(req, blacklist);
+    const s2 = await generateFallbackSwap(req, [...blacklist, s1.name]);
+    const s3 = await generateFallbackSwap(req, [...blacklist, s1.name, s2.name]);
+    return [s1, s2, s3];
+  };
+
+  if (!ai) {
+    return fallbackResponse();
+  }
+
+  try {
+    const modelsToTry = [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL];
+    let responseText = "";
+
+    for (const modelName of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                alternatives: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING },
+                      time: { type: Type.STRING },
+                      name: { type: Type.STRING },
+                      category: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      insiderTip: { type: Type.STRING },
+                      approxCost: { type: Type.STRING },
+                      rating: { type: Type.NUMBER },
+                      coordinates: {
+                        type: Type.OBJECT,
+                        properties: {
+                          lat: { type: Type.NUMBER },
+                          lng: { type: Type.NUMBER },
+                        },
+                        required: ["lat", "lng"],
+                      },
+                      address: { type: Type.STRING },
+                      durationMinutes: { type: Type.INTEGER },
+                    },
+                    required: ["id", "time", "name", "category", "description", "insiderTip", "approxCost", "coordinates"],
+                  },
+                },
+              },
+              required: ["alternatives"],
+            },
+          },
+        });
+        if (response.text) {
+          responseText = response.text;
+          break;
+        }
+      } catch (err) {
+        console.warn(`Alternatives generation failed on ${modelName}:`, (err as any)?.message || err);
+      }
+    }
+
+    if (!responseText) {
+      return fallbackResponse();
+    }
+
+    const parsed = JSON.parse(responseText || "{}");
+    const alternatives: ActivitySpot[] = parsed.alternatives || [];
+    if (!Array.isArray(alternatives) || alternatives.length === 0) {
+      return fallbackResponse();
+    }
+
+    const processed: ActivitySpot[] = [];
+    for (let i = 0; i < alternatives.length; i++) {
+      const alt = alternatives[i];
+      const altNameClean = (alt.name || "").trim().toLowerCase();
+      const isForbidden = blacklist.some((b) => altNameClean.includes(b) || b.includes(altNameClean));
+      if (isForbidden || !alt.name) {
+        continue;
+      }
+      const resolvedCoords = await resolveActivityCoordinates(
+        alt.name,
+        req.destinationOrTown,
+        alt.address,
+        alt.coordinates,
+        30
+      );
+      processed.push({
+        ...alt,
+        id: "spot-alt-" + i + "-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+        time: normalizeTimeSlot(req.timeSlot || alt.time || "Flexible"),
+        isSwapped: true,
+        coordinates: resolvedCoords,
+        googleMapsUrl: generateGoogleMapsSearchUrl(alt.name, req.destinationOrTown, alt.address, resolvedCoords),
+      });
+    }
+
+    if (processed.length < 3) {
+      const leftCount = 3 - processed.length;
+      const seenNames = processed.map((p) => p.name);
+      for (let i = 0; i < leftCount; i++) {
+        const fallback = await generateFallbackSwap(req, [...blacklist, ...seenNames]);
+        fallback.id = "spot-alt-fb-" + i + "-" + Date.now();
+        processed.push(fallback);
+        seenNames.push(fallback.name);
+      }
+    }
+
+    return processed.slice(0, 3);
+  } catch (error) {
+    console.error("Error generating swap alternatives:", error);
+    return fallbackResponse();
   }
 }
 
@@ -2894,13 +3730,16 @@ async function generateFallbackVacation(prefs: VacationPreferences): Promise<Iti
  * Nominatim), so pins always point at the real location.
  */
 async function generateFallbackHometown(prefs: HometownPreferences): Promise<ItineraryPlan> {
-  const loc = prefs.location.trim() || "Local Neighborhood";
+  const loc = (prefs?.location || "Donostia-San Sebastián").trim();
   const baseCoords = lookupKnownCoordinates(loc);
-  const verified = findVerifiedDestination(prefs.location);
-  const townName = verified?.name || loc.split(",")[0].trim();
+  const verified = findVerifiedDestination(loc);
+  const townName = verified?.name || loc.split(",")[0].trim() || "Local Neighborhood";
+  const occasion = prefs?.occasion || (prefs?.occasions && prefs.occasions[0]) || "Solo Chill & Read";
+  const weatherCond = prefs?.weatherCondition || "Clear & Mild";
+  const radiusKm = prefs?.radiusKm || 10;
 
   // Honor the resident's exclusion lists even in offline mode
-  const excludedLower = [...(prefs.excludedPlaces || []), ...(prefs.permanentSkips || [])]
+  const excludedLower = [...(prefs?.excludedPlaces || []), ...(prefs?.permanentSkips || [])]
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
   const isExcludedSpot = (name: string) => {
@@ -2909,7 +3748,7 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
   };
 
   // Dining demand is satisfied with DATA PROVIDED BY THE USER, never static lists
-  const userDiningAll = (prefs.userSpots || []).filter(
+  const userDiningAll = (prefs?.userSpots || []).filter(
     (sp) => ["bar", "cafe", "restaurant"].includes(sp.category) && !isExcludedSpot(sp.name)
   );
   const townMatched = userDiningAll.filter(
@@ -2920,11 +3759,11 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
   );
   const diningPool = townMatched.length > 0 ? townMatched : userDiningAll;
 
-  const spotCount = prefs.timeAvailable === "quick" ? 2 : prefs.timeAvailable === "full-day" ? 4 : 3;
-  const wetWeather = /rain|storm|drizzle|wet|cold|chilly|wind|overcast/i.test(prefs.weatherCondition || "");
+  const spotCount = prefs?.timeAvailable === "quick" ? 2 : prefs?.timeAvailable === "full-day" ? 4 : 3;
+  const wetWeather = /rain|storm|drizzle|wet|cold|chilly|wind|overcast/i.test(weatherCond);
 
   let diningSlots =
-    prefs.occasion === "Local Tapas & Eateries" ? spotCount : prefs.timeAvailable === "full-day" ? 2 : 1;
+    occasion === "Local Tapas & Eateries" ? spotCount : prefs?.timeAvailable === "full-day" ? 2 : 1;
   diningSlots = Math.min(diningSlots, spotCount);
 
   // Dynamically geocode the user's places if their coordinates are pending
@@ -3035,12 +3874,28 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
     archetypePool = archetypesByOccasion["Rainy Day Indoor"];
   }
 
-  const timeSlots =
+  let timeSlots =
     spotCount === 2
       ? ["10:30 AM - 12:00 PM", "12:30 PM - 02:00 PM"]
       : spotCount === 3
       ? ["10:30 AM - 12:00 PM", "12:30 PM - 02:30 PM", "03:00 PM - 04:30 PM"]
       : ["10:00 AM - 11:30 AM", "12:00 PM - 02:00 PM", "02:30 PM - 04:00 PM", "04:30 PM - 06:00 PM"];
+
+  if (prefs.startTime) {
+    const [h, m] = prefs.startTime.split(":").map(Number);
+    if (!isNaN(h)) {
+      timeSlots = Array.from({ length: spotCount }, (_, idx) => {
+        const startH = (h + idx * 2) % 24;
+        const endH = (startH + 1) % 24;
+        const fmtH = (hour: number) => {
+          const hh = Math.floor(hour);
+          const mm = (m || 0) === 30 ? "30" : "00";
+          return `${hh.toString().padStart(2, "0")}:${mm}`;
+        };
+        return `${fmtH(startH)} - ${fmtH(endH)}`;
+      });
+    }
+  }
 
   // Real local places (verified knowledge base) re-experienced at a resident angle.
   // Exception: a dining-focused occasion with no user dining places falls back to
@@ -3178,38 +4033,44 @@ async function generateFallbackHometown(prefs: HometownPreferences): Promise<Iti
     });
   }
 
-  const summary = `A resident-first outing within ${prefs.radiusKm}km of ${loc}, tuned for ${prefs.weatherCondition} and built around rediscovering familiar places at unusual hours — no tourist agenda.`;
+  const summary = `A resident-first outing within ${radiusKm}km of ${loc}, tuned for ${weatherCond} and built around rediscovering familiar places at unusual hours — no tourist agenda.`;
 
-  return {
+  const fallbackPlan: ItineraryPlan = {
     id: "hometown-" + Date.now(),
     mode: "hometown",
-    title: `Local Explorer: ${prefs.occasion} in ${townName}`,
+    title: `Local Explorer: ${occasion} in ${townName}`,
     destinationOrTown: loc,
     summary,
+    startTime: prefs?.startTime,
+    startLocation: prefs?.startLocation,
+    startLocationCoordinates: prefs?.startLocationCoordinates,
     highlights: [
       diningUsed > 0
         ? `${diningUsed} of your own places woven into the outing`
         : `Familiar ${townName} places re-experienced at quiet, resident-only hours`,
-      `Tuned to "${prefs.occasion}" and today's ${prefs.weatherCondition.toLowerCase()} conditions`,
+      `Tuned to "${occasion}" and today's ${weatherCond.toLowerCase()} conditions`,
       `Your permanent exclusions and 30-day memory are respected`,
     ],
     totalDays: 1,
     createdAt: new Date().toISOString(),
-    tags: [prefs.occasion, `${prefs.radiusKm}km radius`, prefs.weatherCondition],
-    weatherSummary: `Optimized for ${prefs.weatherCondition}.`,
+    startDate: prefs?.startDate || new Date().toISOString().split("T")[0],
+    tags: [occasion, `${radiusKm}km radius`, weatherCond],
+    weatherSummary: `Optimized for ${weatherCond}.`,
     mapCenter: baseCoords,
     mapZoom: 14,
     days: [
       {
         dayNumber: 1,
-        dayTitle: `${townName}: ${prefs.occasion} — Resident Angle`,
-        theme: prefs.occasion,
-        summary: `Crafted for a ${prefs.timeAvailable} outing that skips everything you have already done.`,
+        dayTitle: `${townName}: ${occasion} — Resident Angle`,
+        theme: occasion,
+        summary: `Crafted for a ${prefs?.timeAvailable || "half-day"} outing that skips everything you have already done.`,
         estimatedTotalBudget: "$10 - $35",
         activities,
       },
     ],
   };
+
+  return enforceScheduleFeasibility(fallbackPlan, prefs);
 }
 
 async function generateFallbackCandidates(
@@ -3577,16 +4438,16 @@ Your job is to provide richly detailed, captivating, and authentic deep-dive inf
 
 Requirements:
 1. Provide a concise, evocative headline.
-2. In 'fullExplanation', write 2-3 engaging, descriptive paragraphs covering what this place/activity is, why it is special, its atmosphere, and how visitors should experience it.
+2. In 'fullExplanation', write 2 engaging, descriptive paragraphs covering what this place/activity is, why it is special, its atmosphere, and how visitors should experience it.
 3. In 'historicalContext', provide the real origins, founding dates/eras, architectural styles, or key events.
 4. In 'culturalSignificance', explain what this spot means to locals, its traditions, customs, or culinary heritage.
 5. In 'architecturalOrNaturalHighlights', highlight specific craftsmanship, viewpoints, materials, or natural formations.
-6. In 'whatToExpect', provide 3 to 5 clear bullet points.
-7. In 'anecdotes', provide at least 3 to 4 captivating, specific anecdotes, legends, quirky historical occurrences, or famous quotes associated with this place or its creators.
-8. CRITICAL FOR SUB-SPOTS: If the activity represents an area, district, walking tour, historical complex, park, or market quarter (e.g. "Old Town Walk", "Montmartre District", "Santuario de Loyola complex", "Trastevere loop", "Central Park"), identify 3 to 5 specific, high-priority landmark pins/stops within this area with their specific names, exact street addresses, and why visitors must stop there. If the activity is already a single compact building or restaurant, subSpots can be 2-3 standout rooms/galleries/adjacent spots or an empty list.
-9. In 'suggestedQuestions', provide 4 to 6 compelling template questions that a curious visitor would love to ask an AI Local Guide chatbot (e.g., "Can you tell any a random quote about this place?", "Why was this made?", "What's the best hidden secret here?", "What's the story behind the architecture?").
-10. In 'photographyTips', give 2-3 practical tips for the best angles/lighting.
-11. In 'insiderAdvice', give 2-3 insider local tips.`;
+6. In 'whatToExpect', provide 3 to 4 clear bullet points.
+7. In 'anecdotes', provide 3 captivating, specific anecdotes, legends, quirky historical occurrences, or famous quotes associated with this place or its creators.
+8. CRITICAL FOR SUB-SPOTS: If the activity represents an area, district, walking tour, historical complex, park, or market quarter (e.g. "Old Town Walk", "Montmartre District", "Santuario de Loyola complex", "Trastevere loop", "Central Park"), identify 3 to 4 specific landmark pins/stops within this area with their specific names, exact street addresses, why visitors must stop there, and their estimated lat and lng (near ${coordinates?.lat || "city center"}, ${coordinates?.lng || "city center"}). If the activity is already a single compact building or restaurant, subSpots can be 2-3 standout rooms/galleries or an empty list.
+9. In 'suggestedQuestions', provide 4 compelling template questions that a curious visitor would love to ask an AI Local Guide chatbot (e.g., "Can you tell any a random quote about this place?", "Why was this made?", "What's the best hidden secret here?", "What's the story behind the architecture?").
+10. In 'photographyTips', give 2 practical tips for the best angles/lighting.
+11. In 'insiderAdvice', give 2 insider local tips.`;
 
   const prompt = `Provide the full in-depth travel dossier and stories for:
 Place/Activity: "${spotName}"
@@ -3598,13 +4459,14 @@ Description context: "${description || "None provided"}"`;
   let parsedData: any = null;
 
   if (ai) {
-    for (const model of [PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL, TERTIARY_TEXT_MODEL]) {
+    for (const model of ["gemini-3.5-flash-lite", "gemini-3.6-flash"]) {
       try {
         const response = await ai.models.generateContent({
           model,
           contents: prompt,
           config: {
             systemInstruction,
+            temperature: 0.2,
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
@@ -3689,23 +4551,26 @@ Description context: "${description || "None provided"}"`;
     }
   }
 
-  // Ensure baseline coordinates
-  const baseCoords = coordinates && coordinates.lat && coordinates.lng
+  // Ensure baseline coordinates fast
+  const baseCoords = (coordinates && typeof coordinates.lat === "number" && typeof coordinates.lng === "number" && Math.abs(coordinates.lat) > 0)
     ? coordinates
-    : await resolveActivityCoordinates(spotName, destination, address);
+    : { lat: 35.0116, lng: 135.7681 }; // Default or fallback center if not provided
 
-  // If subSpots were provided, geocode them dynamically
+  // Resolve subSpots rapidly without external blocking geocoding calls
   const resolvedSubSpots: SubSpotPin[] = [];
   if (parsedData && Array.isArray(parsedData.subSpots) && parsedData.subSpots.length > 0) {
-    for (const sub of parsedData.subSpots) {
-      if (!sub.name) continue;
+    const validSubs = parsedData.subSpots.filter((s: any) => s && s.name);
+    validSubs.forEach((sub: any, idx: number) => {
       let subCoords = baseCoords;
-      try {
-        subCoords = await resolveActivityCoordinates(sub.name, destination, sub.address || address);
-      } catch {
+      if (typeof sub.lat === "number" && typeof sub.lng === "number" && Math.abs(sub.lat) > 0) {
+        subCoords = { lat: sub.lat, lng: sub.lng };
+      } else {
+        // Fast deterministic spread around base spot
+        const offsetLat = (idx - Math.floor(validSubs.length / 2)) * 0.0025;
+        const offsetLng = ((idx % 2 === 0 ? 1 : -1) * (idx + 1)) * 0.002;
         subCoords = {
-          lat: +(baseCoords.lat + (Math.random() - 0.5) * 0.005).toFixed(5),
-          lng: +(baseCoords.lng + (Math.random() - 0.5) * 0.005).toFixed(5),
+          lat: +(baseCoords.lat + offsetLat).toFixed(5),
+          lng: +(baseCoords.lng + offsetLng).toFixed(5),
         };
       }
       resolvedSubSpots.push({
@@ -3716,7 +4581,7 @@ Description context: "${description || "None provided"}"`;
         mustSeeReason: sub.mustSeeReason || "",
         coordinates: subCoords,
       });
-    }
+    });
   }
 
   const defaultSuggestedQuestions = [
@@ -3785,16 +4650,6 @@ Description context: "${description || "None provided"}"`;
     coordinates: baseCoords,
     googleMapsUrl: generateGoogleMapsSearchUrl(spotName, destination, address || parsedData?.exactAddress, baseCoords),
   };
-
-  // Resolve real-world authentic photos (Wikipedia/Wikimedia open public domain imagery)
-  try {
-    const realPhotos = await getRealPhotosForSpot(spotName, destination, category, baseCoords);
-    if (realPhotos && realPhotos.length > 0) {
-      detailsObj.photos = realPhotos;
-    }
-  } catch (photoErr) {
-    console.warn("Could not fetch real photos for deep details:", photoErr);
-  }
 
   return detailsObj;
 }
@@ -3906,8 +4761,69 @@ Guidelines:
 }
 
 // ---------------------------------------------------------------------------
+// Help Chatbot AI Assistant Q&A Handler
+// ---------------------------------------------------------------------------
+export async function chatWithHelpAssistant(
+  messages: { role: "user" | "model" | "assistant"; text: string }[],
+  aiSettings?: any
+): Promise<string> {
+  const fallbackReply = "I'm your LocalExplorer AI Help Assistant. I can help you learn, navigate, and utilize all features of the LocalExplorer application. Feel free to ask about custom trip generation, taste profile customization, offline guides, travel wallet passes, narrator voice companions, or Firestore sync status!";
+
+  if (!messages || messages.length === 0) {
+    return fallbackReply;
+  }
+
+  const systemInstruction = `You are the official LocalExplorer AI Help Assistant. Your sole purpose is to help users learn, navigate, configure, and utilize all features of the LocalExplorer application.
+
+CRITICAL POLICY (TOPIC CONSTRAINT):
+- You MUST only answer questions related to the LocalExplorer application, its features, options, menus, and operations.
+- If a user asks a question that is NOT related to the LocalExplorer application (for example: general coding questions, unrelated recipes, general history of external events, math equations, or random general trivia), you MUST politely and gracefully decline to answer, explaining that your capabilities are strictly focused on assisting with the LocalExplorer application.
+- If they ask general travel queries like "What are the best hotels in Paris?", explain to them that they can use the Vacation Planner inside the LocalExplorer application by setting up a taste profile and inputting "Paris" as the destination, which will generate a tailored itinerary of spots, hotels, and restaurants for them!
+
+COMPREHENSIVE LOCALEXPLORER APPLICATION FEATURE DIRECTORY:
+1. Vacation Mode / Vacation Planner: Users can generate a multi-day custom trip itinerary by entering a destination city, travel dates, companion types (Solo, Couple, Family, Friends), and selecting travel vibes. Accessible on the home screen.
+2. Hometown Mode: Accessible via the top navigation toggle. It functions as a local explorer to discover hidden gems, neighborhood dining, and spots nearby where the user lives.
+3. Taste Profile: Configurable in User Profile -> Preferences. Define exact pacing, budget tier (Budget, Mid-range, Luxury), food restrictions, coffee/cocktail styles, and dietary needs. These filters are automatically embedded in AI generations.
+4. Offline Pocket Guides: Download the entire itinerary, booking reference list, maps, and descriptions as a single pocket guide for complete offline access while traveling.
+5. Travel Wallet Hub: Safely holds boarding passes, train tickets, hotel bookings, and travel passes with automatic QR/barcode visualization and offline storage. Adding bookings is manual and done via "Add booking pass" modal.
+6. Local Guide AI: Available inside each individual activity card. Clicking "Chat with Local Guide" lets users converse directly with an AI specialized in that specific spot's lore, history, legends, and famous quotes.
+7. Custom / Private Spots: Users can map out private spots or custom notes under "My Spots" or on the interactive map.
+8. Group Collaboration: Allows sharing live itineraries with other travelers to co-edit or split expenses.
+9. Interactive Map: Real-time map rendering using Leaflet that plots spots, coordinates, transit paths, and custom routes.
+10. Multi-Language Engine: Seamless instant translations of generated itineraries and application UI elements (supports Basque, Spanish, French, German, Italian, Portuguese, Japanese, Chinese, Arabic, English).
+11. Narrator AI Voice Companion: Tap the "Listen" button on any spot or local chat to hear guides read aloud with customizable human-like narrators (Kore, Puck, Fenrir, Zephyr). Personas and reading speeds can be modified in the User Profile modal.
+12. Firestore Cloud Sync: Authenticated users (via Google SSO or email sign-in) have their itineraries, profile preferences, private spots, and booking passes securely synced with Firestore. Guest users have automated offline-first local storage.
+
+Guidelines for response:
+- Be warm, professional, concise, and structured. Use bullet points or numbered lists where appropriate for easy reading.
+- Answer in the language of the user's message (e.g. if the user asks in Spanish, reply in Spanish; if in Basque, reply in Basque, etc.).
+- Never invent non-existent features or give instructions that do not apply to the feature list above.`;
+
+  // Build conversational transcript as prompt
+  const prompt = messages.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n\n") + "\n\nAssistant:";
+
+  try {
+    const result = await executeAICompletion<string>({
+      aiSettings,
+      taskCategory: "advisor",
+      prompt,
+      systemInstruction,
+      fallbackGenerator: () => fallbackReply
+    });
+
+    return result.data;
+  } catch (err: any) {
+    console.warn("[chatWithHelpAssistant] executeAICompletion failed, falling back:", err.message);
+    return fallbackReply;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Translation Service for On-The-Fly AI Text Translations
 // ---------------------------------------------------------------------------
+
+// Server-side in-memory translation cache to eliminate redundant model calls
+const serverTranslationCache = new Map<string, string>();
 
 export async function translateText(
   text: string | string[],
@@ -3921,55 +4837,144 @@ export async function translateText(
   const isArray = Array.isArray(text);
   const textList = isArray ? text : [text];
 
-  const targetLangName =
-    targetLanguage === "eu"
-      ? "Basque (Euskara)"
-      : targetLanguage === "es"
-      ? "Spanish (Castellano)"
-      : targetLanguage;
+  if (targetLanguage === "en") {
+    return text;
+  }
 
-  const prompt = `You are a professional, high-quality human translator specializing in Basque, Spanish, and regional European travel, culture, and gastronomy.
-Translate the following English texts into ${targetLangName}.
+  // Check server-side cache first
+  const results: string[] = new Array(textList.length);
+  const uncachedIndices: number[] = [];
+  const uncachedTexts: string[] = [];
+
+  textList.forEach((str, idx) => {
+    if (!str || typeof str !== "string" || str.trim().length === 0) {
+      results[idx] = str;
+      return;
+    }
+    const cacheKey = `${targetLanguage}:${str.trim()}`;
+    if (serverTranslationCache.has(cacheKey)) {
+      results[idx] = serverTranslationCache.get(cacheKey)!;
+    } else {
+      uncachedIndices.push(idx);
+      uncachedTexts.push(str);
+    }
+  });
+
+  // If all texts are cached, return immediately with zero API overhead
+  if (uncachedTexts.length === 0) {
+    return isArray ? results : results[0];
+  }
+
+  const LANG_NAMES: Record<string, string> = {
+    eu: "Basque (Euskara Batua)",
+    es: "Spanish (Español)",
+    fr: "French (Français)",
+    de: "German (Deutsch)",
+    it: "Italian (Italiano)",
+    pt: "Portuguese (Português)",
+    ja: "Japanese (日本語)",
+    zh: "Simplified Chinese (简体中文)",
+    ar: "Arabic (العربية)",
+    en: "English",
+  };
+
+  const targetLangName = LANG_NAMES[targetLanguage] || targetLanguage;
+
+  const prompt = `You are a professional, high-quality human translator specializing in international travel, culture, sights, and gastronomy.
+Translate the following English travel and itinerary texts naturally and accurately into ${targetLangName}.
 
 Guidelines:
 1. Maintain exactly the same tone, nuance, formatting, line breaks, and meaning.
-2. Translate naturally and idiomatically (do not perform literal word-for-word translations). For Basque, ensure correct grammar and use clean, standard unified Basque (Euskara Batua).
-3. Preserve all markdown tags (like bold **, italics *, or list items), pricing ranges (like €10 - €20), and name placeholders in brackets if any are present.
-4. Output your response as a JSON object with a single field "translations" containing an array of translated strings in the EXACT same order as the inputs.
+2. Translate naturally and idiomatically for local speakers.
+   - For Basque (eu), use correct grammar and clean, standard unified Basque (Euskara Batua).
+   - For Spanish (es), use natural, engaging contemporary travel Spanish.
+   - For French (fr), German (de), Italian (it), Portuguese (pt), Japanese (ja), Chinese (zh), and Arabic (ar), use polished, native-sounding phrasing.
+3. Preserve all place names, proper nouns, markdown tags (like bold **, italics *, bullet points), pricing ranges (like €10 - €20 or $15), and numbers.
+4. Output your response as a JSON object with a single field "translations" containing an array of translated strings in the EXACT same order and length as the inputs.
 
 Input texts to translate:
-${JSON.stringify(textList, null, 2)}`;
+${JSON.stringify(uncachedTexts, null, 2)}`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: PRIMARY_TEXT_MODEL,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            translations: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
+  const modelsToTry = Array.from(new Set(["gemini-3.5-flash-lite", PRIMARY_TEXT_MODEL, FALLBACK_TEXT_MODEL]));
+
+  for (const model of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              translations: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
             },
+            required: ["translations"],
           },
-          required: ["translations"],
         },
-      },
-    });
+      });
 
-    if (response.text) {
-      const parsed = JSON.parse(response.text);
-      if (parsed && Array.isArray(parsed.translations)) {
-        return isArray ? parsed.translations : parsed.translations[0];
+      if (response.text) {
+        let cleanText = response.text.trim();
+        if (cleanText.startsWith("```json")) {
+          cleanText = cleanText.replace(/^```json\s*/, "").replace(/\s*```$/, "").trim();
+        } else if (cleanText.startsWith("```")) {
+          cleanText = cleanText.replace(/^```\s*/, "").replace(/\s*```$/, "").trim();
+        }
+
+        const parsed = JSON.parse(cleanText);
+        const translationsArray = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.translations)
+          ? parsed.translations
+          : null;
+
+        if (translationsArray) {
+          translationsArray.forEach((translatedStr: any, relIdx: number) => {
+            const originalIdx = uncachedIndices[relIdx];
+            const originalStr = uncachedTexts[relIdx];
+            if (translatedStr && typeof translatedStr === "string") {
+              const cacheKey = `${targetLanguage}:${originalStr.trim()}`;
+              serverTranslationCache.set(cacheKey, translatedStr);
+              results[originalIdx] = translatedStr;
+            } else {
+              results[originalIdx] = originalStr;
+            }
+          });
+
+          // Fill any missed slots
+          uncachedIndices.forEach((origIdx) => {
+            if (!results[origIdx]) {
+              results[origIdx] = textList[origIdx];
+            }
+          });
+
+          return isArray ? results : results[0];
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[translateText] Model ${model} unavailable or rate-limited:`, err?.message || err);
+      const isRateLimit =
+        err?.status === "RESOURCE_EXHAUSTED" ||
+        err?.message?.includes("429") ||
+        err?.message?.includes("quota");
+
+      if (isRateLimit) {
+        // Wait a brief backoff period before attempting fallback model
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
-  } catch (err) {
-    console.error("Translation failed, falling back to original:", err);
   }
 
-  return text;
+  // Graceful fallback: return original English strings if all translation attempts fail
+  uncachedIndices.forEach((origIdx) => {
+    results[origIdx] = textList[origIdx];
+  });
+
+  return isArray ? results : results[0];
 }
 
 

@@ -1,4 +1,6 @@
 import { ItineraryPlan, OfflineSavedPlan } from "../types";
+import { notifyLocalDataChanged } from "./storage";
+import { generateSmartPackingList } from "./packingGenerator";
 
 const OFFLINE_PLANS_KEY = "localexplorer_offline_plans_v1";
 
@@ -40,6 +42,7 @@ export function savePlanForOffline(plan: ItineraryPlan, notes?: string): Offline
 
   const updated = [entry, ...plans.filter((p) => p.planId !== plan.id)];
   localStorage.setItem(OFFLINE_PLANS_KEY, JSON.stringify(updated));
+  notifyLocalDataChanged();
   return entry;
 }
 
@@ -47,6 +50,7 @@ export function removeOfflinePlan(planId: string): void {
   const plans = getOfflinePlans();
   const updated = plans.filter((p) => p.planId !== planId);
   localStorage.setItem(OFFLINE_PLANS_KEY, JSON.stringify(updated));
+  notifyLocalDataChanged();
 }
 
 export function toggleOfflineActivityCompleted(planId: string, activityId: string): boolean {
@@ -66,6 +70,7 @@ export function toggleOfflineActivityCompleted(planId: string, activityId: strin
   };
 
   localStorage.setItem(OFFLINE_PLANS_KEY, JSON.stringify(plans));
+  notifyLocalDataChanged();
   return !exists;
 }
 
@@ -80,6 +85,7 @@ export function updateOfflineNotes(planId: string, notes: string): void {
   };
 
   localStorage.setItem(OFFLINE_PLANS_KEY, JSON.stringify(plans));
+  notifyLocalDataChanged();
 }
 
 /**
@@ -370,12 +376,58 @@ export function generateOfflineHtml(plan: ItineraryPlan, offlineNotes?: string):
       `).join("")}
     </div>
 
-    <div class="emergency-box">
-      <h3>🚨 Offline Emergency Guide & Info</h3>
-      <p>• <strong>Emergency Number (EU/Spain):</strong> 112</p>
-      <p>• <strong>Medical / Ambulance:</strong> 061</p>
-      <p>• <strong>Local Police:</strong> 092</p>
-      <p>• <strong>Destination:</strong> ${escapeHtml(plan.destinationOrTown)}</p>
+    </div>
+
+    <!-- Smart Packing Checklist Section -->
+    <div style="background: #ffffff; border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 24px; margin-bottom: 20px;">
+      <h3 style="font-size: 15px; font-family: Georgia, serif; font-style: italic; color: var(--accent); margin-bottom: 8px;">🧳 Weather-Aware Smart Packing Checklist</h3>
+      <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Tailored gear checklist based on weather & itinerary stops:</p>
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px;">
+        ${generateSmartPackingList(plan).map((pItem) => `
+          <div style="padding: 8px 10px; border: 1px solid #e5e5df; border-radius: 8px; font-size: 12px; background: #fafaf7; display: flex; items-center; justify-content: space-between;">
+            <div>
+              <strong style="color: #2c2c24;">${escapeHtml(pItem.item)}</strong>
+              ${pItem.reason ? `<div style="font-size: 10px; color: #8a8a7e;">${escapeHtml(pItem.reason)}</div>` : ""}
+            </div>
+            <span style="font-size: 10px; padding: 2px 6px; background: #ecece4; border-radius: 4px; color: #5A5A40; height: fit-content; text-transform: uppercase; font-weight: bold;">${pItem.category}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+
+    <!-- Local Essentials & Emergency Cheat-Sheet Section -->
+    <div class="emergency-box" style="margin-top: 20px;">
+      <h3 style="font-family: Georgia, serif; font-style: italic;">🚨 Local Essentials & Emergency Cheat-Sheet</h3>
+      <div style="margin-top: 8px; font-size: 13px; line-height: 1.6;">
+        <p>• <strong>General Emergency (EU / Spain):</strong> 112</p>
+        <p>• <strong>Medical / Ambulance:</strong> 061</p>
+        <p>• <strong>Local Police (Policía Local):</strong> 092</p>
+        <p>• <strong>National Police / Guardia Civil:</strong> 091</p>
+      </div>
+
+      <div style="margin-top: 14px; pt: 10px; border-top: 1px border #ffe082;">
+        <h4 style="font-size: 13px; font-weight: 700; color: #d76d00; margin-bottom: 6px;">🍽️ Local Etiquette & Tipping</h4>
+        <p style="font-size: 12px; color: #333;"><strong>Tipping:</strong> Optional. Round up or 5–10% for exceptional service. Service charge (IVA) is included.</p>
+        <p style="font-size: 12px; color: #333; margin-top: 4px;"><strong>Mealtimes:</strong> Lunch: 1:30 PM – 4:00 PM. Dinner: 8:30 PM – 11:00 PM.</p>
+        <p style="font-size: 12px; color: #333; margin-top: 4px;"><strong>Tap Water:</strong> Tap water ("agua del grifo") is 100% safe to drink.</p>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <h4 style="font-size: 13px; font-weight: 700; color: #d76d00; margin-bottom: 6px;">⚡ Power Plugs & Utilities</h4>
+        <p style="font-size: 12px; color: #333;"><strong>Voltage:</strong> 230V / 50Hz • <strong>Plugs:</strong> Type C & Type F Europlug standard.</p>
+      </div>
+
+      <div style="margin-top: 14px;">
+        <h4 style="font-size: 13px; font-weight: 700; color: #d76d00; margin-bottom: 6px;">🗣️ Essential Survival Phrases</h4>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; font-size: 12px; margin-top: 6px;">
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>¡Ayuda!</strong> (Help!)</div>
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>Hola / Kaixo</strong> (Hello)</div>
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>Muchas gracias</strong> (Thank you)</div>
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>La cuenta, por favor</strong> (The bill, please)</div>
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>¿Dónde está...?</strong> (Where is...?)</div>
+          <div style="background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #ffe082;"><strong>¿Habla inglés?</strong> (Do you speak English?)</div>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -8,13 +8,16 @@ import {
   generateHometownItinerary,
   reiterateItineraryPlan,
   swapActivitySpot,
+  swapActivitySpotAlternatives,
   generateCandidateSpots,
   fetchActivityDeepDetails,
   chatWithActivityGuide,
   translateText,
+  chatWithHelpAssistant,
 } from "./server/geminiService.js";
 import { geocodeSpot } from "./server/geocoder.js";
 import { getRealPhotosForSpot } from "./server/photoService.js";
+import { testAIModelConnection, fetchAvailableModelsForProvider } from "./server/aiTester.js";
 
 dotenv.config();
 
@@ -31,6 +34,26 @@ async function startServer() {
       timestamp: new Date().toISOString(),
       hasGeminiKey: !!process.env.GEMINI_API_KEY,
     });
+  });
+
+  // Test Personal / System AI Model Connection
+  app.post("/api/ai/test", async (req, res) => {
+    try {
+      const result = await testAIModelConnection(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Failed to test AI model." });
+    }
+  });
+
+  // Dynamically Fetch Available Models for Provider/Key/URL
+  app.post("/api/ai/fetch-models", async (req, res) => {
+    try {
+      const result = await fetchAvailableModelsForProvider(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, models: [], message: err.message || "Failed to fetch models." });
+    }
   });
 
   // Generate Candidates for Activity Swiper
@@ -100,6 +123,21 @@ async function startServer() {
     }
   });
 
+  // Propose 3 swap alternatives
+  app.post("/api/swap-alternatives", async (req, res) => {
+    try {
+      const swapReq = req.body;
+      if (!swapReq.destinationOrTown || !swapReq.currentActivityName) {
+        return res.status(400).json({ error: "Destination and current activity name are required." });
+      }
+      const alternatives = await swapActivitySpotAlternatives(swapReq);
+      res.json(alternatives);
+    } catch (err: any) {
+      console.error("Error generating swap alternatives:", err);
+      res.status(500).json({ error: err.message || "Failed to generate alternatives." });
+    }
+  });
+
   // Reiterate / Refine Itinerary Starting from User's Edited Plan
   app.post("/api/reiterate-plan", async (req, res) => {
     try {
@@ -113,6 +151,10 @@ async function startServer() {
         transportModes,
         arrivalHour,
         departureHour,
+        accommodation,
+        accommodations,
+        startDate,
+        weatherForecast,
       } = req.body;
       if (!plan || !plan.destinationOrTown || !plan.days) {
         return res.status(400).json({ error: "Invalid plan provided for reiteration." });
@@ -125,6 +167,10 @@ async function startServer() {
         transportModes,
         arrivalHour: arrivalHour || plan.arrivalHour,
         departureHour: departureHour || plan.departureHour,
+        accommodation: accommodation || plan.accommodation,
+        accommodations: accommodations || plan.accommodations,
+        startDate: startDate || plan.startDate,
+        weatherForecast: weatherForecast || plan.weatherForecast,
       });
       res.json(newPlan);
     } catch (err: any) {
@@ -173,6 +219,21 @@ async function startServer() {
     }
   });
 
+  // Dedicated Chatbot Assistant for Application Help & Feature Guidance
+  app.post("/api/help-chat", async (req, res) => {
+    try {
+      const { messages, aiSettings } = req.body;
+      if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: "messages is required and must be an array" });
+      }
+      const reply = await chatWithHelpAssistant(messages, aiSettings);
+      res.json({ reply });
+    } catch (err: any) {
+      console.error("Error in help chat:", err);
+      res.status(500).json({ error: err.message || "Failed to chat with help assistant." });
+    }
+  });
+
   // Translate text or array of texts dynamically using Gemini
   app.post("/api/translate", async (req, res) => {
     try {
@@ -184,10 +245,10 @@ async function startServer() {
         return res.json({ translation: text });
       }
       const translation = await translateText(text, targetLanguage);
-      res.json({ translation });
+      res.json({ translation: translation || text });
     } catch (err: any) {
-      console.error("Error in dynamic translation endpoint:", err);
-      res.status(500).json({ error: err.message || "Failed to translate text." });
+      console.warn("Translation fallback engaged:", err?.message || err);
+      res.json({ translation: req.body?.text || "" });
     }
   });
 

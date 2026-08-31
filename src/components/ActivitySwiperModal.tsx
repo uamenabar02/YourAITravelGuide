@@ -16,6 +16,7 @@ import {
   Layers,
 } from "lucide-react";
 import { getCuratedPhotosForSpot, generateGoogleMapsSearchUrl, generateSampleReviews } from "../utils/destinations";
+import { TranslatedText } from "./TranslatedText";
 
 interface ActivitySwiperModalProps {
   destination: string;
@@ -84,17 +85,17 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
             </span>
             <div>
               <h3 className="font-serif text-lg font-light italic text-[#2c2c24]">
-                Activity Discovery Swiper
+                <TranslatedText text="Activity Discovery Swiper" />
               </h3>
               <p className="text-[11px] text-[#8a8a7e] font-sans font-medium">
-                {destination} • Swipe right to prioritize spots
+                {destination} • <TranslatedText text="Swipe right to prioritize spots" />
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors"
+            className="p-1.5 rounded-full text-[#8a8a7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -104,18 +105,18 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
         <div className="px-6 py-2.5 bg-white border-b border-[#ecece4] flex items-center justify-between text-xs">
           <div className="flex items-center space-x-2 text-[#5A5A40] font-medium font-serif italic">
             <Heart className="w-3.5 h-3.5 fill-[#5A5A40] text-[#5A5A40]" />
-            <span>{likedSpots.length} Liked</span>
+            <span>{likedSpots.length} <TranslatedText text="Liked" /></span>
           </div>
 
           <span className="text-[#8a8a7e] font-sans">
-            {isFinished ? "Completed" : `Spot ${currentIndex + 1} of ${candidates.length}`}
+            {isFinished ? <TranslatedText text="Completed" /> : <TranslatedText text={`Spot ${currentIndex + 1} of ${candidates.length}`} />}
           </span>
 
           <button
             onClick={handleBuildPlan}
-            className="px-3 py-1 bg-[#5A5A40] text-white text-xs rounded-full font-serif italic hover:bg-[#4a4a35] transition-all shadow-xs"
+            className="px-3 py-1 bg-[#5A5A40] text-white text-xs rounded-full font-serif italic hover:bg-[#4a4a35] transition-all shadow-xs cursor-pointer"
           >
-            Build Plan ({likedSpots.length})
+            <TranslatedText text="Build Plan" /> ({likedSpots.length})
           </button>
         </div>
 
@@ -127,18 +128,18 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                 🎉
               </div>
               <h4 className="font-serif text-2xl font-light italic text-[#2c2c24]">
-                Discovery Session Complete!
+                <TranslatedText text="Discovery Session Complete!" />
               </h4>
               <p className="text-sm text-[#6b6b5e] max-w-xs mx-auto">
-                You liked {likedSpots.length} activities. LocalExplorer AI will now build your optimal itinerary incorporating your selections!
+                <TranslatedText text={`You liked ${likedSpots.length} activities. LocalExplorer AI will now build your optimal itinerary incorporating your selections!`} />
               </p>
 
               <div className="pt-4">
                 <button
                   onClick={handleBuildPlan}
-                  className="w-full py-3.5 px-6 rounded-2xl bg-[#5A5A40] text-white font-serif italic font-medium hover:bg-[#4a4a35] shadow-sm transition-all"
+                  className="w-full py-3.5 px-6 rounded-2xl bg-[#5A5A40] text-white font-serif italic font-medium hover:bg-[#4a4a35] shadow-sm transition-all cursor-pointer"
                 >
-                  Generate My Tailored Itinerary →
+                  <TranslatedText text="Generate My Tailored Itinerary →" />
                 </button>
               </div>
             </div>
@@ -172,7 +173,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                         e.stopPropagation();
                         setActivePhotoIndex((prev) => (prev > 0 ? prev - 1 : photos.length - 1));
                       }}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/40 text-white hover:bg-black/70 backdrop-blur-xs transition-colors"
+                      className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/40 text-white hover:bg-black/70 backdrop-blur-xs transition-colors cursor-pointer"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
@@ -182,7 +183,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                         e.stopPropagation();
                         setActivePhotoIndex((prev) => (prev < photos.length - 1 ? prev + 1 : 0));
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/40 text-white hover:bg-black/70 backdrop-blur-xs transition-colors"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/40 text-white hover:bg-black/70 backdrop-blur-xs transition-colors cursor-pointer"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
@@ -192,7 +193,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                 {/* Category & Rating Badges on Photo */}
                 <div className="absolute top-3 left-3 flex items-center space-x-2">
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-black/50 text-white backdrop-blur-xs border border-white/20 capitalize">
-                    {currentSpot.category}
+                    <TranslatedText text={currentSpot.category} />
                   </span>
                 </div>
 
@@ -220,17 +221,17 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
               <div>
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="font-serif text-xl font-medium italic text-[#2c2c24] leading-snug">
-                    {currentSpot.name}
+                    <TranslatedText text={currentSpot.name} />
                   </h4>
                   <span className="text-xs font-serif italic text-[#2c2c24] bg-[#ecece4] px-2.5 py-1 rounded-full border border-[#d1d1ca] shrink-0">
-                    {currentSpot.approxCost}
+                    <TranslatedText text={currentSpot.approxCost} />
                   </span>
                 </div>
 
                 {/* Exact Location & Address */}
                 <div className="flex items-center space-x-1.5 text-xs text-[#8a8a7e] font-sans mt-1">
                   <MapPin className="w-3.5 h-3.5 text-[#5A5A40] shrink-0" />
-                  <span className="line-clamp-1">{currentSpot.address || `${destination} (Exact coords mapped)`}</span>
+                  <span className="line-clamp-1"><TranslatedText text={currentSpot.address || `${destination} (Exact coords mapped)`} /></span>
                 </div>
               </div>
 
@@ -239,21 +240,21 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowReviewsTab(false)}
-                  className={`flex-1 py-1.5 rounded-lg font-medium transition-all ${
+                  className={`flex-1 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
                     !showReviewsTab ? "bg-white text-[#2c2c24] shadow-xs" : "text-[#6b6b5e]"
                   }`}
                 >
-                  Overview & Tips
+                  <TranslatedText text="Overview & Tips" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowReviewsTab(true)}
-                  className={`flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center space-x-1 ${
+                  className={`flex-1 py-1.5 rounded-lg font-medium transition-all flex items-center justify-center space-x-1 cursor-pointer ${
                     showReviewsTab ? "bg-white text-[#2c2c24] shadow-xs" : "text-[#6b6b5e]"
                   }`}
                 >
                   <MessageSquare className="w-3 h-3 text-[#5A5A40]" />
-                  <span>Google Maps Opinions ({reviews.length})</span>
+                  <span><TranslatedText text="Google Maps Opinions" /> ({reviews.length})</span>
                 </button>
               </div>
 
@@ -261,15 +262,15 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
               {!showReviewsTab ? (
                 <div className="space-y-3 text-xs text-[#2c2c24]">
                   <p className="leading-relaxed font-sans text-sm text-[#2c2c24]/90">
-                    {currentSpot.description}
+                    <TranslatedText text={currentSpot.description} />
                   </p>
 
                   {currentSpot.insiderTip && (
                     <div className="bg-[#ecece4] border border-[#d1d1ca] p-3 rounded-xl text-xs flex items-start space-x-2">
                       <span className="text-base">💡</span>
                       <div>
-                        <span className="font-serif italic font-semibold text-[#2c2c24] mr-1">Insider Secret:</span>
-                        <span className="text-[#6b6b5e]">{currentSpot.insiderTip}</span>
+                        <span className="font-serif italic font-semibold text-[#2c2c24] mr-1"><TranslatedText text="Insider Secret:" /></span>
+                        <span className="text-[#6b6b5e]"><TranslatedText text={currentSpot.insiderTip} /></span>
                       </div>
                     </div>
                   )}
@@ -278,7 +279,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                 /* Tab 2: Google Maps Reviews & Opinions */
                 <div className="space-y-2.5 text-xs">
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-amber-900">
-                    <span className="font-medium">Google Maps Visitor Sentiment</span>
+                    <span className="font-medium"><TranslatedText text="Google Maps Visitor Sentiment" /></span>
                     <span className="font-bold flex items-center">
                       <Star className="w-3 h-3 fill-amber-500 text-amber-500 mr-1" />
                       {currentSpot.rating || 4.9} / 5.0
@@ -296,7 +297,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                             ))}
                           </div>
                         </div>
-                        <p className="text-[#6b6b5e] italic font-serif">"{rev.text}"</p>
+                        <p className="text-[#6b6b5e] italic font-serif">"<TranslatedText text={rev.text} />"</p>
                       </div>
                     ))}
                   </div>
@@ -312,7 +313,7 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
                   className="w-full flex items-center justify-center space-x-1.5 py-2 px-3 rounded-xl bg-[#f5f5f0] hover:bg-[#ecece4] text-[#5A5A40] border border-[#d1d1ca] text-xs font-medium transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>View on Google Maps & Reviews</span>
+                  <span><TranslatedText text="View on Google Maps & Reviews" /></span>
                 </a>
               </div>
             </div>
@@ -325,19 +326,19 @@ export const ActivitySwiperModal: React.FC<ActivitySwiperModalProps> = ({
             <button
               type="button"
               onClick={() => handleSwipe("left")}
-              className="flex-1 py-3 px-4 rounded-2xl bg-white border border-[#d1d1ca] hover:bg-rose-50 hover:border-rose-300 text-[#6b6b5e] hover:text-rose-700 font-sans font-medium text-sm flex items-center justify-center space-x-2 transition-all shadow-xs"
+              className="flex-1 py-3 px-4 rounded-2xl bg-white border border-[#d1d1ca] hover:bg-rose-50 hover:border-rose-300 text-[#6b6b5e] hover:text-rose-700 font-sans font-medium text-sm flex items-center justify-center space-x-2 transition-all shadow-xs cursor-pointer"
             >
               <X className="w-4 h-4 text-rose-500" />
-              <span>Pass / Skip</span>
+              <span><TranslatedText text="Pass / Skip" /></span>
             </button>
 
             <button
               type="button"
               onClick={() => handleSwipe("right")}
-              className="flex-1 py-3 px-4 rounded-2xl bg-[#5A5A40] hover:bg-[#4a4a35] text-white font-serif italic font-medium text-sm flex items-center justify-center space-x-2 transition-all shadow-sm active:scale-95"
+              className="flex-1 py-3 px-4 rounded-2xl bg-[#5A5A40] hover:bg-[#4a4a35] text-white font-serif italic font-medium text-sm flex items-center justify-center space-x-2 transition-all shadow-sm active:scale-95 cursor-pointer"
             >
               <Heart className="w-4 h-4 fill-white" />
-              <span>Add to Plan ❤️</span>
+              <span><TranslatedText text="Add to Plan ❤️" /></span>
             </button>
           </div>
         )}
