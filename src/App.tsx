@@ -38,9 +38,10 @@ import { parseShareableUrl } from "./utils/sharing";
 import { loadAISettings } from "./utils/aiConfig";
 import { getKnownSpotsForDestination } from "./utils/destinations";
 import { subscribeToSharedTrip, publishSharedTripUpdate } from "./utils/sharedTripService";
+import { authedFetch } from "./utils/apiClient";
 
 async function safeFetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await authedFetch(url, init);
   const contentType = res.headers.get("content-type") || "";
   
   if (!res.ok || !contentType.includes("application/json")) {
@@ -202,7 +203,7 @@ function AppContent() {
           : prefs.destination;
 
         // Try fetching candidate spots from server passing full user preferences
-        const res = await fetch("/api/generate-candidates", {
+        const res = await authedFetch("/api/generate-candidates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

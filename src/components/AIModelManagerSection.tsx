@@ -39,6 +39,7 @@ import {
   testAIModelConnection,
 } from "../utils/aiConfig";
 import { TranslatedText } from "./TranslatedText";
+import { authedFetch } from "../utils/apiClient";
 
 interface AIModelManagerSectionProps {
   onSettingsChanged?: () => void;
@@ -117,7 +118,7 @@ export const AIModelManagerSection: React.FC<AIModelManagerSectionProps> = ({
     setIsFetchingModels(true);
     setFetchModelsMsg(null);
     try {
-      const res = await fetch("/api/ai/fetch-models", {
+      const res = await authedFetch("/api/ai/fetch-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

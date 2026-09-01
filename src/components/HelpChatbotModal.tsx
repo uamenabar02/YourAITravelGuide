@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useLanguage } from "../context/LanguageContext";
 import { TranslatedText } from "./TranslatedText";
+import { authedFetch } from "../utils/apiClient";
 import { loadAISettings } from "../utils/aiConfig";
 
 interface HelpMessage {
@@ -113,7 +114,7 @@ export const HelpChatbotModal: React.FC<HelpChatbotModalProps> = ({ isOpen, onCl
     }));
 
     try {
-      const res = await fetch("/api/help-chat", {
+      const res = await authedFetch("/api/help-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

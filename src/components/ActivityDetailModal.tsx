@@ -8,6 +8,7 @@ import {
   ActivityCategory,
 } from "../types";
 import { escapeHtml } from "../utils/offlineStorage";
+import { authedFetch } from "../utils/apiClient";
 import {
   X,
   MapPin,
@@ -362,7 +363,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
           lat: String(spot.coordinates?.lat || ""),
           lng: String(spot.coordinates?.lng || ""),
         });
-        const res = await fetch(`/api/place-photos?${queryParams.toString()}`);
+        const res = await authedFetch(`/api/place-photos?${queryParams.toString()}`);
         if (res.ok) {
           const data = await res.json();
           if (!isCancelled && data.photos && data.photos.length > 0) {
@@ -487,7 +488,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
 
       setLoadingDetails(true);
       try {
-        const res = await fetch("/api/activity-details", {
+        const res = await authedFetch("/api/activity-details", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -674,7 +675,7 @@ export const ActivityDetailModal: React.FC<ActivityDetailModalProps> = ({
     setIsSendingChat(true);
 
     try {
-      const res = await fetch("/api/activity-chat", {
+      const res = await authedFetch("/api/activity-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

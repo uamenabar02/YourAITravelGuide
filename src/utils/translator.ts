@@ -1,5 +1,6 @@
 import { Language } from "../context/LanguageContext";
 import { ItineraryPlan } from "../types";
+import { authedFetch } from "./apiClient";
 
 const CACHE_STORAGE_KEY = "localexplorer_ai_translation_cache_v2";
 export const TRANSLATION_EVENT = "localexplorer_translation_updated";
@@ -191,7 +192,7 @@ export async function fetchTranslationBatch(texts: string[], lang: Language): Pr
     let success = false;
     for (let attempt = 0; attempt < 2 && !success; attempt++) {
       try {
-        const res = await fetch("/api/translate", {
+        const res = await authedFetch("/api/translate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: chunkTexts, targetLanguage: lang }),

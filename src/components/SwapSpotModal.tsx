@@ -22,6 +22,7 @@ import { useLanguage } from "../context/LanguageContext";
 import { AccommodationMapPickerModal } from "./AccommodationMapPickerModal";
 import { findVerifiedDestination } from "../utils/destinations";
 import { escapeHtml } from "../utils/offlineStorage";
+import { authedFetch } from "../utils/apiClient";
 
 interface SwapSpotModalProps {
   isOpen: boolean;
@@ -316,7 +317,7 @@ export const SwapSpotModal: React.FC<SwapSpotModalProps> = ({
         d.activities.map((a) => a.name)
       );
 
-      const res = await fetch("/api/swap-alternatives", {
+      const res = await authedFetch("/api/swap-alternatives", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -49,6 +49,7 @@ service cloud.firestore {
       allow create: if isValidId(tripId)
         && request.auth != null
         && request.resource.data.plan is map
+        && request.resource.data.creatorUid == request.auth.uid
         && isNonEmptyString(request.resource.data.creatorEmail, 320);
 
       // Creator can update full trip; non-creators may only update interaction & collaboration fields
@@ -58,7 +59,7 @@ service cloud.firestore {
           (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
           (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'reviews', 'rating', 'ratingsCount', 'downloadsCount', 'collabState', 'lastUpdated', 'updatedByEmail', 'offlineNotes', 'walletPasses'
+            'reviews', 'rating', 'ratingsCount', 'downloadsCount', 'collabState', 'lastUpdated', 'updatedByEmail'
           ])
         );
 

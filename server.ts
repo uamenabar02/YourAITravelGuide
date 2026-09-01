@@ -2,6 +2,8 @@ import express from "express";
 import path from "path";
 import http from "http";
 import dotenv from "dotenv";
+import cors from "cors";
+import helmet from "helmet";
 import { createServer as createViteServer } from "vite";
 import {
   generateVacationItinerary,
@@ -18,16 +20,57 @@ import {
 import { geocodeSpot } from "./server/geocoder.js";
 import { getRealPhotosForSpot } from "./server/photoService.js";
 import { testAIModelConnection, fetchAvailableModelsForProvider } from "./server/aiTester.js";
+import { requireAuth, AuthedRequest } from "./server/middleware/requireAuth.js";
+import { requireAppCheck } from "./server/middleware/requireAppCheck.js";
+import { rateLimit, ipRateLimiter } from "./server/middleware/rateLimit.js";
 
 dotenv.config();
+
+const translationCache = new Map<string, string | string[]>();
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  // Security Headers (Disable frameguard so AI Studio preview iframe can embed app)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      frameguard: false,
+    })
+  );
 
-  // API Routes
+  // CORS Configuration
+  app.use(
+    cors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (
+          origin.includes("localhost") ||
+          origin.includes("127.0.0.1") ||
+          origin.includes("run.app") ||
+          origin.includes("e2b.app") ||
+          origin.includes("firebaseapp.com") ||
+          origin.includes("web.app") ||
+          origin.includes("ai.studio") ||
+          origin.includes("google.com") ||
+          origin.includes("googleusercontent.com")
+        ) {
+          return cb(null, true);
+        }
+        return cb(null, true);
+      },
+      methods: ["GET", "POST", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Firebase-AppCheck"],
+    })
+  );
+
+  // IP Rate Limit Backstop & Payload Limits
+  app.use(ipRateLimiter);
+  app.use(express.json({ limit: "1mb" }));
+
+  // API Health Route (Public, Unauthenticated)
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
@@ -36,8 +79,11 @@ async function startServer() {
     });
   });
 
+  // Common middleware stack for authenticated API routes
+  const authedStack = [requireAuth, requireAppCheck];
+
   // Test Personal / System AI Model Connection
-  app.post("/api/ai/test", async (req, res) => {
+  app.post("/api/ai/test", authedStack, rateLimit("ai-test"), async (req: AuthedRequest, res) => {
     try {
       const result = await testAIModelConnection(req.body);
       res.json(result);
@@ -47,7 +93,7 @@ async function startServer() {
   });
 
   // Dynamically Fetch Available Models for Provider/Key/URL
-  app.post("/api/ai/fetch-models", async (req, res) => {
+  app.post("/api/ai/fetch-models", authedStack, rateLimit("ai-fetch-models"), async (req: AuthedRequest, res) => {
     try {
       const result = await fetchAvailableModelsForProvider(req.body);
       res.json(result);
@@ -57,7 +103,7 @@ async function startServer() {
   });
 
   // Generate Candidates for Activity Swiper
-  app.post("/api/generate-candidates", async (req, res) => {
+  app.post("/api/generate-candidates", authedStack, rateLimit("generate-candidates"), async (req: AuthedRequest, res) => {
     try {
       const { destination, count, vibes, budgetTier, exactBudgetPerDay, currency, pace, userSpots, tasteProfile } =
         req.body;
@@ -83,7 +129,7 @@ async function startServer() {
   });
 
   // Generate Itinerary (Vacation or Hometown)
-  app.post("/api/generate-plan", async (req, res) => {
+  app.post("/api/generate-plan", authedStack, rateLimit("generate-plan"), async (req: AuthedRequest, res) => {
     try {
       const { mode, vacationPrefs, hometownPrefs } = req.body;
 
@@ -109,7 +155,7 @@ async function startServer() {
   });
 
   // Swap Single Activity Spot
-  app.post("/api/swap-activity", async (req, res) => {
+  app.post("/api/swap-activity", authedStack, rateLimit("swap-activity"), async (req: AuthedRequest, res) => {
     try {
       const swapReq = req.body;
       if (!swapReq.destinationOrTown || !swapReq.currentActivityName) {
@@ -124,7 +170,7 @@ async function startServer() {
   });
 
   // Propose 3 swap alternatives
-  app.post("/api/swap-alternatives", async (req, res) => {
+  app.post("/api/swap-alternatives", authedStack, rateLimit("swap-alternatives"), async (req: AuthedRequest, res) => {
     try {
       const swapReq = req.body;
       if (!swapReq.destinationOrTown || !swapReq.currentActivityName) {
@@ -139,7 +185,7 @@ async function startServer() {
   });
 
   // Reiterate / Refine Itinerary Starting from User's Edited Plan
-  app.post("/api/reiterate-plan", async (req, res) => {
+  app.post("/api/reiterate-plan", authedStack, rateLimit("reiterate-plan"), async (req: AuthedRequest, res) => {
     try {
       const {
         plan,
@@ -180,7 +226,7 @@ async function startServer() {
   });
 
   // Deep Activity Details, Historical Context, Anecdotes, & Sub-spots
-  app.post("/api/activity-details", async (req, res) => {
+  app.post("/api/activity-details", authedStack, rateLimit("activity-details"), async (req: AuthedRequest, res) => {
     try {
       const { spotName, destination, category, address, description, coordinates } = req.body;
       if (!spotName || !destination) {
@@ -202,7 +248,7 @@ async function startServer() {
   });
 
   // Dedicated Local Guide / Travel Agent AI Chatbot for a specific activity
-  app.post("/api/activity-chat", async (req, res) => {
+  app.post("/api/activity-chat", authedStack, rateLimit("activity-chat"), async (req: AuthedRequest, res) => {
     try {
       const { messages, spotContext } = req.body;
       if (!messages || !spotContext || !spotContext.spotName) {
@@ -220,7 +266,7 @@ async function startServer() {
   });
 
   // Dedicated Chatbot Assistant for Application Help & Feature Guidance
-  app.post("/api/help-chat", async (req, res) => {
+  app.post("/api/help-chat", authedStack, rateLimit("help-chat"), async (req: AuthedRequest, res) => {
     try {
       const { messages, aiSettings } = req.body;
       if (!messages || !Array.isArray(messages)) {
@@ -235,7 +281,7 @@ async function startServer() {
   });
 
   // Translate text or array of texts dynamically using Gemini
-  app.post("/api/translate", async (req, res) => {
+  app.post("/api/translate", authedStack, rateLimit("translate"), async (req: AuthedRequest, res) => {
     try {
       const { text, targetLanguage } = req.body;
       if (!text || !targetLanguage) {
@@ -244,7 +290,16 @@ async function startServer() {
       if (targetLanguage === "en") {
         return res.json({ translation: text });
       }
+
+      const cacheKey = `${targetLanguage}:${typeof text === "string" ? text : JSON.stringify(text)}`;
+      if (translationCache.has(cacheKey)) {
+        return res.json({ translation: translationCache.get(cacheKey) });
+      }
+
       const translation = await translateText(text, targetLanguage);
+      if (translation) {
+        translationCache.set(cacheKey, translation);
+      }
       res.json({ translation: translation || text });
     } catch (err: any) {
       console.warn("Translation fallback engaged:", err?.message || err);
@@ -253,7 +308,7 @@ async function startServer() {
   });
 
   // Real-world photo resolver using Wikimedia Commons & Wikipedia
-  app.get("/api/place-photos", async (req, res) => {
+  app.get("/api/place-photos", authedStack, rateLimit("place-photos"), async (req: AuthedRequest, res) => {
     try {
       const spotName = String(req.query.spotName || "").trim();
       const destination = String(req.query.destination || "").trim();
@@ -267,6 +322,7 @@ async function startServer() {
 
       const coords = lat && lng && !isNaN(lat) && !isNaN(lng) ? { lat, lng } : undefined;
       const photos = await getRealPhotosForSpot(spotName, destination, category, coords);
+      res.set("Cache-Control", "private, max-age=86400");
       res.json({ photos });
     } catch (err: any) {
       console.error("Error resolving real place photos:", err);
@@ -275,8 +331,7 @@ async function startServer() {
   });
 
   // Dynamic geocoding (Nominatim): resolve any named place to coordinates.
-  // Used by "My Places" and anywhere the app must not depend on static data.
-  app.get("/api/geocode", async (req, res) => {
+  app.get("/api/geocode", authedStack, rateLimit("geocode"), async (req: AuthedRequest, res) => {
     try {
       const q = String(req.query.q || "").trim();
       const context = String(req.query.context || "").trim();
@@ -287,6 +342,7 @@ async function startServer() {
       if (!result) {
         return res.status(404).json({ error: "No geocoding results for this place." });
       }
+      res.set("Cache-Control", "private, max-age=86400");
       res.json(result);
     } catch (err: any) {
       console.error("Error geocoding:", err);
@@ -294,8 +350,8 @@ async function startServer() {
     }
   });
 
-  // Live Weather & Geolocation helper (Open-Meteo & Nominatim proxy if needed)
-  app.get("/api/weather", async (req, res) => {
+  // Live Weather & Geolocation helper
+  app.get("/api/weather", authedStack, rateLimit("weather"), async (req: AuthedRequest, res) => {
     try {
       const { lat, lng } = req.query;
       if (!lat || !lng) {
@@ -307,6 +363,7 @@ async function startServer() {
         throw new Error("Weather API request failed");
       }
       const data = await response.json();
+      res.set("Cache-Control", "private, max-age=3600");
       res.json(data);
     } catch (err: any) {
       console.error("Error fetching weather:", err);
@@ -314,22 +371,17 @@ async function startServer() {
     }
   });
 
-  // Shared HTTP server so the Vite HMR websocket can be served from the SAME
-  // port as the app. This is required for the app to work behind a reverse
-  // proxy / preview host (only one port is exposed), and keeps local dev working.
+  // Shared HTTP server
   const httpServer = http.createServer(app);
+  httpServer.timeout = 30000; // 30s connection timeout
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // Allow the sandboxed preview host (and any origin) so the dev app is
-        // reachable through the proxied *.e2b.app preview URL.
         allowedHosts: true,
         hmr: {
-          // Serve HMR upgrades on the main app server/port rather than a
-          // separate port that a proxy may not expose.
           server: httpServer,
         },
       },
@@ -350,4 +402,3 @@ async function startServer() {
 }
 
 startServer();
-

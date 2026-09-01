@@ -199,25 +199,38 @@ export async function publishSharedTripUpdate(
       try {
         const docRef = doc(db, SHARED_TRIPS_COLLECTION, plan.id);
         const snap = await getDoc(docRef);
-        const existingData = snap.exists() ? (snap.data() as SharedTripDoc) : null;
+        const isExistingDoc = snap.exists();
+        const existingData = isExistingDoc ? (snap.data() as SharedTripDoc) : null;
+        const currentUid = auth.currentUser?.uid;
+        const isCreator = !existingData || !existingData.creatorUid || existingData.creatorUid === currentUid;
 
         const cleanEmail = (userEmail || plan.creatorEmail || "traveler@localexplorer.ai").toLowerCase();
         const currentWalletPasses = walletPasses || getTripWalletPasses(plan.id);
 
-        const payload: SharedTripDoc = {
-          id: plan.id,
-          creatorEmail: existingData?.creatorEmail || plan.creatorEmail || cleanEmail,
-          creatorUid: existingData?.creatorUid || auth.currentUser?.uid || undefined,
-          creatorName: existingData?.creatorName || userName || plan.creatorEmail || "Trip Organizer",
-          plan,
-          collabState: effectiveCollab,
-          offlineNotes: offlineNotes || existingData?.offlineNotes || "",
-          walletPasses: currentWalletPasses,
-          lastUpdated: Date.now(),
-          updatedByEmail: cleanEmail,
-        };
+        if (isExistingDoc && !isCreator) {
+          // Non-creator collaborator update: update only permitted collaboration fields
+          await updateDoc(docRef, {
+            collabState: effectiveCollab,
+            lastUpdated: Date.now(),
+            updatedByEmail: cleanEmail,
+          });
+        } else {
+          // Creator or initial creation update: write full payload
+          const payload: SharedTripDoc = {
+            id: plan.id,
+            creatorEmail: existingData?.creatorEmail || plan.creatorEmail || cleanEmail,
+            creatorUid: existingData?.creatorUid || currentUid || undefined,
+            creatorName: existingData?.creatorName || userName || plan.creatorEmail || "Trip Organizer",
+            plan,
+            collabState: effectiveCollab,
+            offlineNotes: offlineNotes || existingData?.offlineNotes || "",
+            walletPasses: currentWalletPasses,
+            lastUpdated: Date.now(),
+            updatedByEmail: cleanEmail,
+          };
 
-        await setDoc(docRef, sanitizeForFirestore(payload), { merge: true });
+          await setDoc(docRef, sanitizeForFirestore(payload), { merge: true });
+        }
       } catch (err) {
         console.warn("Failed to publish shared trip update to cloud:", err);
       }

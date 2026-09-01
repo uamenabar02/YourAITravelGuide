@@ -281,6 +281,20 @@ export async function executeAICompletion<T>(
   throw new Error(`All selected AI models failed. Warnings:\n${warnings.join("\n")}`);
 }
 
+function getMaxOutputTokensForTask(taskCategory?: AITaskCategory): number {
+  switch (taskCategory) {
+    case "itinerary":
+      return 8000;
+    case "activity_details":
+      return 4000;
+    case "spot_swap":
+      return 2000;
+    case "advisor":
+    default:
+      return 1000;
+  }
+}
+
 async function callModelAPI(
   config: UserAIModelConfig,
   prompt: string,
@@ -289,6 +303,7 @@ async function callModelAPI(
   taskCategory?: AITaskCategory
 ): Promise<string> {
   const provider = config.provider;
+  const maxTokens = getMaxOutputTokensForTask(taskCategory);
 
   // 1. System Gemini API (via process.env.GEMINI_API_KEY)
   if (provider === "system_gemini") {
@@ -298,12 +313,18 @@ async function callModelAPI(
     }
 
     const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
-    const model = config.modelId || "gemini-3.6-flash";
+    
+    // System calls are strictly locked to Flash tier models
+    let model = config.modelId || "gemini-3.6-flash";
+    if (model.includes("pro") || model.includes("2.5-pro")) {
+      console.log(`[AI Executor] Enforcing Flash tier model for system provider (was ${model}) -> gemini-3.6-flash`);
+      model = "gemini-3.6-flash";
+    }
 
     const reqConfig: any = {
       systemInstruction,
       temperature: 0.7,
-      maxOutputTokens: 32768,
+      maxOutputTokens: maxTokens,
     };
 
     if (responseSchema) {
@@ -318,6 +339,10 @@ async function callModelAPI(
       contents: prompt,
       config: reqConfig,
     });
+
+    if (res.usageMetadata) {
+      console.log(`[AI Usage Log] Task: ${taskCategory || "general"}, Model: ${model}, InputTokens: ${res.usageMetadata.promptTokenCount}, OutputTokens: ${res.usageMetadata.candidatesTokenCount}, Total: ${res.usageMetadata.totalTokenCount}`);
+    }
 
     let rawText = res.text || "";
     if (!rawText && (res as any).candidates?.[0]?.content?.parts) {
@@ -340,7 +365,7 @@ async function callModelAPI(
     const reqConfig: any = {
       systemInstruction,
       temperature: 0.7,
-      maxOutputTokens: 32768,
+      maxOutputTokens: maxTokens,
     };
 
     if (responseSchema) {

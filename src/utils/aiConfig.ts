@@ -1,4 +1,5 @@
 import { AIProvider, UserAIModelConfig, AISelectionSettings, AITaskCategory } from "../types";
+import { authedFetch } from "./apiClient";
 
 export const SYSTEM_MODELS: UserAIModelConfig[] = [
   {
@@ -233,7 +234,7 @@ export async function testAIModelConnection(modelConfig: UserAIModelConfig): Pro
 }> {
   const startTime = Date.now();
   try {
-    const response = await fetch("/api/ai/test", {
+    const response = await authedFetch("/api/ai/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -1,5 +1,56 @@
 import { GoogleGenAI } from "@google/genai";
 
+export function validateAndSanitizeBaseUrl(rawUrl?: string): string {
+  if (!rawUrl || typeof rawUrl !== "string") {
+    return "";
+  }
+  const urlStr = rawUrl.trim();
+  if (!urlStr) return "";
+
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    throw new Error("Invalid Base URL format.");
+  }
+
+  const protocol = parsed.protocol.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block non-HTTP/HTTPS schemes
+  if (protocol !== "http:" && protocol !== "https:") {
+    throw new Error("Only HTTP and HTTPS protocols are allowed for Base URL.");
+  }
+
+  const isDev = process.env.NODE_ENV !== "production";
+
+  // SSRF Protection: Block private and link-local IP ranges
+  // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16 (metadata endpoint 169.254.169.254), 0.0.0.0, ::1, fc00::/7
+  const blockedPatterns = [
+    /^10\./,
+    /^172\.(1[6-9]|2[0-9]|3[01])\./,
+    /^192\.168\./,
+    /^127\./,
+    /^169\.254\./,
+    /^0\.0\.0\.0$/,
+    /^localhost$/i,
+    /^::1$/,
+    /^fc00:/i,
+    /^fe80:/i,
+  ];
+
+  for (const pattern of blockedPatterns) {
+    if (pattern.test(hostname)) {
+      if ((hostname === "localhost" || hostname === "127.0.0.1") && isDev) {
+        continue;
+      }
+      throw new Error(`Access to private, loopback, or cloud metadata endpoint '${hostname}' is strictly forbidden.`);
+    }
+  }
+
+  return parsed.toString();
+}
+
 interface TestRequest {
   provider: string;
   modelId: string;
@@ -17,7 +68,7 @@ export async function testAIModelConnection(req: TestRequest): Promise<{
   const provider = (req.provider || "").trim();
   const modelId = (req.modelId || "").trim();
   const apiKey = (req.apiKey || "").trim().replace(/^["']|["']$/g, '');
-  const baseUrl = (req.baseUrl || "").trim();
+  const baseUrl = req.baseUrl ? validateAndSanitizeBaseUrl(req.baseUrl) : "";
   const isSystem = req.isSystem;
 
   try {
@@ -410,7 +461,7 @@ export async function fetchAvailableModelsForProvider(req: {
 }): Promise<{ success: boolean; models: Array<{ id: string; name?: string }>; message?: string }> {
   const provider = (req.provider || "").trim();
   const apiKey = (req.apiKey || "").trim().replace(/^["']|["']$/g, '');
-  const baseUrl = (req.baseUrl || "").trim();
+  const baseUrl = req.baseUrl ? validateAndSanitizeBaseUrl(req.baseUrl) : "";
 
   try {
     if (provider === "openrouter") {

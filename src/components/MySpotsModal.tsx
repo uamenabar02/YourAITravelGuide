@@ -4,6 +4,7 @@ import { UserSpot } from "../types";
 import { getMySpots, addMySpot, removeMySpot } from "../utils/storage";
 import { useLanguage } from "../context/LanguageContext";
 import { useAuth } from "../context/AuthContext";
+import { authedFetch } from "../utils/apiClient";
 
 interface MySpotsModalProps {
   isOpen: boolean;
@@ -85,7 +86,7 @@ export const MySpotsModal: React.FC<MySpotsModalProps> = ({
     try {
       const q = encodeURIComponent(cleanName);
       const ctx = encodeURIComponent(town.trim());
-      const res = await fetch(`/api/geocode?q=${q}&context=${ctx}`);
+      const res = await authedFetch(`/api/geocode?q=${q}&context=${ctx}`);
       if (res.ok) {
         const data = await res.json();
         if (typeof data.lat === "number" && typeof data.lng === "number") {
