@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
 import { sanitizeForFirestore } from "./sanitizeFirestore";
 import {
   ItineraryPlan,
@@ -204,6 +204,7 @@ export async function publishSharedTripUpdate(
         const payload: SharedTripDoc = {
           id: plan.id,
           creatorEmail: plan.creatorEmail || cleanEmail,
+          creatorUid: auth.currentUser?.uid || undefined,
           creatorName: userName || plan.creatorEmail || "Trip Organizer",
           plan,
           collabState: effectiveCollab,
@@ -1159,6 +1160,7 @@ export async function publishItineraryToExplore(
     const payload: SharedTripDoc = {
       id: plan.id,
       creatorEmail: cleanEmail,
+      creatorUid: auth.currentUser?.uid || existingData?.creatorUid || undefined,
       creatorName: userName || cleanEmail.split("@")[0] || "Traveler",
       plan: effectivePlan,
       collabState: effectiveCollab,

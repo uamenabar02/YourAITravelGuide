@@ -113,7 +113,7 @@ export function getCanonicalUserDocId(firebaseUser: User | null, customEmail?: s
   }
 
   if (firebaseUser?.uid) {
-    return "user_" + firebaseUser.uid;
+    return "guest_" + firebaseUser.uid;
   }
 
   const devId = getDeviceId();
@@ -439,6 +439,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const rawPayload = {
         name: currentName,
         email: activeEmailRef.current,
+        ownerUid: userRef.current?.uid || auth.currentUser?.uid || null,
         premium: true,
         activePersona: currentPersona,
         bio: currentBio,
@@ -507,15 +508,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const docId = getCanonicalUserDocId(firebaseUser, email);
         await readAndHydrateFromCloud(docId, email);
       } else {
-        // If guest or non-firebase auth session, check if activeEmail is already guest
-        if (activeEmailRef.current && activeEmailRef.current.startsWith("guest_")) {
-          hasHydratedInitialData.current = true;
-          setSyncStatus("synced");
-        } else {
-          // If guest or non-firebase auth session, read local active email doc if exists
+        // Automatically establish an anonymous Firebase session for guest visitors
+        signInAnonymously(auth).catch((authErr) => {
+          console.warn("Guest anonymous session initialization note:", authErr?.message || authErr);
+          // If offline / fallback, read local active email doc if exists
           const docId = getCanonicalUserDocId(null, activeEmailRef.current);
-          await readAndHydrateFromCloud(docId, activeEmailRef.current);
-        }
+          readAndHydrateFromCloud(docId, activeEmailRef.current);
+        });
       }
       setLoading(false);
     });

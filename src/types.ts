@@ -527,6 +527,7 @@ export interface GroupCollaborationState {
 export interface SharedTripDoc {
   id: string;
   creatorEmail: string;
+  creatorUid?: string;
   creatorName?: string;
   plan: ItineraryPlan;
   collabState: GroupCollaborationState;
@@ -727,6 +728,7 @@ export interface CommunitySpotDoc {
   imageUrl?: string;
   photos?: string[];
   creatorEmail: string;
+  creatorUid?: string;
   creatorName: string;
   creatorAvatar?: string;
   likesCount?: number;

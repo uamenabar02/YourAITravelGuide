@@ -20,20 +20,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 1. User Profiles Collection (Supports guest_<id> and registered user emails)
+    // 1. User Profiles Collection (Supports authenticated guests and registered users)
     match /users/{userId} {
-      allow read: if isValidId(userId);
+      // User documents can be read by authenticated users (including anonymous guest sessions)
+      allow read: if isValidId(userId) && request.auth != null;
       
       allow create, update: if isValidId(userId) 
+        && request.auth != null
         && (
-          userId.matches('guest_.*') ||
-          (request.auth != null && request.auth.token.email != null && userId == emailDocId()) ||
-          (request.auth != null && userId == "user_" + request.auth.uid)
+          userId == "guest_" + request.auth.uid ||
+          userId == "user_" + request.auth.uid ||
+          (request.auth.token.email != null && userId == emailDocId()) ||
+          (request.resource.data.ownerUid != null && request.resource.data.ownerUid == request.auth.uid)
         );
 
       allow delete: if request.auth != null && (
+        userId == "guest_" + request.auth.uid ||
+        userId == "user_" + request.auth.uid ||
         (request.auth.token.email != null && userId == emailDocId()) ||
-        userId == "user_" + request.auth.uid
+        (resource.data.ownerUid != null && resource.data.ownerUid == request.auth.uid)
       );
     }
 
@@ -42,11 +47,19 @@ service cloud.firestore {
       allow read: if isValidId(tripId);
 
       allow create: if isValidId(tripId)
+        && request.auth != null
         && request.resource.data.plan is map
-        && request.resource.data.creatorEmail is string;
+        && isNonEmptyString(request.resource.data.creatorEmail, 320);
 
       allow update: if isValidId(tripId)
-        && request.resource.data.plan is map;
+        && request.auth != null
+        && request.resource.data.plan is map
+        && (
+          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
+          (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
+          (resource.data.isPublic == true || resource.data.visibility == "public") ||
+          (request.resource.data.collabState is map)
+        );
 
       allow delete: if request.auth != null && (
         (resource.data.creatorEmail is string && request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
@@ -59,12 +72,22 @@ service cloud.firestore {
       allow read: if isValidId(spotId);
 
       allow create: if isValidId(spotId)
+        && request.auth != null
         && isNonEmptyString(request.resource.data.name, 300);
 
       allow update: if isValidId(spotId)
-        && isNonEmptyString(request.resource.data.name, 300);
+        && request.auth != null
+        && isNonEmptyString(request.resource.data.name, 300)
+        && (
+          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
+          (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
+          (request.resource.data.reviews is list || request.resource.data.likedBy is list)
+        );
 
-      allow delete: if request.auth != null;
+      allow delete: if request.auth != null && (
+        (resource.data.creatorEmail is string && request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
+        (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid)
+      );
     }
   }
 }

@@ -10,7 +10,7 @@ import {
   orderBy,
   limit,
 } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db, auth } from "../lib/firebase";
 import { sanitizeForFirestore } from "./sanitizeFirestore";
 import { CommunitySpotDoc, CommunitySpotReview, ItineraryPlan, ActivitySpot, ActivityCategory } from "../types";
 
@@ -261,6 +261,7 @@ export async function publishSpotToCommunity(
       imageUrl: spotPhotos[0] || spot.imageUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
       photos: spotPhotos.length > 0 ? spotPhotos : undefined,
       creatorEmail: cleanEmail,
+      creatorUid: auth.currentUser?.uid || undefined,
       creatorName: userName || "Local Explorer",
       creatorAvatar: userAvatar || "compass",
       likesCount: 1,
