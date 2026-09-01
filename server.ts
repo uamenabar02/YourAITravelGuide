@@ -65,18 +65,27 @@ async function startServer() {
     cors({
       origin: (origin, cb) => {
         if (!origin) return cb(null, true);
-        if (
-          origin.includes("localhost") ||
-          origin.includes("127.0.0.1") ||
-          origin.includes("run.app") ||
-          origin.includes("e2b.app") ||
-          origin.includes("firebaseapp.com") ||
-          origin.includes("web.app") ||
-          origin.includes("ai.studio") ||
-          origin.includes("google.com") ||
-          origin.includes("googleusercontent.com")
-        ) {
-          return cb(null, true);
+        try {
+          const hostname = new URL(origin).hostname.toLowerCase();
+          const allowedDomains = [
+            "localhost",
+            "127.0.0.1",
+            "run.app",
+            "e2b.app",
+            "firebaseapp.com",
+            "web.app",
+            "ai.studio",
+            "google.com",
+            "googleusercontent.com",
+          ];
+          const isAllowed = allowedDomains.some(
+            (domain) => hostname === domain || hostname.endsWith("." + domain)
+          );
+          if (isAllowed) {
+            return cb(null, true);
+          }
+        } catch (_e) {
+          // Fall through to rejection
         }
         return cb(new Error("CORS policy violation: Origin not allowed"));
       },
