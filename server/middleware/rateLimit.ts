@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { AuthedRequest } from "./requireAuth.js";
 import { adminFirestore } from "../firebaseAdmin.js";
+import { FieldValue } from "firebase-admin/firestore";
 
 export interface QuotaRule {
   weight: number;
@@ -116,16 +117,28 @@ export function rateLimit(endpointKey: string) {
       });
     }
 
-    // 2. Daily Quota Check
+    // 2. Distributed Daily Quota Check (Hydrated from Firestore across instances)
     let userCache = dailyStore.get(uid);
     if (!userCache || userCache.dateStr !== todayStr) {
-      userCache = { dateStr: todayStr, counts: {} };
+      let initialCounts: Record<string, number> = {};
+      try {
+        const docRef = adminFirestore.collection("rate_limits").doc(uid);
+        const snap = await docRef.get();
+        if (snap.exists) {
+          const data = snap.data();
+          if (data?.date === todayStr && data?.counts) {
+            initialCounts = data.counts;
+          }
+        }
+      } catch (e) {
+        console.warn("[RateLimit] Firestore count hydration note:", e);
+      }
+      userCache = { dateStr: todayStr, counts: initialCounts };
       dailyStore.set(uid, userCache);
     }
 
     const currentDailyCount = userCache.counts[endpointKey] || 0;
     if (currentDailyCount >= dailyCap) {
-      // Calculate seconds until UTC midnight
       const tomorrow = new Date();
       tomorrow.setUTCHours(24, 0, 0, 0);
       const secondsUntilReset = Math.ceil((tomorrow.getTime() - now) / 1000);
@@ -143,8 +156,8 @@ export function rateLimit(endpointKey: string) {
     burstStore.set(burstKey, burstEntry);
     userCache.counts[endpointKey] = currentDailyCount + 1;
 
-    // Asynchronously log / update Firestore rate limit counter doc
-    persistDailyUsageToFirestore(uid, todayStr, endpointKey, userCache.counts[endpointKey]).catch((e) => {
+    // Atomically increment Firestore counter for cross-instance enforcement
+    incrementFirestoreDailyUsage(uid, todayStr, endpointKey).catch((e) => {
       console.warn(`[RateLimit] Async Firestore counter sync note:`, e?.message || e);
     });
 
@@ -154,21 +167,20 @@ export function rateLimit(endpointKey: string) {
   };
 }
 
-async function persistDailyUsageToFirestore(uid: string, dateStr: string, endpointKey: string, newCount: number) {
+async function incrementFirestoreDailyUsage(uid: string, dateStr: string, endpointKey: string) {
   try {
     const docRef = adminFirestore.collection("rate_limits").doc(uid);
-    // Set 7-day TTL expiration
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
     await docRef.set(
       {
         date: dateStr,
-        counts: {
-          [endpointKey]: newCount,
-        },
         expiresAt: expiresAt.getTime(),
         updatedAt: Date.now(),
+        counts: {
+          [endpointKey]: FieldValue.increment(1),
+        },
       },
       { merge: true }
     );

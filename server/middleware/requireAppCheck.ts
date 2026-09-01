@@ -5,15 +5,17 @@ export async function requireAppCheck(req: Request, res: Response, next: NextFun
   const appCheckToken = req.headers["x-firebase-appcheck"] as string;
 
   if (!appCheckToken) {
-    // Audit mode: Allow traffic if token isn't present yet, but log note
+    if (process.env.ENFORCE_APP_CHECK === "true" || process.env.NODE_ENV === "production") {
+      return res.status(401).json({ error: "App Check token missing." });
+    }
     return next();
   }
 
   try {
     await adminAppCheck.verifyToken(appCheckToken);
-    next();
+    return next();
   } catch (err: any) {
-    console.warn("[App Check] Token validation note:", err?.message || err);
-    next();
+    console.warn("[App Check] Token verification failed:", err?.message || err);
+    return res.status(403).json({ error: "Invalid App Check token." });
   }
 }

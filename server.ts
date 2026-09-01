@@ -32,16 +32,35 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Security Headers (Disable frameguard so AI Studio preview iframe can embed app)
+  // Security Headers with CSP frame-ancestors for AI Studio embedding support
   app.use(
     helmet({
-      contentSecurityPolicy: false,
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "blob:", "https:"],
+          connectSrc: ["'self'", "https:", "wss:"],
+          frameAncestors: [
+            "'self'",
+            "https://*.google.com",
+            "https://*.ai.studio",
+            "https://ai.studio",
+            "https://*.googleusercontent.com",
+            "https://*.run.app",
+            "https://*.e2b.app",
+            "https://*.firebaseapp.com",
+            "https://*.web.app",
+          ],
+        },
+      },
       crossOriginEmbedderPolicy: false,
       frameguard: false,
     })
   );
 
-  // CORS Configuration
+  // CORS Configuration (Strict match for local, staging, production, and AI Studio environments)
   app.use(
     cors({
       origin: (origin, cb) => {
@@ -59,7 +78,7 @@ async function startServer() {
         ) {
           return cb(null, true);
         }
-        return cb(null, true);
+        return cb(new Error("CORS policy violation: Origin not allowed"));
       },
       methods: ["GET", "POST", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "X-Firebase-AppCheck"],
@@ -298,6 +317,10 @@ async function startServer() {
 
       const translation = await translateText(text, targetLanguage);
       if (translation) {
+        if (translationCache.size >= 2000) {
+          const firstKey = translationCache.keys().next().value;
+          if (firstKey) translationCache.delete(firstKey);
+        }
         translationCache.set(cacheKey, translation);
       }
       res.json({ translation: translation || text });

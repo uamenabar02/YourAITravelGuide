@@ -1,4 +1,4 @@
-import { auth } from "../lib/firebase";
+import { auth, getAppCheckHeaderToken } from "../lib/firebase";
 
 export async function authedFetch(url: string, init: RequestInit = {}): Promise<Response> {
   let user = auth.currentUser;
@@ -28,6 +28,11 @@ export async function authedFetch(url: string, init: RequestInit = {}): Promise<
     headers.set("Content-Type", "application/json");
   }
   headers.set("Authorization", `Bearer ${token}`);
+
+  const appCheckToken = await getAppCheckHeaderToken();
+  if (appCheckToken) {
+    headers.set("X-Firebase-AppCheck", appCheckToken);
+  }
 
   let res = await fetch(url, { ...init, headers });
 

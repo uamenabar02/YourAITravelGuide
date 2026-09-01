@@ -207,6 +207,12 @@ export async function publishSharedTripUpdate(
         const cleanEmail = (userEmail || plan.creatorEmail || "traveler@localexplorer.ai").toLowerCase();
         const currentWalletPasses = walletPasses || getTripWalletPasses(plan.id);
 
+        const perms = getUserPermissions(plan, effectiveCollab, userEmail);
+        if (isExistingDoc && !isCreator && !perms.canEdit) {
+          // Viewer mode: skip sending updates to cloud to avoid permission-denied noise
+          return;
+        }
+
         if (isExistingDoc && !isCreator) {
           // Non-creator collaborator update: update only permitted collaboration fields
           await updateDoc(docRef, {

@@ -1,6 +1,45 @@
 import { GoogleGenAI } from "@google/genai";
+import dns from "dns";
+import net from "net";
 
-export function validateAndSanitizeBaseUrl(rawUrl?: string): string {
+function ipToLong(ip: string): number {
+  return ip.split(".").reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+}
+
+function isPrivateOrLocalIp(ipStr: string, isDev: boolean = false): boolean {
+  let ip = ipStr;
+  if (ip.startsWith("::ffff:")) {
+    ip = ip.substring(7);
+  }
+
+  if (net.isIPv4(ip)) {
+    const num = ipToLong(ip);
+    // 127.0.0.0/8 (127.0.0.0 - 127.255.255.255)
+    if (num >= 2130706432 && num <= 2147483647) {
+      return !isDev;
+    }
+    // 10.0.0.0/8
+    if (num >= 167772160 && num <= 184549375) return true;
+    // 172.16.0.0/12
+    if (num >= 2886729728 && num <= 2887778303) return true;
+    // 192.168.0.0/16
+    if (num >= 3232235520 && num <= 3232301055) return true;
+    // 169.254.0.0/16 (Cloud metadata 169.254.169.254)
+    if (num >= 2851995648 && num <= 2852061183) return true;
+    // 0.0.0.0/8
+    if (num >= 0 && num <= 16777215) return true;
+  }
+
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") return !isDev;
+    if (lower.startsWith("fc00:") || lower.startsWith("fd00:") || lower.startsWith("fe80:")) return true;
+  }
+
+  return false;
+}
+
+export async function validateAndSanitizeBaseUrl(rawUrl?: string): Promise<string> {
   if (!rawUrl || typeof rawUrl !== "string") {
     return "";
   }
@@ -15,7 +54,7 @@ export function validateAndSanitizeBaseUrl(rawUrl?: string): string {
   }
 
   const protocol = parsed.protocol.toLowerCase();
-  const hostname = parsed.hostname.toLowerCase();
+  let hostname = parsed.hostname.toLowerCase();
 
   // Block non-HTTP/HTTPS schemes
   if (protocol !== "http:" && protocol !== "https:") {
@@ -24,27 +63,38 @@ export function validateAndSanitizeBaseUrl(rawUrl?: string): string {
 
   const isDev = process.env.NODE_ENV !== "production";
 
-  // SSRF Protection: Block private and link-local IP ranges
-  // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16 (metadata endpoint 169.254.169.254), 0.0.0.0, ::1, fc00::/7
-  const blockedPatterns = [
-    /^10\./,
-    /^172\.(1[6-9]|2[0-9]|3[01])\./,
-    /^192\.168\./,
-    /^127\./,
-    /^169\.254\./,
-    /^0\.0\.0\.0$/,
-    /^localhost$/i,
-    /^::1$/,
-    /^fc00:/i,
-    /^fe80:/i,
-  ];
+  // Decode decimal/hex/octal IP representations
+  if (/^(0x[0-9a-f]+|\d+)$/i.test(hostname)) {
+    const numeric = parseInt(hostname, hostname.startsWith("0x") || hostname.startsWith("0X") ? 16 : 10);
+    if (!isNaN(numeric)) {
+      hostname = [
+        (numeric >>> 24) & 255,
+        (numeric >>> 16) & 255,
+        (numeric >>> 8) & 255,
+        numeric & 255,
+      ].join(".");
+    }
+  }
 
-  for (const pattern of blockedPatterns) {
-    if (pattern.test(hostname)) {
-      if ((hostname === "localhost" || hostname === "127.0.0.1") && isDev) {
-        continue;
+  // Direct IP literal check
+  if (isPrivateOrLocalIp(hostname, isDev)) {
+    throw new Error(`Access to private, loopback, or cloud metadata endpoint '${hostname}' is strictly forbidden.`);
+  }
+
+  // DNS resolution check for domain names
+  if (!net.isIP(hostname)) {
+    try {
+      const addresses = await dns.promises.lookup(hostname, { all: true });
+      for (const addr of addresses) {
+        if (isPrivateOrLocalIp(addr.address, isDev)) {
+          throw new Error(`Domain '${hostname}' resolves to private/metadata IP '${addr.address}', access forbidden.`);
+        }
       }
-      throw new Error(`Access to private, loopback, or cloud metadata endpoint '${hostname}' is strictly forbidden.`);
+    } catch (err: any) {
+      if (err.message && err.message.includes("access forbidden")) {
+        throw err;
+      }
+      throw new Error(`Could not resolve domain name '${hostname}'.`);
     }
   }
 
@@ -68,7 +118,7 @@ export async function testAIModelConnection(req: TestRequest): Promise<{
   const provider = (req.provider || "").trim();
   const modelId = (req.modelId || "").trim();
   const apiKey = (req.apiKey || "").trim().replace(/^["']|["']$/g, '');
-  const baseUrl = req.baseUrl ? validateAndSanitizeBaseUrl(req.baseUrl) : "";
+  const baseUrl = req.baseUrl ? await validateAndSanitizeBaseUrl(req.baseUrl) : "";
   const isSystem = req.isSystem;
 
   try {
@@ -461,7 +511,7 @@ export async function fetchAvailableModelsForProvider(req: {
 }): Promise<{ success: boolean; models: Array<{ id: string; name?: string }>; message?: string }> {
   const provider = (req.provider || "").trim();
   const apiKey = (req.apiKey || "").trim().replace(/^["']|["']$/g, '');
-  const baseUrl = req.baseUrl ? validateAndSanitizeBaseUrl(req.baseUrl) : "";
+  const baseUrl = req.baseUrl ? await validateAndSanitizeBaseUrl(req.baseUrl) : "";
 
   try {
     if (provider === "openrouter") {
