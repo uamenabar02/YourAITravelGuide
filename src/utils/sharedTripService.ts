@@ -198,17 +198,20 @@ export async function publishSharedTripUpdate(
       publishDebounceTimers.delete(plan.id);
       try {
         const docRef = doc(db, SHARED_TRIPS_COLLECTION, plan.id);
+        const snap = await getDoc(docRef);
+        const existingData = snap.exists() ? (snap.data() as SharedTripDoc) : null;
+
         const cleanEmail = (userEmail || plan.creatorEmail || "traveler@localexplorer.ai").toLowerCase();
         const currentWalletPasses = walletPasses || getTripWalletPasses(plan.id);
 
         const payload: SharedTripDoc = {
           id: plan.id,
-          creatorEmail: plan.creatorEmail || cleanEmail,
-          creatorUid: auth.currentUser?.uid || undefined,
-          creatorName: userName || plan.creatorEmail || "Trip Organizer",
+          creatorEmail: existingData?.creatorEmail || plan.creatorEmail || cleanEmail,
+          creatorUid: existingData?.creatorUid || auth.currentUser?.uid || undefined,
+          creatorName: existingData?.creatorName || userName || plan.creatorEmail || "Trip Organizer",
           plan,
           collabState: effectiveCollab,
-          offlineNotes: offlineNotes || "",
+          offlineNotes: offlineNotes || existingData?.offlineNotes || "",
           walletPasses: currentWalletPasses,
           lastUpdated: Date.now(),
           updatedByEmail: cleanEmail,
@@ -1159,8 +1162,8 @@ export async function publishItineraryToExplore(
 
     const payload: SharedTripDoc = {
       id: plan.id,
-      creatorEmail: cleanEmail,
-      creatorUid: auth.currentUser?.uid || existingData?.creatorUid || undefined,
+      creatorEmail: existingData?.creatorEmail || cleanEmail,
+      creatorUid: existingData?.creatorUid || auth.currentUser?.uid || undefined,
       creatorName: userName || cleanEmail.split("@")[0] || "Traveler",
       plan: effectivePlan,
       collabState: effectiveCollab,

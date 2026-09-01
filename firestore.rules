@@ -51,19 +51,20 @@ service cloud.firestore {
         && request.resource.data.plan is map
         && isNonEmptyString(request.resource.data.creatorEmail, 320);
 
+      // Creator can update full trip; non-creators may only update interaction & collaboration fields
       allow update: if isValidId(tripId)
         && request.auth != null
-        && request.resource.data.plan is map
         && (
-          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
           (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
-          (resource.data.isPublic == true || resource.data.visibility == "public") ||
-          (request.resource.data.collabState is map)
+          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'reviews', 'rating', 'ratingsCount', 'downloadsCount', 'collabState', 'lastUpdated', 'updatedByEmail', 'offlineNotes', 'walletPasses'
+          ])
         );
 
       allow delete: if request.auth != null && (
-        (resource.data.creatorEmail is string && request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
-        (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid)
+        (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
+        (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email)
       );
     }
 
@@ -75,18 +76,20 @@ service cloud.firestore {
         && request.auth != null
         && isNonEmptyString(request.resource.data.name, 300);
 
+      // Creator can update full spot; non-creators may only update community interaction fields
       allow update: if isValidId(spotId)
         && request.auth != null
-        && isNonEmptyString(request.resource.data.name, 300)
         && (
-          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
           (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
-          (request.resource.data.reviews is list || request.resource.data.likedBy is list)
+          (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'reviews', 'likedBy', 'likesCount', 'ratingsCount', 'rating'
+          ])
         );
 
       allow delete: if request.auth != null && (
-        (resource.data.creatorEmail is string && request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email) ||
-        (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid)
+        (resource.data.creatorUid is string && resource.data.creatorUid == request.auth.uid) ||
+        (request.auth.token.email != null && resource.data.creatorEmail == request.auth.token.email)
       );
     }
   }
