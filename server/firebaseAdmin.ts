@@ -6,6 +6,7 @@ import fs from "fs";
 import path from "path";
 
 let projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT || "sage-box-298sv";
+let databaseId = process.env.FIRESTORE_DATABASE_ID;
 
 try {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
@@ -14,6 +15,9 @@ try {
     const parsed = JSON.parse(raw);
     if (parsed.projectId) {
       projectId = parsed.projectId;
+    }
+    if (parsed.firestoreDatabaseId) {
+      databaseId = parsed.firestoreDatabaseId;
     }
   }
 } catch (e) {
@@ -33,4 +37,4 @@ if (!getApps().length) {
 
 export const adminAuth = getAuth();
 export const adminAppCheck = getAppCheck();
-export const adminFirestore = getFirestore();
+export const adminFirestore = databaseId && databaseId !== "(default)" ? getFirestore(databaseId) : getFirestore();

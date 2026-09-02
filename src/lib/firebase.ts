@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore } from "firebase/firestore";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, AppCheck } from "firebase/app-check";
 import config from "../../firebase-applet-config.json";
 
@@ -14,16 +14,23 @@ const app = initializeApp({
   appId: config.appId,
 });
 
-// Initialize Authentication and Firestore (with designated custom Database ID)
+// Initialize Authentication and Firestore (using configured database ID with long-polling fallback for iframe support)
 export const auth = getAuth(app);
 
+const databaseId = config.firestoreDatabaseId;
 let dbInstance;
+
 try {
-  const dbId = config.firestoreDatabaseId;
-  dbInstance = dbId && dbId !== "(default)" ? getFirestore(app, dbId) : getFirestore(app);
-} catch (err) {
-  console.warn("Firestore custom database initialization warning, using default:", err);
-  dbInstance = getFirestore(app);
+  const settings = {
+    experimentalAutoDetectLongPolling: true,
+  };
+  if (databaseId && databaseId !== "(default)") {
+    dbInstance = initializeFirestore(app, settings, databaseId);
+  } else {
+    dbInstance = initializeFirestore(app, settings);
+  }
+} catch (_err) {
+  dbInstance = databaseId && databaseId !== "(default)" ? getFirestore(app, databaseId) : getFirestore(app);
 }
 
 export const db = dbInstance;
@@ -32,15 +39,12 @@ let appCheckInstance: AppCheck | null = null;
 
 if (typeof window !== "undefined") {
   try {
-    const siteKey = (import.meta as any).env?.VITE_FIREBASE_APPCHECK_SITE_KEY;
-    if (siteKey) {
+    const siteKey = (import.meta as any).env?.VITE_FIREBASE_APPCHECK_SITE_KEY || config.recaptchaSiteKey;
+    if (siteKey && siteKey.trim() !== "") {
       appCheckInstance = initializeAppCheck(app, {
         provider: new ReCaptchaEnterpriseProvider(siteKey),
         isTokenAutoRefreshEnabled: true,
       });
-    } else if (process.env.NODE_ENV !== "production") {
-      // Set debug token for dev environment if enabled
-      (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
     }
   } catch (e) {
     console.warn("[App Check] Client init notice:", e);

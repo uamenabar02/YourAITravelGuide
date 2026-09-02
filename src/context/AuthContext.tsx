@@ -354,7 +354,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSyncStatus("syncing");
       try {
         const userDocRef = doc(db, "users", docId);
-        const snapshot = await getDoc(userDocRef);
+        const getDocWithTimeout = Promise.race([
+          getDoc(userDocRef),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Firestore connection timeout")), 4000)
+          ),
+        ]);
+        const snapshot = await getDocWithTimeout;
         if (snapshot.exists()) {
           const data = snapshot.data();
           applyCloudDataToLocalStorageAndState(data);
@@ -365,8 +371,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSyncStatus("synced");
           return false;
         }
-      } catch (err) {
-        console.error("Failed to read from Cloud Firestore on account load:", err);
+      } catch (err: any) {
+        console.warn("Notice: Cloud Firestore unavailable on account load (operating in local mode):", err?.message || err);
         hasHydratedInitialData.current = true;
         setSyncStatus("synced");
         return false;
