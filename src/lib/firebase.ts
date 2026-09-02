@@ -14,17 +14,14 @@ const app = initializeApp({
   appId: config.appId,
 });
 
-// Initialize Authentication and Firestore (using configured database ID with long-polling fallback for iframe support)
+// Initialize Authentication and Firestore (using configured database ID with forced long-polling for reliable preview/proxy transport)
 export const auth = getAuth(app);
 
 const databaseId = config.firestoreDatabaseId;
-const inIframe = typeof window !== "undefined" && window.self !== window.top;
 let dbInstance;
 
 try {
-  const settings = inIframe
-    ? { experimentalForceLongPolling: true }
-    : { experimentalAutoDetectLongPolling: true };
+  const settings = { experimentalForceLongPolling: true };
   if (databaseId && databaseId !== "(default)") {
     dbInstance = initializeFirestore(app, settings, databaseId);
   } else {
