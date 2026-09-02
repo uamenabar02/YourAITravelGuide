@@ -18,12 +18,13 @@ const app = initializeApp({
 export const auth = getAuth(app);
 
 const databaseId = config.firestoreDatabaseId;
+const inIframe = typeof window !== "undefined" && window.self !== window.top;
 let dbInstance;
 
 try {
-  const settings = {
-    experimentalAutoDetectLongPolling: true,
-  };
+  const settings = inIframe
+    ? { experimentalForceLongPolling: true }
+    : { experimentalAutoDetectLongPolling: true };
   if (databaseId && databaseId !== "(default)") {
     dbInstance = initializeFirestore(app, settings, databaseId);
   } else {
