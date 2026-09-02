@@ -36,11 +36,17 @@ export async function authedFetch(url: string, init: RequestInit = {}): Promise<
 
   let res = await fetch(url, { ...init, headers });
 
-  // 401 Session Expired -> force token refresh and retry once
-  if (res.status === 401 && auth.currentUser) {
+  // 401 Session Expired or 403 App Check Expired -> force token refresh and retry once
+  if ((res.status === 401 || res.status === 403) && auth.currentUser) {
     try {
       token = await auth.currentUser.getIdToken(true);
       headers.set("Authorization", `Bearer ${token}`);
+
+      const freshAppCheckToken = await getAppCheckHeaderToken(true);
+      if (freshAppCheckToken) {
+        headers.set("X-Firebase-AppCheck", freshAppCheckToken);
+      }
+
       res = await fetch(url, { ...init, headers });
     } catch (_retryErr) {
       // Retry failed

@@ -51,10 +51,10 @@ if (typeof window !== "undefined") {
   }
 }
 
-export async function getAppCheckHeaderToken(): Promise<string | null> {
+export async function getAppCheckHeaderToken(forceRefresh: boolean = false): Promise<string | null> {
   if (!appCheckInstance) return null;
   try {
-    const res = await getToken(appCheckInstance, false);
+    const res = await getToken(appCheckInstance, forceRefresh);
     return res.token;
   } catch (_e) {
     return null;
