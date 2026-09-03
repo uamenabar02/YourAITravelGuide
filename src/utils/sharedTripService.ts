@@ -1,6 +1,7 @@
 import { doc, getDoc, setDoc, onSnapshot, updateDoc, collection, getDocs } from "firebase/firestore";
 import { db, auth } from "../lib/firebase";
 import { sanitizeForFirestore } from "./sanitizeFirestore";
+import { withTimeout } from "./promiseTimeout";
 import {
   ItineraryPlan,
   GroupCollaborationState,
@@ -1058,7 +1059,54 @@ export const CURATED_PUBLIC_TRIPS: SharedTripDoc[] = [
 ];
 
 /**
+ * Get curated showcase trips combined with local published trips synchronously (0ms instant render)
+ */
+export function getCuratedAndLocalTrips(): SharedTripDoc[] {
+  const tripMap = new Map<string, SharedTripDoc>();
+  CURATED_PUBLIC_TRIPS.forEach((ct) => {
+    tripMap.set(ct.id, ct);
+  });
+
+  try {
+    const savedTrips = getSavedTrips();
+    savedTrips.forEach((trip) => {
+      const isLocallyMarkedPublic =
+        localStorage.getItem(`localexplorer_published_${trip.id}`) === "true" ||
+        trip.isPublic === true ||
+        trip.visibility === "public";
+
+      if (isLocallyMarkedPublic) {
+        const existing = tripMap.get(trip.id);
+        const mergedDoc: SharedTripDoc = {
+          id: trip.id,
+          creatorEmail: trip.authorEmail || existing?.creatorEmail || "me@traveler.com",
+          creatorName: trip.authorName || existing?.creatorName || "Local Explorer",
+          plan: trip,
+          collabState:
+            existing?.collabState ||
+            getCollaborationState(trip.id, trip.destinationOrTown, trip.totalDays, trip.tags),
+          isPublic: true,
+          visibility: "public",
+          rating: existing?.rating || 5.0,
+          ratingsCount: existing?.ratingsCount || 1,
+          downloadsCount: existing?.downloadsCount || 0,
+          reviews: existing?.reviews || [],
+          featuredTags: trip.tags || existing?.featuredTags || [],
+          lastUpdated: typeof trip.createdAt === "number" ? trip.createdAt : Date.now(),
+        };
+        tripMap.set(trip.id, mergedDoc);
+      }
+    });
+  } catch (err) {
+    console.warn("Error reading local trips:", err);
+  }
+
+  return Array.from(tripMap.values()).sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
+}
+
+/**
  * Fetch all public itineraries for Explore Feed (Firestore + Local Published + Curated)
+ * Safely bounded by a 2500ms timeout to prevent UI freezes on Android / Web.
  */
 export async function fetchAllPublicTrips(): Promise<SharedTripDoc[]> {
   const tripMap = new Map<string, SharedTripDoc>();
@@ -1068,21 +1116,23 @@ export async function fetchAllPublicTrips(): Promise<SharedTripDoc[]> {
     tripMap.set(ct.id, ct);
   });
 
-  // 2. Fetch from Firestore shared_trips
+  // 2. Fetch from Firestore shared_trips with safety timeout
   try {
     const colRef = collection(db, SHARED_TRIPS_COLLECTION);
-    const snap = await getDocs(colRef);
-    snap.forEach((d) => {
-      const data = d.data() as SharedTripDoc;
-      if (data && (data.isPublic === true || data.visibility === "public")) {
-        tripMap.set(data.id || d.id, {
-          ...data,
-          id: data.id || d.id,
-          isPublic: true,
-          visibility: "public",
-        });
-      }
-    });
+    const snap = await withTimeout(getDocs(colRef), 2500, null, "fetchAllPublicTrips");
+    if (snap) {
+      snap.forEach((d) => {
+        const data = d.data() as SharedTripDoc;
+        if (data && (data.isPublic === true || data.visibility === "public")) {
+          tripMap.set(data.id || d.id, {
+            ...data,
+            id: data.id || d.id,
+            isPublic: true,
+            visibility: "public",
+          });
+        }
+      });
+    }
   } catch (err) {
     console.warn("Firestore public trips query failed, checking local published trips:", err);
   }

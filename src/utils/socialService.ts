@@ -8,6 +8,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import { withTimeout } from "./promiseTimeout";
 import { PublicUserProfile, SharedTripDoc, CommunitySpotDoc } from "../types";
 import { SHARED_TRIPS_COLLECTION } from "./sharedTripService";
 import { COMMUNITY_SPOTS_COLLECTION } from "./communitySpotService";
@@ -102,7 +103,7 @@ export const CURATED_CREATORS: PublicUserProfile[] = [
 export async function fetchCommunityCreators(): Promise<PublicUserProfile[]> {
   try {
     const colRef = collection(db, "users");
-    const snap = await getDocs(colRef);
+    const snap = await withTimeout(getDocs(colRef), 2000, null, "fetchCommunityCreators");
 
     const creatorsMap = new Map<string, PublicUserProfile>();
 
@@ -111,30 +112,32 @@ export async function fetchCommunityCreators(): Promise<PublicUserProfile[]> {
       creatorsMap.set(c.email.toLowerCase(), c);
     });
 
-    snap.forEach((d) => {
-      const data = d.data();
-      if (data.email) {
-        const cleanEmail = data.email.toLowerCase();
-        const existing = creatorsMap.get(cleanEmail);
-        creatorsMap.set(cleanEmail, {
-          id: d.id,
-          email: cleanEmail,
-          name: data.name || (existing ? existing.name : "Traveler"),
-          bio: data.bio || (existing ? existing.bio : ""),
-          avatarUrl: data.avatarUrl || (existing ? existing.avatarUrl : ""),
-          avatarPreset: data.avatarPreset || (existing ? existing.avatarPreset : "compass"),
-          homeCity: data.homeCity || (existing ? existing.homeCity : ""),
-          travelStyle: data.travelStyle || (existing ? existing.travelStyle : "Cultural Wanderer"),
-          websiteOrSocial: data.websiteOrSocial || (existing ? existing.websiteOrSocial : ""),
-          badges: data.badges || (existing ? existing.badges : ["Local Explorer"]),
-          followers: data.followers || (existing ? existing.followers : []),
-          following: data.following || (existing ? existing.following : []),
-          publishedTripsCount: data.publishedTripsCount || (existing ? existing.publishedTripsCount : 0),
-          publishedSpotsCount: data.publishedSpotsCount || (existing ? existing.publishedSpotsCount : 0),
-          joinedAt: data.lastSynced || Date.now(),
-        });
-      }
-    });
+    if (snap) {
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.email) {
+          const cleanEmail = data.email.toLowerCase();
+          const existing = creatorsMap.get(cleanEmail);
+          creatorsMap.set(cleanEmail, {
+            id: d.id,
+            email: cleanEmail,
+            name: data.name || (existing ? existing.name : "Traveler"),
+            bio: data.bio || (existing ? existing.bio : ""),
+            avatarUrl: data.avatarUrl || (existing ? existing.avatarUrl : ""),
+            avatarPreset: data.avatarPreset || (existing ? existing.avatarPreset : "compass"),
+            homeCity: data.homeCity || (existing ? existing.homeCity : ""),
+            travelStyle: data.travelStyle || (existing ? existing.travelStyle : "Cultural Wanderer"),
+            websiteOrSocial: data.websiteOrSocial || (existing ? existing.websiteOrSocial : ""),
+            badges: data.badges || (existing ? existing.badges : ["Local Explorer"]),
+            followers: data.followers || (existing ? existing.followers : []),
+            following: data.following || (existing ? existing.following : []),
+            publishedTripsCount: data.publishedTripsCount || (existing ? existing.publishedTripsCount : 0),
+            publishedSpotsCount: data.publishedSpotsCount || (existing ? existing.publishedSpotsCount : 0),
+            joinedAt: data.lastSynced || Date.now(),
+          });
+        }
+      });
+    }
 
     return Array.from(creatorsMap.values());
   } catch (err) {
@@ -156,9 +159,9 @@ export async function getPublicUserProfile(email: string): Promise<PublicUserPro
   try {
     const canonicalId = "user_" + cleanEmail.replace(/[^a-z0-9]/g, "_");
     const docRef = doc(db, "users", canonicalId);
-    const snap = await getDoc(docRef);
+    const snap = await withTimeout(getDoc(docRef), 2000, null, "getPublicUserProfile");
 
-    if (snap.exists()) {
+    if (snap && snap.exists()) {
       const data = snap.data();
       return {
         id: canonicalId,
@@ -207,18 +210,20 @@ export async function getUserPublicTrips(userEmail: string): Promise<SharedTripD
   const cleanEmail = userEmail.trim().toLowerCase();
   try {
     const colRef = collection(db, SHARED_TRIPS_COLLECTION);
-    const snap = await getDocs(colRef);
+    const snap = await withTimeout(getDocs(colRef), 2500, null, "getUserPublicTrips");
     const trips: SharedTripDoc[] = [];
 
-    snap.forEach((d) => {
-      const data = d.data() as SharedTripDoc;
-      if (
-        data.creatorEmail?.toLowerCase() === cleanEmail &&
-        (data.isPublic || data.visibility === "public")
-      ) {
-        trips.push(data);
-      }
-    });
+    if (snap) {
+      snap.forEach((d) => {
+        const data = d.data() as SharedTripDoc;
+        if (
+          data.creatorEmail?.toLowerCase() === cleanEmail &&
+          (data.isPublic || data.visibility === "public")
+        ) {
+          trips.push(data);
+        }
+      });
+    }
 
     return trips;
   } catch (err) {
@@ -236,26 +241,28 @@ export async function getUserReviewsAcrossTrips(
   const cleanEmail = userEmail.trim().toLowerCase();
   try {
     const colRef = collection(db, SHARED_TRIPS_COLLECTION);
-    const snap = await getDocs(colRef);
+    const snap = await withTimeout(getDocs(colRef), 2500, null, "getUserReviewsAcrossTrips");
     const reviews: Array<{ tripId: string; tripTitle: string; destination: string; rating: number; text: string; createdAt: number }> = [];
 
-    snap.forEach((d) => {
-      const data = d.data() as SharedTripDoc;
-      if (Array.isArray(data.reviews)) {
-        data.reviews.forEach((r) => {
-          if (r.email.toLowerCase() === cleanEmail) {
-            reviews.push({
-              tripId: data.id,
-              tripTitle: data.plan?.title || "Itinerary",
-              destination: data.plan?.destinationOrTown || "Destination",
-              rating: r.rating,
-              text: r.text,
-              createdAt: r.createdAt,
-            });
-          }
-        });
-      }
-    });
+    if (snap) {
+      snap.forEach((d) => {
+        const data = d.data() as SharedTripDoc;
+        if (Array.isArray(data.reviews)) {
+          data.reviews.forEach((r) => {
+            if (r.email.toLowerCase() === cleanEmail) {
+              reviews.push({
+                tripId: data.id,
+                tripTitle: data.plan?.title || "Itinerary",
+                destination: data.plan?.destinationOrTown || "Destination",
+                rating: r.rating,
+                text: r.text,
+                createdAt: r.createdAt,
+              });
+            }
+          });
+        }
+      });
+    }
 
     return reviews.sort((a, b) => b.createdAt - a.createdAt);
   } catch (err) {

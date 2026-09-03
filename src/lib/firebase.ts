@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { initializeFirestore, getFirestore } from "firebase/firestore";
+import { initializeFirestore, getFirestore, setLogLevel } from "firebase/firestore";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, AppCheck } from "firebase/app-check";
 import config from "../../firebase-applet-config.json";
 
@@ -13,6 +13,9 @@ const app = initializeApp({
   messagingSenderId: config.messagingSenderId,
   appId: config.appId,
 });
+
+// Suppress benign SDK-level offline notices in sandbox/iframe environments
+setLogLevel("error");
 
 // Initialize Authentication and Firestore (using configured database ID with forced long-polling for reliable preview/proxy transport)
 export const auth = getAuth(app);

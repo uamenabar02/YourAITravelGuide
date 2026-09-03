@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../lib/firebase";
 import { sanitizeForFirestore } from "./sanitizeFirestore";
+import { withTimeout } from "./promiseTimeout";
 import { CommunitySpotDoc, CommunitySpotReview, ItineraryPlan, ActivitySpot, ActivityCategory } from "../types";
 
 export const COMMUNITY_SPOTS_COLLECTION = "community_spots";
@@ -187,19 +188,14 @@ export const CURATED_COMMUNITY_SPOTS: CommunitySpotDoc[] = [
 
 /**
  * Fetch all community spots from Firestore or fallback to curated list
+ * Protected with a 2500ms safety timeout to prevent hanging on mobile/WebView networks
  */
 export async function fetchCommunitySpots(): Promise<CommunitySpotDoc[]> {
   try {
     const colRef = collection(db, COMMUNITY_SPOTS_COLLECTION);
-    const snap = await getDocs(colRef);
+    const snap = await withTimeout(getDocs(colRef), 2500, null, "fetchCommunitySpots");
 
-    if (snap.empty) {
-      // Seed curated spots to Firestore
-      for (const spot of CURATED_COMMUNITY_SPOTS) {
-        try {
-          await setDoc(doc(db, COMMUNITY_SPOTS_COLLECTION, spot.id), sanitizeForFirestore(spot), { merge: true });
-        } catch {}
-      }
+    if (!snap || snap.empty) {
       return CURATED_COMMUNITY_SPOTS;
     }
 

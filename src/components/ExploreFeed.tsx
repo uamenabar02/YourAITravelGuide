@@ -10,14 +10,20 @@ import {
   BudgetTier,
   TransportMode,
 } from "../types";
-import { submitTripReview, incrementTripDownloads, fetchAllPublicTrips } from "../utils/sharedTripService";
+import {
+  submitTripReview,
+  incrementTripDownloads,
+  fetchAllPublicTrips,
+  getCuratedAndLocalTrips,
+} from "../utils/sharedTripService";
 import {
   fetchCommunitySpots,
   toggleLikeCommunitySpot,
   submitSpotReview,
   importCommunitySpotToPlan,
+  CURATED_COMMUNITY_SPOTS,
 } from "../utils/communitySpotService";
-import { fetchCommunityCreators } from "../utils/socialService";
+import { fetchCommunityCreators, CURATED_CREATORS } from "../utils/socialService";
 import { saveTrip, getSavedTrips } from "../utils/storage";
 import { useAuth } from "../context/AuthContext";
 import { useLanguage } from "../context/LanguageContext";
@@ -54,6 +60,7 @@ import {
   Camera,
   RotateCcw,
   Clock,
+  RefreshCw,
 } from "lucide-react";
 
 interface ExploreFeedProps {
@@ -114,11 +121,12 @@ export const ExploreFeed: React.FC<ExploreFeedProps> = ({
   const [exploreTab, setExploreTab] = useState<"itineraries" | "spots" | "myfeed" | "creators">("itineraries");
   const [myFeedSubFilter, setMyFeedSubFilter] = useState<"all" | "itineraries" | "spots">("all");
 
-  // Data States
-  const [trips, setTrips] = useState<SharedTripDoc[]>([]);
-  const [spots, setSpots] = useState<CommunitySpotDoc[]>([]);
-  const [creators, setCreators] = useState<PublicUserProfile[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Data States (pre-seeded for 0ms instant display without hanging)
+  const [trips, setTrips] = useState<SharedTripDoc[]>(() => getCuratedAndLocalTrips());
+  const [spots, setSpots] = useState<CommunitySpotDoc[]>(() => CURATED_COMMUNITY_SPOTS);
+  const [creators, setCreators] = useState<PublicUserProfile[]>(() => CURATED_CREATORS);
+  const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Search & Basic Duration Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -189,30 +197,51 @@ export const ExploreFeed: React.FC<ExploreFeedProps> = ({
     };
   };
 
-  // Fetch all Explore data
+  // Fetch all Explore data in background without blocking UI
   const loadExploreData = async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent) setIsSyncing(true);
     try {
-      const [loadedTrips, loadedSpots, loadedCreators] = await Promise.all([
+      const [tripsRes, spotsRes, creatorsRes] = await Promise.allSettled([
         fetchAllPublicTrips(),
         fetchCommunitySpots(),
         fetchCommunityCreators(),
       ]);
-      setTrips(loadedTrips);
-      setSpots(loadedSpots);
-      setCreators(loadedCreators);
-    } catch (err) {
-      console.error("Failed to load community explore data:", err);
-      if (onShowToast && !silent) {
-        onShowToast("Loaded community data.", "info");
+
+      if (tripsRes.status === "fulfilled" && Array.isArray(tripsRes.value) && tripsRes.value.length > 0) {
+        setTrips(tripsRes.value);
       }
+      if (spotsRes.status === "fulfilled" && Array.isArray(spotsRes.value) && spotsRes.value.length > 0) {
+        setSpots(spotsRes.value);
+      }
+      if (creatorsRes.status === "fulfilled" && Array.isArray(creatorsRes.value) && creatorsRes.value.length > 0) {
+        setCreators(creatorsRes.value);
+      }
+    } catch (err) {
+      console.warn("Notice loading community explore data:", err);
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
+      setIsSyncing(false);
     }
   };
 
   useEffect(() => {
-    loadExploreData();
+    loadExploreData(true);
+
+    // Bounded safety timeout: under no circumstance can loading remain stuck
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+      setIsSyncing(false);
+    }, 2500);
+
+    const handleSyncEvent = () => {
+      loadExploreData(true);
+    };
+    window.addEventListener("localexplorer_cloud_sync_updated", handleSyncEvent);
+
+    return () => {
+      clearTimeout(safetyTimer);
+      window.removeEventListener("localexplorer_cloud_sync_updated", handleSyncEvent);
+    };
   }, []);
 
   // Toggle follow user
@@ -783,6 +812,19 @@ export const ExploreFeed: React.FC<ExploreFeedProps> = ({
               </span>
             )}
           </button>
+
+          {/* Refresh / Sync Button */}
+          <button
+            id="refresh-explore-feed-btn"
+            type="button"
+            onClick={() => loadExploreData(false)}
+            disabled={isSyncing}
+            title="Refresh Community Hub"
+            aria-label="Refresh Community Hub"
+            className="p-2 rounded-xl text-stone-600 bg-white border border-stone-300 hover:bg-stone-50 transition-all shadow-2xs disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin text-emerald-600" : ""}`} />
+          </button>
         </div>
       </div>
 
@@ -1046,7 +1088,7 @@ export const ExploreFeed: React.FC<ExploreFeedProps> = ({
       )}
 
       {/* Main Feed Content Area */}
-      {loading ? (
+      {loading && trips.length === 0 ? (
         <div className="py-20 text-center text-stone-500 space-y-3">
           <div className="w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm font-medium">

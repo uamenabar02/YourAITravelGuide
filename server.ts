@@ -32,16 +32,34 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Security Headers with CSP frame-ancestors for AI Studio embedding support
+  // Security Headers with CSP frame-ancestors for AI Studio embedding support & OpenStreetMap tiles
   app.use(
     helmet({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", "data:", "blob:", "https:"],
-          connectSrc: ["'self'", "https:", "wss:"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://unpkg.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+          imgSrc: [
+            "'self'",
+            "data:",
+            "blob:",
+            "https:",
+            "https://*.tile.openstreetmap.org",
+            "https://tile.openstreetmap.org",
+            "https://*.basemaps.cartocdn.com",
+            "https://unpkg.com",
+          ],
+          connectSrc: [
+            "'self'",
+            "https:",
+            "wss:",
+            "https://*.tile.openstreetmap.org",
+            "https://tile.openstreetmap.org",
+            "https://*.basemaps.cartocdn.com",
+            "https://nominatim.openstreetmap.org",
+          ],
           frameAncestors: [
             "'self'",
             "https://*.google.com",
@@ -55,6 +73,7 @@ async function startServer() {
           ],
         },
       },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
       crossOriginEmbedderPolicy: false,
       frameguard: false,
     })

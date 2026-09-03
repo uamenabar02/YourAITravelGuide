@@ -130,10 +130,15 @@ export const CreatorProfileModal: React.FC<CreatorProfileModalProps> = ({
       }
     };
 
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 3000);
+
     loadData();
 
     return () => {
       isMounted = false;
+      clearTimeout(safetyTimer);
     };
   }, [isOpen, cleanCreatorEmail, profile?.following]);
 
